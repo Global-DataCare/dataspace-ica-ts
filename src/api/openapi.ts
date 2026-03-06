@@ -356,6 +356,607 @@ const CREDENTIAL_REVOKE_DIDCOMM_REQUEST_SCHEMA = {
   },
 } as const;
 
+const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
+  jti: 'urn:uuid:verify-resp-001',
+  iss: 'did:web:localhost%3A3310',
+  aud: 'did:web:localhost%3A3310',
+  thid: 'verify-terms-001',
+  type: 'application/bundle-api+json',
+  body: {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    total: 2,
+    result: {
+      ok: true,
+      verifiedAt: '2026-03-06T12:00:00.000Z',
+      templateUrl:
+        'https://raw.githubusercontent.com/Global-DataCare/terms/refs/heads/main/dataspace/animal-care/es/202603051133/terms.pdf',
+      templateMatch: true,
+      signatureValid: true,
+      chainValid: true,
+      revocationStatus: 'good',
+      digest: {
+        alg: 'sha3-384',
+        signedPdfHex: 'a1b2c3',
+        unsignedPdfHex: 'd4e5f6',
+        templateHex: '0a0b0c',
+      },
+      signerCertificateSerialNumber: '1234567890',
+      signerSubject: '/C=ES/O=Acme Health SL/CN=Juan Perez',
+      signerIssuer: '/C=ES/O=FNMT-RCM/OU=AC REPRESENTACION',
+      hashes: {
+        signedPdfSha256Hex: '11aa22bb',
+        unsignedPdfSha256Hex: '33cc44dd',
+        templateSha256Hex: '55ee66ff',
+      },
+      notes: ['Verification completed.'],
+    },
+    issues: {
+      resourceType: 'OperationOutcome',
+      issue: [
+        {
+          severity: 'information',
+          code: 'informational',
+          diagnostics: 'Verification completed.',
+        },
+      ],
+    },
+    data: [
+      {
+        type: 'Organization-verification-v1.0',
+        response: {
+          status: '200',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: 'Organization credential extracted from verified document.',
+              },
+            ],
+          },
+        },
+        resource: {
+          id: 'urn:uuid:org-vc-001',
+          '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
+          type: ['VerifiableCredential', 'OrganizationCredential'],
+          issuer: 'did:web:localhost%3A3310',
+          validFrom: '2026-03-06T12:00:00.000Z',
+          credentialSubject: {
+            id: 'urn:organization:taxid:VATES-A12345678',
+            '@type': 'Organization',
+            legalName: 'Acme Health SL',
+            taxID: 'VATES-A12345678',
+            address: {
+              '@type': 'PostalAddress',
+              addressCountry: 'ES',
+            },
+          },
+          evidence: [
+            {
+              type: 'electronic_signature',
+              signature_type: 'pades',
+              issuer: '/C=ES/O=FNMT-RCM/OU=AC REPRESENTACION',
+              serial_number: '1234567890',
+              created_at: '2026-03-06T12:00:00.000Z',
+              attachments: [
+                {
+                  content_type: 'application/json',
+                  content: 'eyJ2ZXJpZmljYXRpb25SZXN1bHQiOiJ2YWxpZCJ9',
+                },
+              ],
+            },
+            {
+              type: 'document',
+              method: 'eid',
+              time: '2026-03-06T12:00:00.000Z',
+              verifier: {
+                organization: 'did:web:localhost%3A3310',
+              },
+              check_details: [
+                {
+                  check_method: 'vdig',
+                  organization: 'did:web:localhost%3A3310',
+                  time: '2026-03-06T12:00:00.000Z',
+                },
+                {
+                  check_method: 'vcrypt',
+                  organization: 'did:web:localhost%3A3310',
+                  time: '2026-03-06T12:00:00.000Z',
+                },
+              ],
+              attachments: {
+                digest: {
+                  alg: 'sha3-384',
+                  value: 'q80=',
+                },
+                url: 'urn:uuid:audit-object-001',
+              },
+              document_details: {
+                type: 'terms-and-conditions',
+                document_number: '202603051133',
+                serial_number: '1234567890',
+                issuer: {
+                  id: 'did:web:localhost%3A3310',
+                  type: 'TrustServiceProvider',
+                  country_code: 'ES',
+                  jurisdiction: 'ES',
+                },
+              },
+            },
+          ],
+        },
+      },
+      {
+        type: 'LegalRepresentative-verification-v1.0',
+        response: {
+          status: '200',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: 'Legal representative credential extracted from verified document.',
+              },
+            ],
+          },
+        },
+        resource: {
+          id: 'urn:uuid:person-vc-001',
+          '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
+          type: ['VerifiableCredential', 'PersonCredential', 'LegalRepresentativeCredential'],
+          issuer: 'did:web:localhost%3A3310',
+          validFrom: '2026-03-06T12:00:00.000Z',
+          credentialSubject: {
+            id: 'urn:person:certificate:99999999R',
+            '@type': 'Person',
+            name: 'Juan Perez',
+            roleName: 'legal-representative',
+            memberOf: {
+              '@type': 'Organization',
+              legalName: 'Acme Health SL',
+              taxID: 'VATES-A12345678',
+            },
+            identifier: '99999999R',
+            nationality: 'ES',
+          },
+          evidence: [
+            {
+              type: 'electronic_signature',
+              signature_type: 'pades',
+              issuer: '/C=ES/O=FNMT-RCM/OU=AC REPRESENTACION',
+              serial_number: '1234567890',
+              created_at: '2026-03-06T12:00:00.000Z',
+              attachments: [
+                {
+                  content_type: 'application/json',
+                  content: 'eyJ2ZXJpZmljYXRpb25SZXN1bHQiOiJ2YWxpZCJ9',
+                },
+              ],
+            },
+            {
+              type: 'document',
+              method: 'eid',
+              time: '2026-03-06T12:00:00.000Z',
+              verifier: {
+                organization: 'did:web:localhost%3A3310',
+              },
+              check_details: [
+                {
+                  check_method: 'vdig',
+                  organization: 'did:web:localhost%3A3310',
+                  time: '2026-03-06T12:00:00.000Z',
+                },
+                {
+                  check_method: 'vcrypt',
+                  organization: 'did:web:localhost%3A3310',
+                  time: '2026-03-06T12:00:00.000Z',
+                },
+              ],
+              attachments: {
+                digest: {
+                  alg: 'sha3-384',
+                  value: 'q80=',
+                },
+                url: 'urn:uuid:audit-object-001',
+              },
+              document_details: {
+                type: 'terms-and-conditions',
+                document_number: '202603051133',
+                serial_number: '1234567890',
+                issuer: {
+                  id: 'did:web:localhost%3A3310',
+                  type: 'TrustServiceProvider',
+                  country_code: 'ES',
+                  jurisdiction: 'ES',
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
+  },
+} as const;
+
+const VERIFY_RESPONSE_FAILED_EXAMPLE = {
+  jti: 'urn:uuid:verify-resp-002',
+  iss: 'did:web:localhost%3A3310',
+  aud: 'did:web:localhost%3A3310',
+  thid: 'verify-terms-002',
+  type: 'application/bundle-api+json',
+  body: {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    total: 1,
+    issues: {
+      resourceType: 'OperationOutcome',
+      issue: [
+        {
+          severity: 'error',
+          code: 'exception',
+          diagnostics: 'Revocation check did not pass (status=unknown).',
+        },
+      ],
+    },
+    data: [
+      {
+        type: 'TermsVerification-v1.0',
+        resource: {
+          id: 'urn:uuid:verify-fail-001',
+          type: 'terms-verification-v1.0',
+          thid: 'verify-terms-002',
+          tenantId: 'ica',
+          jurisdiction: 'ES',
+          sector: 'animal-care',
+          section: 'terms',
+          format: 'pdf',
+          resourceType: '202603051133',
+          status: 'failed',
+          createdAt: '2026-03-06T12:01:00.000Z',
+          updatedAt: '2026-03-06T12:01:03.000Z',
+          audit: {
+            txId: '',
+            txTime: '',
+          },
+          content: [
+            {
+              error: 'Revocation check did not pass (status=unknown).',
+            },
+          ],
+        },
+        response: {
+          status: '500',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'error',
+                code: 'exception',
+                diagnostics: 'Revocation check did not pass (status=unknown).',
+              },
+            ],
+          },
+        },
+      },
+    ],
+  },
+} as const;
+
+const ACTIVATE_RESPONSE_SUCCESS_EXAMPLE = {
+  jti: 'urn:uuid:activate-resp-001',
+  iss: 'did:web:localhost%3A3310',
+  aud: 'did:web:localhost%3A3310',
+  thid: 'activate-signing-001',
+  type: 'application/bundle-api+json',
+  body: {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    total: 1,
+    issues: {
+      resourceType: 'OperationOutcome',
+      issue: [
+        {
+          severity: 'information',
+          code: 'informational',
+          diagnostics: 'Signing key activation completed.',
+        },
+      ],
+    },
+    data: [
+      {
+        type: 'SigningKeyActivation-v1.0',
+        response: {
+          status: '200',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: 'Signing key activation completed.',
+              },
+            ],
+          },
+        },
+        resource: {
+          id: 'urn:uuid:activate-resource-001',
+          type: 'signing-key-activation-v1.0',
+          thid: 'activate-signing-001',
+          tenantId: 'ica',
+          jurisdiction: 'ES',
+          sector: 'animal-care',
+          status: 'activated',
+          createdAt: '2026-03-06T12:02:00.000Z',
+          updatedAt: '2026-03-06T12:02:03.000Z',
+          issuerDid: 'did:web:localhost%3A3310',
+          content: [
+            {
+              kid: 'ica-es384-20260305',
+              alg: 'ES384',
+              activatedAt: '2026-03-06T12:02:03.000Z',
+              assertionMethod: 'did:web:localhost%3A3310#ica-es384-20260305',
+              chainLength: 1,
+            },
+          ],
+        },
+      },
+    ],
+  },
+} as const;
+
+const ADD_EVIDENCE_RESPONSE_SUCCESS_EXAMPLE = {
+  jti: 'urn:uuid:add-evidence-resp-001',
+  iss: 'did:web:localhost%3A3310',
+  aud: 'did:web:localhost%3A3310',
+  thid: 'evidence-add-001',
+  type: 'application/bundle-api+json',
+  body: {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    total: 1,
+    issues: {
+      resourceType: 'OperationOutcome',
+      issue: [
+        {
+          severity: 'information',
+          code: 'informational',
+          diagnostics: 'Evidence record stored.',
+        },
+      ],
+    },
+    data: [
+      {
+        type: 'NetworkEvidenceAdd-v1.0',
+        response: {
+          status: '200',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: 'Evidence record stored.',
+              },
+            ],
+          },
+        },
+        resource: {
+          id: 'urn:uuid:add-evidence-resource-001',
+          type: 'network-evidence-add-v1.0',
+          thid: 'evidence-add-001',
+          tenantId: 'ica',
+          jurisdiction: 'ES',
+          sector: 'animal-care',
+          evidenceType: 'official-registry',
+          status: 'stored',
+          createdAt: '2026-03-06T12:03:00.000Z',
+          updatedAt: '2026-03-06T12:03:02.000Z',
+          content: [
+            {
+              evidenceRecordId: 'urn:uuid:evidence-record-001',
+              evidenceType: 'official-registry',
+              issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+              linkedToCredential: true,
+              storedAt: '2026-03-06T12:03:02.000Z',
+              operatorDid: 'did:web:localhost%3A3310#employee-01',
+            },
+          ],
+        },
+      },
+    ],
+  },
+} as const;
+
+const ISSUE_CREDENTIAL_RESPONSE_SUCCESS_EXAMPLE = {
+  jti: 'urn:uuid:issue-resp-001',
+  iss: 'did:web:localhost%3A3310',
+  aud: 'did:web:localhost%3A3310',
+  thid: 'credential-issue-001',
+  type: 'application/bundle-api+json',
+  body: {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    total: 1,
+    issues: {
+      resourceType: 'OperationOutcome',
+      issue: [
+        {
+          severity: 'information',
+          code: 'informational',
+          diagnostics: 'Credential record stored.',
+        },
+      ],
+    },
+    data: [
+      {
+        type: 'NetworkCredentialIssue-v1.0',
+        response: {
+          status: '200',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: 'Credential record stored.',
+              },
+            ],
+          },
+        },
+        resource: {
+          id: 'urn:uuid:issue-resource-001',
+          type: 'network-credential-issue-v1.0',
+          thid: 'credential-issue-001',
+          tenantId: 'ica',
+          jurisdiction: 'ES',
+          sector: 'animal-care',
+          credentialType: 'member-onboarding',
+          status: 'stored',
+          createdAt: '2026-03-06T12:04:00.000Z',
+          updatedAt: '2026-03-06T12:04:02.000Z',
+          content: [
+            {
+              issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+              credentialId: 'urn:uuid:vc-member-001',
+              credentialType: 'member-onboarding',
+              evidenceRecordIds: ['urn:uuid:evidence-record-001'],
+              storedAt: '2026-03-06T12:04:02.000Z',
+            },
+          ],
+        },
+      },
+    ],
+  },
+} as const;
+
+const CREDENTIAL_STATUS_RESPONSE_SUCCESS_EXAMPLE = {
+  jti: 'urn:uuid:status-resp-001',
+  iss: 'did:web:localhost%3A3310',
+  aud: 'did:web:localhost%3A3310',
+  thid: 'credential-status-001',
+  type: 'application/bundle-api+json',
+  body: {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    total: 1,
+    issues: {
+      resourceType: 'OperationOutcome',
+      issue: [
+        {
+          severity: 'information',
+          code: 'informational',
+          diagnostics: 'Credential status resolved.',
+        },
+      ],
+    },
+    data: [
+      {
+        type: 'NetworkCredentialStatus-v1.0',
+        response: {
+          status: '200',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: 'Credential status resolved.',
+              },
+            ],
+          },
+        },
+        resource: {
+          id: 'urn:uuid:status-resource-001',
+          type: 'network-credential-status-v1.0',
+          thid: 'credential-status-001',
+          tenantId: 'ica',
+          jurisdiction: 'ES',
+          sector: 'animal-care',
+          credentialType: 'member-onboarding',
+          status: 'resolved',
+          createdAt: '2026-03-06T12:05:00.000Z',
+          updatedAt: '2026-03-06T12:05:02.000Z',
+          content: [
+            {
+              status: 'good',
+              checkedAt: '2026-03-06T12:05:02.000Z',
+              issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+              credentialId: 'urn:uuid:vc-member-001',
+            },
+          ],
+        },
+      },
+    ],
+  },
+} as const;
+
+const CREDENTIAL_REVOKE_RESPONSE_SUCCESS_EXAMPLE = {
+  jti: 'urn:uuid:revoke-resp-001',
+  iss: 'did:web:localhost%3A3310',
+  aud: 'did:web:localhost%3A3310',
+  thid: 'credential-revoke-001',
+  type: 'application/bundle-api+json',
+  body: {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    total: 1,
+    issues: {
+      resourceType: 'OperationOutcome',
+      issue: [
+        {
+          severity: 'information',
+          code: 'informational',
+          diagnostics: 'Credential status set to revoked.',
+        },
+      ],
+    },
+    data: [
+      {
+        type: 'NetworkCredentialRevoke-v1.0',
+        response: {
+          status: '200',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: 'Credential status set to revoked.',
+              },
+            ],
+          },
+        },
+        resource: {
+          id: 'urn:uuid:revoke-resource-001',
+          type: 'network-credential-revoke-v1.0',
+          thid: 'credential-revoke-001',
+          tenantId: 'ica',
+          jurisdiction: 'ES',
+          sector: 'animal-care',
+          credentialType: 'member-onboarding',
+          status: 'revoked',
+          createdAt: '2026-03-06T12:06:00.000Z',
+          updatedAt: '2026-03-06T12:06:02.000Z',
+          content: [
+            {
+              status: 'revoked',
+              revokedAt: '2026-03-06T12:06:02.000Z',
+              issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+              credentialId: 'urn:uuid:vc-member-001',
+              subjectId: 'mailto:member@example.org',
+              reason: 'membership-terminated',
+              revokedBy: 'did:web:localhost%3A3310#employee-02',
+            },
+          ],
+        },
+      },
+    ],
+  },
+} as const;
+
 export function buildIcaVerifyOpenApiSpec() {
   return {
     openapi: '3.1.0',
@@ -575,7 +1176,7 @@ export function buildIcaVerifyOpenApiSpec() {
                       type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
                       body: {
                         issuedCredentialRecordId: 'urn:uuid:issued-record-001',
-                        operatorDid: 'did:web:ica.example.com#employee-01',
+                        operatorDid: 'did:web:localhost%3A3310#employee-01',
                         evidence: {
                           type: 'official-registry',
                           source: 'mercantile-registry',
@@ -583,7 +1184,7 @@ export function buildIcaVerifyOpenApiSpec() {
                           checkedAt: '2026-03-06T10:00:00.000Z',
                           proof: {
                             type: 'OperatorApprovalProof',
-                            signer: 'did:web:ica.example.com#employee-01',
+                            signer: 'did:web:localhost%3A3310#employee-01',
                             signature: '<jws>',
                           },
                         },
@@ -671,7 +1272,7 @@ export function buildIcaVerifyOpenApiSpec() {
                         credential: {
                           id: 'urn:uuid:vc-member-001',
                           type: ['VerifiableCredential', 'MemberCredential'],
-                          issuer: 'did:web:ica.example.com',
+                          issuer: 'did:web:localhost%3A3310',
                           credentialSubject: {
                             id: 'mailto:member@example.org',
                             membershipId: 'COL-0001',
@@ -683,7 +1284,7 @@ export function buildIcaVerifyOpenApiSpec() {
                             checkedAt: '2026-03-06T10:01:00.000Z',
                             proof: {
                               type: 'OperatorApprovalProof',
-                              signer: 'did:web:ica.example.com#employee-02',
+                              signer: 'did:web:localhost%3A3310#employee-02',
                               signature: '<jws>',
                             },
                           },
@@ -853,7 +1454,7 @@ export function buildIcaVerifyOpenApiSpec() {
                       body: {
                         credentialId: 'urn:uuid:vc-member-001',
                         reason: 'membership-terminated',
-                        revokedBy: 'did:web:ica.example.com#employee-02',
+                        revokedBy: 'did:web:localhost%3A3310#employee-02',
                       },
                     },
                   },
@@ -1081,6 +1682,12 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/didcomm-plain+json': {
                   schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                  examples: {
+                    activationCompleted: {
+                      summary: 'Activation succeeded',
+                      value: ACTIVATE_RESPONSE_SUCCESS_EXAMPLE,
+                    },
+                  },
                 },
               },
             },
@@ -1162,6 +1769,12 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/didcomm-plain+json': {
                   schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                  examples: {
+                    addEvidenceCompleted: {
+                      summary: 'Evidence stored',
+                      value: ADD_EVIDENCE_RESPONSE_SUCCESS_EXAMPLE,
+                    },
+                  },
                 },
               },
             },
@@ -1243,6 +1856,12 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/didcomm-plain+json': {
                   schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                  examples: {
+                    issueCompleted: {
+                      summary: 'Credential stored',
+                      value: ISSUE_CREDENTIAL_RESPONSE_SUCCESS_EXAMPLE,
+                    },
+                  },
                 },
               },
             },
@@ -1324,6 +1943,12 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/didcomm-plain+json': {
                   schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                  examples: {
+                    statusCompleted: {
+                      summary: 'Credential status resolved',
+                      value: CREDENTIAL_STATUS_RESPONSE_SUCCESS_EXAMPLE,
+                    },
+                  },
                 },
               },
             },
@@ -1405,6 +2030,12 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/didcomm-plain+json': {
                   schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                  examples: {
+                    revokeCompleted: {
+                      summary: 'Credential revoked',
+                      value: CREDENTIAL_REVOKE_RESPONSE_SUCCESS_EXAMPLE,
+                    },
+                  },
                 },
               },
             },
@@ -1619,6 +2250,16 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/didcomm-plain+json': {
                   schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                  examples: {
+                    verificationSucceededWithEvidence: {
+                      summary: 'Verification succeeded with two VCs and evidence',
+                      value: VERIFY_RESPONSE_SUCCESS_EXAMPLE,
+                    },
+                    verificationFailed: {
+                      summary: 'Verification failed',
+                      value: VERIFY_RESPONSE_FAILED_EXAMPLE,
+                    },
+                  },
                 },
               },
             },

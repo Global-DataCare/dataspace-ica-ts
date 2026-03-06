@@ -1144,9 +1144,9 @@ test('VerifyResponseManager failed job includes revocation debug details when av
       };
       data?: Array<{
         resource?: {
-          content?: {
+          content?: Array<{
             error?: string;
-          };
+          }>;
         };
         response?: {
           outcome?: {
@@ -1157,7 +1157,7 @@ test('VerifyResponseManager failed job includes revocation debug details when av
     };
   };
   const content = payload.body?.data?.[0]?.resource?.content;
-  assert.equal(content?.error, 'Revocation check did not pass (status=unknown).');
+  assert.equal(content?.[0]?.error, 'Revocation check did not pass (status=unknown).');
   const issues = payload.body?.issues?.issue || [];
   assert.equal(issues.length >= 4, true);
   assert.equal(issues[1]?.code, 'transient');
@@ -1317,6 +1317,75 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.deepEqual(verifyErrorSchema?.properties?.body?.properties?.data?.example, []);
   assert.deepEqual(verifyErrorSchema?.properties?.body?.example?.data, []);
   assert.equal(verifyErrorSchema?.properties?.body?.properties?.result, undefined);
+
+  const verifyPollingExamples =
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response']
+      ?.post
+      ?.responses?.['200']
+      ?.content?.['application/didcomm-plain+json']
+      ?.examples as any;
+  const verifySuccessData = verifyPollingExamples?.verificationSucceededWithEvidence?.value?.body?.data;
+  assert.ok(Array.isArray(verifySuccessData));
+  assert.equal(verifySuccessData?.length, 2);
+  assert.ok(Array.isArray(verifySuccessData?.[0]?.resource?.evidence));
+  assert.ok(Array.isArray(verifySuccessData?.[1]?.resource?.evidence));
+  assert.ok(verifyPollingExamples?.verificationFailed);
+
+  const activatePollingExamples =
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate-response']
+      ?.post
+      ?.responses?.['200']
+      ?.content?.['application/didcomm-plain+json']
+      ?.examples as any;
+  assert.ok(Array.isArray(activatePollingExamples?.activationCompleted?.value?.body?.data?.[0]?.resource?.content));
+  assert.equal(
+    activatePollingExamples?.activationCompleted?.value?.body?.data?.[0]?.resource?.content?.[0]?.alg,
+    'ES384',
+  );
+
+  const addPollingExamples =
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add-response']
+      ?.post
+      ?.responses?.['200']
+      ?.content?.['application/didcomm-plain+json']
+      ?.examples as any;
+  assert.equal(
+    addPollingExamples?.addEvidenceCompleted?.value?.body?.data?.[0]?.resource?.content?.[0]?.evidenceType,
+    'official-registry',
+  );
+
+  const issuePollingExamples =
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue-response']
+      ?.post
+      ?.responses?.['200']
+      ?.content?.['application/didcomm-plain+json']
+      ?.examples as any;
+  assert.equal(
+    issuePollingExamples?.issueCompleted?.value?.body?.data?.[0]?.resource?.content?.[0]?.credentialType,
+    'member-onboarding',
+  );
+
+  const statusPollingExamples =
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_status-response']
+      ?.post
+      ?.responses?.['200']
+      ?.content?.['application/didcomm-plain+json']
+      ?.examples as any;
+  assert.equal(
+    statusPollingExamples?.statusCompleted?.value?.body?.data?.[0]?.resource?.content?.[0]?.status,
+    'good',
+  );
+
+  const revokePollingExamples =
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_revoke-response']
+      ?.post
+      ?.responses?.['200']
+      ?.content?.['application/didcomm-plain+json']
+      ?.examples as any;
+  assert.equal(
+    revokePollingExamples?.revokeCompleted?.value?.body?.data?.[0]?.resource?.content?.[0]?.status,
+    'revoked',
+  );
 });
 
 test('buildDidcommMessage defaults to bundle api type and keeps query thid', () => {
@@ -1729,9 +1798,9 @@ test('Credential status and revoke managers resolve and update revocation state'
   assert.equal(statusPollOutcomeBefore.type, 'succeeded');
   if (statusPollOutcomeBefore.type !== 'succeeded') return;
   const statusPayloadResolvedBefore = statusPollOutcomeBefore.payload as {
-    body?: { data?: Array<{ resource?: { content?: { status?: string } } }> };
+    body?: { data?: Array<{ resource?: { content?: Array<{ status?: string }> } }> };
   };
-  assert.equal(statusPayloadResolvedBefore.body?.data?.[0]?.resource?.content?.status, 'good');
+  assert.equal(statusPayloadResolvedBefore.body?.data?.[0]?.resource?.content?.[0]?.status, 'good');
 
   const revokePayload = Buffer.from(JSON.stringify({
     jti: 'msg-credential-revoke-001',
@@ -1793,11 +1862,11 @@ test('Credential status and revoke managers resolve and update revocation state'
   if (statusPollOutcomeAfter.type !== 'succeeded') return;
   const statusPayloadResolvedAfter = statusPollOutcomeAfter.payload as {
     body?: {
-      data?: Array<{ resource?: { content?: { status?: string; revokedAt?: string } } }>;
+      data?: Array<{ resource?: { content?: Array<{ status?: string; revokedAt?: string }> } }>;
     };
   };
-  assert.equal(statusPayloadResolvedAfter.body?.data?.[0]?.resource?.content?.status, 'revoked');
-  assert.equal(Boolean(statusPayloadResolvedAfter.body?.data?.[0]?.resource?.content?.revokedAt), true);
+  assert.equal(statusPayloadResolvedAfter.body?.data?.[0]?.resource?.content?.[0]?.status, 'revoked');
+  assert.equal(Boolean(statusPayloadResolvedAfter.body?.data?.[0]?.resource?.content?.[0]?.revokedAt), true);
 
   const issued = await collectionsService.listIssuedCredentials();
   const updated = issued.find((entry) => entry.credentialId === credentialId);

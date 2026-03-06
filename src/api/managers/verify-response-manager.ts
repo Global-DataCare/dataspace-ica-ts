@@ -169,9 +169,11 @@ export class VerifyResponseManager {
                 txId: '',
                 txTime: '',
               },
-              content: {
-                error: diagnostics,
-              },
+              content: [
+                {
+                  error: diagnostics,
+                },
+              ],
             },
             response: {
               status: '500',

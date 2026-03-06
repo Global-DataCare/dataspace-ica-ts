@@ -19,7 +19,7 @@
     "api:start": "node --env-file-if-exists=.env.local ./src/api/server.ts",
     "api:dev": "node --env-file-if-exists=.env.local --watch-path=./src ./src/api/server.ts",
     "api:example:activate": "node ./src/api/scripts/print-activate-example.ts",
-    "api:test": "node --test ./test/api.verify.contract.test.ts"
+    "api:test": "node --test ./test/api.verify.test.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.6",

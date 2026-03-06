@@ -111,9 +111,11 @@ export class ActivateResponseManager {
               status: 'failed',
               createdAt: new Date(job.createdAt).toISOString(),
               updatedAt: new Date(job.updatedAt).toISOString(),
-              content: {
-                error: diagnostics,
-              },
+              content: [
+                {
+                  error: diagnostics,
+                },
+              ],
             },
             response: {
               status: '500',
@@ -161,7 +163,8 @@ export class ActivateResponseManager {
             status: 'activated',
             createdAt: new Date(job.createdAt).toISOString(),
             updatedAt: new Date(job.updatedAt).toISOString(),
-            content: job.result,
+            issuerDid: job.result.issuerDid,
+            content: job.result.activated,
           },
           response: {
             status: '200',
