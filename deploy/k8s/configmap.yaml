@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dataspace-ica-config
+data:
+  ICA_API_HOST: "0.0.0.0"
+  ICA_API_PORT: "3310"
+  ICA_LOCAL_TENANT_ID: "ica"
+
+  ICA_VERIFY_STRICT_REVOCATION: "true"
+  ICA_VERIFY_STRICT_TEMPLATE_MATCH: "true"
+  ICA_VERIFY_TEMPLATE_MATCH_MODE: "logical-content"
+  ICA_VERIFY_DIGEST_ALGORITHM: "sha3-384"
+
+  ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX: "false"
+  ICA_TERMS_TEMPLATE_USE_TEST_PREFIX: "false"
+  ICA_TERMS_TEMPLATE_CACHE_TTL_SECONDS: "900"
+  ICA_TERMS_TEMPLATE_CACHE_MAX_ENTRIES: "64"
+  ICA_TERMS_TEMPLATE_URL_PATTERN: "https://raw.githubusercontent.com/Global-DataCare/terms/refs/heads/main/dataspace/{sector}/{jurisdictionLower}/{resourceVersion}/terms.pdf"
+
+  # Audit storage: none|filesystem|gcs
+  ICA_AUDIT_STORAGE_PROVIDER: "none"
+  ICA_AUDIT_STORAGE_REQUIRED: "true"
+  ICA_AUDIT_ATTACHMENT_URL_PATTERN: "urn:uuid:{objectId}"
+  ICA_AUDIT_STORAGE_FS_DIR: "/app/data/audit-pdf"
+  ICA_AUDIT_STORAGE_GCS_PREFIX: "ica-audit"
+
+  # Verification collections (issued credentials + evidence records)
+  # Provider: mem|firestore
+  ICA_COLLECTIONS_PROVIDER: "mem"
+  ICA_COLLECTIONS_REQUIRED: "true"
+  ICA_COLLECTIONS_FIRESTORE_COLLECTION_PREFIX: "ica"
+  ICA_COLLECTIONS_ISSUED_COLLECTION: "issued_credentials"
+  ICA_COLLECTIONS_EVIDENCE_COLLECTION: "evidence_records"
+  # Optional when provider=firestore
+  # ICA_COLLECTIONS_FIRESTORE_PROJECT_ID: "your-gcp-project-id"
+  # ICA_COLLECTIONS_FIRESTORE_DATABASE_ID: "(default)"
+
+  # Optional automatic trust bootstrap from FNMT public URLs.
+  ICA_FNMT_AUTO_DOWNLOAD: "true"
+  ICA_FNMT_ROOT_CERT_URL: "https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Raiz_FNMT-RCM_SHA256.cer"
+  ICA_FNMT_INTERMEDIATE_CERT_URLS: "https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Representacion.cer,https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Sector_Publico.cer,https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_FNMT_Usuarios.cer"

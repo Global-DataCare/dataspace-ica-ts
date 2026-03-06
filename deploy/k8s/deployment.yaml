@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dataspace-ica-api
+  labels:
+    app: dataspace-ica-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dataspace-ica-api
+  template:
+    metadata:
+      labels:
+        app: dataspace-ica-api
+    spec:
+      containers:
+        - name: api
+          image: europe-southwest1-docker.pkg.dev/PROJECT_ID/REPOSITORY_ID/dataspace-ica:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3310
+          envFrom:
+            - configMapRef:
+                name: dataspace-ica-config
+            - secretRef:
+                name: dataspace-ica-secrets
+                optional: true
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+          volumeMounts:
+            - name: audit-storage
+              mountPath: /app/data
+      securityContext:
+        runAsNonRoot: true
+      volumes:
+        - name: audit-storage
+          emptyDir: {}
