@@ -1306,6 +1306,23 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.ok(activateDidcommSchema?.properties?.body?.properties?.data);
   assert.equal(Array.isArray(activateDidcommSchema?.properties?.body?.oneOf), true);
 
+  const addDidcommExamples =
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add']
+      ?.post
+      ?.requestBody
+      ?.content?.['application/didcomm-plain+json']
+      ?.examples as any;
+  const addDidcommSchema =
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add']
+      ?.post
+      ?.requestBody
+      ?.content?.['application/didcomm-plain+json']
+      ?.schema as any;
+  assert.ok(addDidcommExamples?.addOfficialRegistryEvidence);
+  assert.ok(addDidcommExamples?.addOfficialRegistryEvidenceBatch);
+  assert.ok(addDidcommSchema?.properties?.body?.properties?.data);
+  assert.equal(Array.isArray(addDidcommSchema?.properties?.body?.oneOf), true);
+
   const verifyErrorSchema =
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify']
       ?.post
@@ -1352,6 +1369,10 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.equal(
     addPollingExamples?.addEvidenceCompleted?.value?.body?.data?.[0]?.resource?.content?.[0]?.evidenceType,
     'official-registry',
+  );
+  assert.equal(
+    addPollingExamples?.addEvidenceCompleted?.value?.body?.issues?.issue?.[0]?.diagnostics,
+    'Evidence record(s) stored: 2.',
   );
 
   const issuePollingExamples =
@@ -1553,7 +1574,7 @@ test('VerifyResponseManager stores issued credentials and evidence using mem col
 });
 
 test('AddEvidence managers persist evidence records using mem collections adapter', async () => {
-  const parsed = parseAddEvidenceRoute('/acme/cds-ES/v1/animal-care/network/evidence/address/_add');
+  const parsed = parseAddEvidenceRoute('/acme/cds-ES/v1/animal-care/network/evidence/official-registry/_add');
   assert.ok(parsed);
   assert.equal(parsed?.ok, true);
   if (!parsed || !parsed.ok) return;
@@ -1576,15 +1597,113 @@ test('AddEvidence managers persist evidence records using mem collections adapte
     thid: 'thid-evidence-add-001',
     type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
     body: {
-      issuedCredentialRecordId: 'urn:uuid:issued-existing-001',
-      operatorDid: 'did:web:ica.example.com#employee-1',
+      data: [
+        {
+          issuedCredentialRecordId: 'urn:uuid:issued-existing-001',
+          operatorDid: 'did:web:ica.example.com#employee-1',
+          evidence: {
+            type: 'electronic_record',
+            time: '2026-03-06T10:00:00.000Z',
+            verifier: {
+              organization: 'did:web:localhost%3A3310',
+            },
+            record: {
+              type: 'official-registry',
+              source: {
+                id: 'did:web:registry.example.org',
+                type: 'PublicRegistry',
+              },
+            },
+            attachments: [
+              {
+                digest: {
+                  alg: 'sha3-384',
+                  value: 'c2lnbmF0dXJl',
+                },
+                url: 'urn:uuid:evidence-doc-001',
+              },
+            ],
+          },
+        },
+        {
+          issuedCredentialRecordId: 'urn:uuid:issued-existing-001',
+          operatorDid: 'did:web:ica.example.com#employee-2',
+          evidence: {
+            type: 'document',
+            method: 'eid',
+            time: '2026-03-06T10:05:00.000Z',
+            verifier: {
+              organization: 'did:web:localhost%3A3310',
+            },
+            document_details: {
+              type: 'official-registry-certificate',
+              document_number: 'B-123456',
+            },
+            attachments: {
+              digest: {
+                alg: 'sha3-384',
+                value: 'ZG9jdW1lbnQ=',
+              },
+              url: 'urn:uuid:evidence-doc-002',
+            },
+          },
+        },
+      ],
+    },
+  }));
+
+  const req = Readable.from([payload]) as unknown as IncomingMessage;
+  (req as any).method = 'POST';
+  (req as any).url = '/acme/cds-ES/v1/animal-care/network/evidence/official-registry/_add';
+  (req as any).headers = {
+    host: 'localhost:3310',
+    'content-type': 'application/didcomm-plain+json',
+    'content-length': String(payload.length),
+  };
+
+  const submitOutcome = await requestManager.submit(parsed.context, req);
+  assert.equal(submitOutcome.type, 'accepted');
+  if (submitOutcome.type !== 'accepted') return;
+  assert.equal(
+    submitOutcome.location,
+    '/acme/cds-ES/v1/animal-care/network/evidence/official-registry/_add-response',
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const pollReq = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
+  const pollUrl = new URL(
+    'http://localhost/acme/cds-ES/v1/animal-care/network/evidence/official-registry/_add-response?thid=thid-evidence-add-001',
+  );
+  const pollOutcome = await responseManager.poll(parsed.context, pollReq, pollUrl);
+  assert.equal(pollOutcome.type, 'succeeded');
+
+  const evidence = (await collectionsService.listEvidenceRecords())
+    .filter((item) => item.thid === 'thid-evidence-add-001');
+  assert.equal(evidence.length, 2);
+  assert.equal(evidence[0]?.evidenceType, 'official-registry');
+  assert.equal(evidence[0]?.tenantId, 'acme');
+  if (pollOutcome.type === 'succeeded') {
+    const payloadBody = (pollOutcome.payload as any)?.body;
+    assert.equal(payloadBody?.data?.[0]?.resource?.content?.length, 2);
+  }
+});
+
+test('AddEvidence managers reject non-OIDC4IDA evidence payload', async () => {
+  const parsed = parseAddEvidenceRoute('/acme/cds-ES/v1/animal-care/network/evidence/address/_add');
+  assert.ok(parsed);
+  assert.equal(parsed?.ok, true);
+  if (!parsed || !parsed.ok) return;
+
+  const store = new InMemoryEntityJobStore<AddEvidenceRouteContext, AddEvidenceResult>(60);
+  const requestManager = new AddEvidenceRequestManager(store);
+  const payload = Buffer.from(JSON.stringify({
+    jti: 'msg-evidence-add-invalid-001',
+    thid: 'thid-evidence-add-invalid-001',
+    type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
+    body: {
       evidence: {
         type: 'address',
         checkedAt: '2026-03-06T10:00:00.000Z',
-        proof: {
-          type: 'OperatorApprovalProof',
-          signature: '<jws>',
-        },
       },
     },
   }));
@@ -1598,27 +1717,12 @@ test('AddEvidence managers persist evidence records using mem collections adapte
     'content-length': String(payload.length),
   };
 
-  const submitOutcome = await requestManager.submit(parsed.context, req);
-  assert.equal(submitOutcome.type, 'accepted');
-  if (submitOutcome.type !== 'accepted') return;
-  assert.equal(
-    submitOutcome.location,
-    '/acme/cds-ES/v1/animal-care/network/evidence/address/_add-response',
-  );
-  await new Promise((resolve) => setImmediate(resolve));
-
-  const pollReq = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
-  const pollUrl = new URL(
-    'http://localhost/acme/cds-ES/v1/animal-care/network/evidence/address/_add-response?thid=thid-evidence-add-001',
-  );
-  const pollOutcome = await responseManager.poll(parsed.context, pollReq, pollUrl);
-  assert.equal(pollOutcome.type, 'succeeded');
-
-  const evidence = (await collectionsService.listEvidenceRecords())
-    .filter((item) => item.thid === 'thid-evidence-add-001');
-  assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.evidenceType, 'address');
-  assert.equal(evidence[0]?.tenantId, 'acme');
+  const outcome = await requestManager.submit(parsed.context, req);
+  assert.equal(outcome.type, 'error');
+  if (outcome.type !== 'error') return;
+  assert.equal(outcome.statusCode, 400);
+  assert.match(outcome.message, /Invalid OIDC4IDA evidence payload/i);
+  assert.match(outcome.message, /body\.evidence\.type must be one of/i);
 });
 
 test('IssueCredential managers persist credential and evidence records using mem collections adapter', async () => {

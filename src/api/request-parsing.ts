@@ -6,6 +6,7 @@ import type { IncomingMessage } from 'node:http';
 import type {
   ActivateSigningKeyInput,
   ActivateSigningKeySubmission,
+  AddEvidenceInput,
   AddEvidenceSubmission,
   CredentialRevokeSubmission,
   CredentialStatusSubmission,
@@ -13,6 +14,7 @@ import type {
   SupportedSigningAlgorithm,
   VerifySubmission,
 } from './types.ts';
+import { assertValidOidc4idaEvidenceObject } from './tools/oidc4ida-evidence-validation.ts';
 
 type ParsedThreadPayload = {
   thid?: string;
@@ -370,29 +372,71 @@ function parseEvidenceEntries(value: unknown): Record<string, unknown>[] {
     .filter(Boolean) as Record<string, unknown>[];
 }
 
+function parseAddEvidenceInput(
+  rawEntry: unknown,
+  fallback: ParsedObject,
+  indexLabel: string,
+): AddEvidenceInput {
+  const entry = asObject(rawEntry) || {};
+  const rawEvidence = asObject(entry.evidence);
+  if (!rawEvidence) {
+    throw new Error(`Evidence payload requires ${indexLabel}.evidence object.`);
+  }
+  assertValidOidc4idaEvidenceObject(rawEvidence, `${indexLabel}.evidence`);
+
+  const issuedCredentialRecordId =
+    asNonEmptyString(entry.issuedCredentialRecordId || fallback.issuedCredentialRecordId) || undefined;
+  const operatorDid =
+    asNonEmptyString(entry.operatorDid || entry.performedBy || fallback.operatorDid || fallback.performedBy)
+    || undefined;
+
+  return {
+    evidence: { ...rawEvidence },
+    ...(issuedCredentialRecordId ? { issuedCredentialRecordId } : {}),
+    ...(operatorDid ? { operatorDid } : {}),
+  };
+}
+
 export async function parseAddEvidenceSubmission(req: IncomingMessage): Promise<AddEvidenceSubmission> {
   const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_add');
-
-  const rawEvidence = asObject(parsedBody.evidence) || asObject(parsed.evidence);
-  if (!rawEvidence) {
-    throw new Error('Evidence payload requires body.evidence object.');
-  }
 
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
-  const issuedCredentialRecordId =
-    asNonEmptyString(parsedBody.issuedCredentialRecordId || parsed.issuedCredentialRecordId) || undefined;
-  const operatorDid =
-    asNonEmptyString(parsedBody.operatorDid || parsed.operatorDid || parsedBody.performedBy || parsed.performedBy)
-    || undefined;
+
+  const fallback: ParsedObject = { ...parsed, ...parsedBody };
+  const rawBatchEntries = Array.isArray(parsedBody.data)
+    ? parsedBody.data
+    : Array.isArray(parsed.data)
+      ? parsed.data
+      : [];
+
+  const evidences = rawBatchEntries.length
+    ? rawBatchEntries.map((entry, index) => parseAddEvidenceInput(entry, fallback, `body.data[${index}]`))
+    : (() => {
+      const rawEvidence = asObject(parsedBody.evidence) || asObject(parsed.evidence);
+      if (!rawEvidence) {
+        throw new Error('Evidence payload requires body.evidence object or body.data[].evidence entries.');
+      }
+      assertValidOidc4idaEvidenceObject(rawEvidence, 'body.evidence');
+      const issuedCredentialRecordId =
+        asNonEmptyString(parsedBody.issuedCredentialRecordId || parsed.issuedCredentialRecordId) || undefined;
+      const operatorDid =
+        asNonEmptyString(
+          parsedBody.operatorDid || parsed.operatorDid || parsedBody.performedBy || parsed.performedBy,
+        )
+        || undefined;
+      return [{
+        evidence: { ...rawEvidence },
+        ...(issuedCredentialRecordId ? { issuedCredentialRecordId } : {}),
+        ...(operatorDid ? { operatorDid } : {}),
+      }];
+    })();
 
   return {
     thid,
-    evidence: { ...rawEvidence },
-    issuedCredentialRecordId,
-    operatorDid,
+    evidences,
   };
 }
 

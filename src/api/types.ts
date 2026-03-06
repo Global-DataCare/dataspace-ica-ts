@@ -136,6 +136,10 @@ export interface ActivateSigningKeySubmission {
 
 export interface AddEvidenceSubmission {
   thid: string;
+  evidences: AddEvidenceInput[];
+}
+
+export interface AddEvidenceInput {
   evidence: Record<string, unknown>;
   issuedCredentialRecordId?: string;
   operatorDid?: string;
@@ -242,6 +246,12 @@ export interface ActivateSigningKeyJob {
 }
 
 export interface AddEvidenceResult {
+  evidenceType: string;
+  storedCount: number;
+  items: AddEvidenceResultItem[];
+}
+
+export interface AddEvidenceResultItem {
   evidenceRecordId: string;
   evidenceType: string;
   issuedCredentialRecordId: string;

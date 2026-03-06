@@ -144,7 +144,7 @@ export class AddEvidenceResponseManager {
       {
         severity: 'information',
         code: 'informational',
-        diagnostics: 'Evidence record stored.',
+        diagnostics: `Evidence record(s) stored: ${job.result.storedCount}.`,
       },
     ]);
     const succeededBody: VerifyBundleResponse = {
@@ -166,7 +166,7 @@ export class AddEvidenceResponseManager {
             status: 'stored',
             createdAt: new Date(job.createdAt).toISOString(),
             updatedAt: new Date(job.updatedAt).toISOString(),
-            content: [job.result],
+            content: job.result.items,
           },
           response: {
             status: '200',

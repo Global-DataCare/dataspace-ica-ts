@@ -38,32 +38,41 @@ export class AddEvidenceRequestManager {
         this.jobStore.markRunning(submission.thid);
         try {
           const nowIso = new Date().toISOString();
-          const evidenceRecordId = `urn:uuid:${randomUUID()}`;
-          const issuedCredentialRecordId = submission.issuedCredentialRecordId || `urn:uuid:${randomUUID()}`;
-          const evidence: EvidenceRecord = {
-            id: evidenceRecordId,
-            issuedCredentialRecordId,
-            tenantId: route.tenantId,
-            jurisdiction: route.jurisdiction.toUpperCase(),
-            sector: route.sector,
-            resourceType: route.evidenceType,
-            thid: submission.thid,
-            evidenceType: route.evidenceType,
-            evidence: {
-              ...submission.evidence,
-              ...(submission.operatorDid ? { operatorDid: submission.operatorDid } : {}),
-            },
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          };
-          await this.collectionsService.storeEvidenceRecords([evidence]);
+          const evidenceRecords: EvidenceRecord[] = [];
+          const resultItems = submission.evidences.map((entry) => {
+            const evidenceRecordId = `urn:uuid:${randomUUID()}`;
+            const issuedCredentialRecordId = entry.issuedCredentialRecordId || `urn:uuid:${randomUUID()}`;
+            evidenceRecords.push({
+              id: evidenceRecordId,
+              issuedCredentialRecordId,
+              tenantId: route.tenantId,
+              jurisdiction: route.jurisdiction.toUpperCase(),
+              sector: route.sector,
+              resourceType: route.evidenceType,
+              thid: submission.thid,
+              evidenceType: route.evidenceType,
+              evidence: {
+                ...entry.evidence,
+                ...(entry.operatorDid ? { operatorDid: entry.operatorDid } : {}),
+              },
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            });
+            return {
+              evidenceRecordId,
+              evidenceType: route.evidenceType,
+              issuedCredentialRecordId,
+              linkedToCredential: Boolean(entry.issuedCredentialRecordId),
+              storedAt: nowIso,
+              ...(entry.operatorDid ? { operatorDid: entry.operatorDid } : {}),
+            };
+          });
+
+          await this.collectionsService.storeEvidenceRecords(evidenceRecords);
           this.jobStore.markSucceeded(submission.thid, {
-            evidenceRecordId,
             evidenceType: route.evidenceType,
-            issuedCredentialRecordId,
-            linkedToCredential: Boolean(submission.issuedCredentialRecordId),
-            storedAt: nowIso,
-            ...(submission.operatorDid ? { operatorDid: submission.operatorDid } : {}),
+            storedCount: resultItems.length,
+            items: resultItems,
           });
         } catch (error: unknown) {
           const message = (error as Error)?.message || String(error);

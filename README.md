@@ -1,4 +1,4 @@
-# dataspace-ica (private)
+# dataspace-ica
 
 TypeScript repository with two capabilities:
 
@@ -10,6 +10,20 @@ TypeScript repository with two capabilities:
 - `_verify`, `_activate`, `_add` (evidence), `_issue` (credentials), `_status`, and `_revoke` are implemented with async pattern (`202 + Location` + polling).
 - Business responses and early `4xx/5xx` errors are returned as DIDComm plaintext (`jti/iss/aud/thid/type/body`).
 - `body` is a `Bundle` (`batch-response`) with `issues`, `data[]`, and optional `result`.
+
+## Canonical Interop Baseline
+
+The API uses one stable interoperability baseline across all endpoints:
+
+- DIDComm plaintext envelope for requests/responses.
+- `body` payload as `Bundle` (`resourceType: "Bundle"`, `type: "batch-response"`).
+- `body.data[]` as the primary business result container.
+- `body.issues` as FHIR `OperationOutcome` (including early `4xx/5xx` errors).
+- `resource.content` represented as array (`content[]`) in endpoint result resources.
+- Evidence objects aligned with OIDC4IDA structures.
+- `credentialSubject` semantics based on `schema.org` types (`Organization`, `Person`).
+
+Only business payload changes per endpoint (`_verify`, `_add`, `_issue`, `_status`, `_revoke`, `_activate`); envelope and bundle structure remain the same.
 
 ## Quick Start (5 minutes)
 
@@ -63,22 +77,28 @@ PDF_FILE="$HOME/Documents/TEST-A4-signed-fnmt.pdf"
 
 ```bash
 PDF_B64=$(base64 < "$PDF_FILE" | tr -d '\n')
+VERIFY_PAYLOAD=$(cat <<JSON
+{
+  "jti": "msg-$THID",
+  "thid": "$THID",
+  "type": "https://globaldatacare.es/didcomm/ica/terms/verify-request/v1",
+  "attachments": [
+    {
+      "id": "pdf-1",
+      "media_type": "application/pdf",
+      "data": {
+        "base64": "$PDF_B64"
+      }
+    }
+  ]
+}
+JSON
+)
 
 curl -i -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/terms/pdf/$VERSION/_verify" \
   -H "Content-Type: application/didcomm-plain+json" \
-  -d "{
-    \"jti\":\"msg-$THID\",
-    \"thid\":\"$THID\",
-    \"type\":\"https://globaldatacare.es/didcomm/ica/terms/verify-request/v1\",
-    \"attachments\":[
-      {
-        \"id\":\"pdf-1\",
-        \"media_type\":\"application/pdf\",
-        \"data\":{\"base64\":\"$PDF_B64\"}
-      }
-    ]
-  }"
+  --data "$VERIFY_PAYLOAD"
 ```
 
 If `Content-Type` is not `application/didcomm-plain+json`, API returns `415 Unsupported Media Type`.
@@ -297,6 +317,8 @@ curl -sS -X POST \
 
 ### 4) Add evidence (`_add`)
 
+`_add` validates OIDC4IDA evidence objects. Use batch mode with `body.data[]` (recommended) or single mode with `body.evidence` (legacy).
+
 ```bash
 curl -i -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/evidence/official-registry/_add" \
@@ -306,17 +328,36 @@ curl -i -X POST \
     "thid":"evidence-add-001",
     "type":"https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1",
     "body":{
-      "issuedCredentialRecordId":"urn:uuid:issued-credential-record-001",
-      "operatorDid":"did:web:localhost%3A3310#employee-01",
-      "evidence":{
-        "type":"official-registry",
-        "registryId":"COL-0001",
-        "checkedAt":"2026-03-06T10:00:00.000Z",
-        "proof":{
-          "type":"OperatorApprovalProof",
-          "signature":"<jws>"
+      "data":[
+        {
+          "issuedCredentialRecordId":"urn:uuid:issued-credential-record-001",
+          "operatorDid":"did:web:localhost%3A3310#employee-01",
+          "evidence":{
+            "type":"electronic_record",
+            "time":"2026-03-06T10:00:00.000Z",
+            "verifier":{"organization":"did:web:localhost%3A3310"},
+            "record":{
+              "type":"official-registry",
+              "source":{"id":"did:web:registry.example.org","type":"PublicRegistry"}
+            },
+            "attachments":[
+              {"digest":{"alg":"sha3-384","value":"<base64>"},"url":"urn:uuid:evidence-doc-001"}
+            ]
+          }
+        },
+        {
+          "issuedCredentialRecordId":"urn:uuid:issued-credential-record-001",
+          "operatorDid":"did:web:localhost%3A3310#employee-02",
+          "evidence":{
+            "type":"document",
+            "method":"eid",
+            "time":"2026-03-06T10:05:00.000Z",
+            "verifier":{"organization":"did:web:localhost%3A3310"},
+            "document_details":{"type":"official-registry-certificate","document_number":"COL-0001"},
+            "attachments":{"digest":{"alg":"sha3-384","value":"<base64>"},"url":"urn:uuid:evidence-doc-002"}
+          }
         }
-      }
+      ]
     }
   }'
 ```
@@ -412,7 +453,7 @@ curl -sS -X POST \
 - If the response is `202`, wait `Retry-After` (or 5 seconds) and poll again.
 - Terminal state is any non-`202` response.
 
-## DIDComm Response Contract
+## DIDComm Response Format
 
 Final responses (`200`) and early errors (`4xx/5xx`) are always DIDComm plaintext with:
 
@@ -420,6 +461,24 @@ Final responses (`200`) and early errors (`4xx/5xx`) are always DIDComm plaintex
 - `body.resourceType: "Bundle"`
 - `body.type: "batch-response"`
 - `body.issues` in FHIR `OperationOutcome` format
+
+Basic DIDComm fields used by this API:
+
+| Field | Where | Meaning in this API |
+|---|---|---|
+| `jti` | request/response | Message identifier. If `thid` is missing, request parsing can fallback to `jti` as thread id source. |
+| `thid` | request/response | Thread identifier for async flow. Required in polling (`_*-response`) via query/body; if absent in early errors it can be `""`. |
+| `type` | request/response | Semantic message type. Responses use `application/bundle-api+json`; requests use endpoint-specific DIDComm types. |
+| `body` | request/response | Main business payload. In responses it is always a `Bundle` with `data[]`, `total`, `issues` (and optional `result`). |
+| `iss` | response | Issuer DID of ICA service (`did:web:...`) used to build response envelope. |
+| `aud` | response | Audience DID resolved by config/routing; in early errors it can be `""` if request context is incomplete. |
+| `attachments` | request (`_verify`) | Transport for PDF: use `attachments[].data.base64` (or `attachments[].data.links`). |
+
+Transport constraints:
+
+- `Content-Type` for API actions must be `application/didcomm-plain+json`.
+- `Content-Encoding` must be `identity`.
+- `application/didcomm-encrypted+json` is not accepted directly by these endpoints (decrypt before calling API).
 
 Example envelope:
 
@@ -496,7 +555,7 @@ Route constraints:
 - `npm run api:dev`: watch mode (`./src`)
 - `npm run api:start`: normal start alias
 - `npm run api:example:activate`: generates deterministic DIDComm payload for `_activate`
-- `npm run test`: API contract tests
+- `npm run test`: API behavior tests
 - `npm run typecheck`: strict TypeScript checks
 
 ## Docker and GKE

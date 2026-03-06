@@ -260,14 +260,157 @@ const ACTIVATE_DIDCOMM_REQUEST_SCHEMA = {
   },
 } as const;
 
-const ADD_EVIDENCE_REQUEST_BODY_SCHEMA = {
+const OIDC4IDA_CHECK_DETAILS_ITEM_SCHEMA = {
+  type: 'object',
+  required: ['check_method'],
+  properties: {
+    check_method: { type: 'string' },
+    organization: { type: 'string' },
+    txn: { type: 'string' },
+    time: { type: 'string' },
+  },
+  additionalProperties: true,
+} as const;
+
+const OIDC4IDA_ATTACHMENT_DIGEST_SCHEMA = {
+  type: 'object',
+  required: ['alg', 'value'],
+  properties: {
+    alg: { type: 'string' },
+    value: { type: 'string' },
+  },
+  additionalProperties: true,
+} as const;
+
+const OIDC4IDA_EXTERNAL_ATTACHMENT_SCHEMA = {
+  type: 'object',
+  required: ['digest'],
+  properties: {
+    digest: OIDC4IDA_ATTACHMENT_DIGEST_SCHEMA,
+    url: { type: 'string' },
+  },
+  additionalProperties: true,
+} as const;
+
+const OIDC4IDA_EVIDENCE_DOCUMENT_SCHEMA = {
+  type: 'object',
+  required: ['type', 'method', 'verifier'],
+  properties: {
+    type: { type: 'string', enum: ['document'] },
+    method: { type: 'string' },
+    time: { type: 'string' },
+    verifier: {
+      type: 'object',
+      required: ['organization'],
+      properties: {
+        organization: { type: 'string' },
+        txn: { type: 'string' },
+      },
+      additionalProperties: true,
+    },
+    check_details: {
+      type: 'array',
+      items: OIDC4IDA_CHECK_DETAILS_ITEM_SCHEMA,
+    },
+    attachments: OIDC4IDA_EXTERNAL_ATTACHMENT_SCHEMA,
+    document_details: { type: 'object', additionalProperties: true },
+  },
+  additionalProperties: true,
+} as const;
+
+const OIDC4IDA_EVIDENCE_ELECTRONIC_RECORD_SCHEMA = {
+  type: 'object',
+  required: ['type'],
+  properties: {
+    type: { type: 'string', enum: ['electronic_record'] },
+    time: { type: 'string' },
+    verifier: {
+      type: 'object',
+      properties: {
+        organization: { type: 'string' },
+        txn: { type: 'string' },
+      },
+      additionalProperties: true,
+    },
+    check_details: {
+      type: 'array',
+      items: OIDC4IDA_CHECK_DETAILS_ITEM_SCHEMA,
+    },
+    record: { type: 'object', additionalProperties: true },
+    attachments: {
+      type: 'array',
+      items: OIDC4IDA_EXTERNAL_ATTACHMENT_SCHEMA,
+    },
+  },
+  anyOf: [
+    { required: ['record'] },
+    { required: ['attachments'] },
+  ],
+  additionalProperties: true,
+} as const;
+
+const OIDC4IDA_EVIDENCE_ELECTRONIC_SIGNATURE_SCHEMA = {
+  type: 'object',
+  required: ['type', 'signature_type', 'issuer', 'serial_number', 'created_at'],
+  properties: {
+    type: { type: 'string', enum: ['electronic_signature'] },
+    signature_type: { type: 'string' },
+    issuer: { type: 'string' },
+    serial_number: { type: 'string' },
+    created_at: { type: 'string' },
+    attachments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['content_type', 'content'],
+        properties: {
+          content_type: { type: 'string' },
+          content: { type: 'string' },
+        },
+        additionalProperties: true,
+      },
+    },
+  },
+  additionalProperties: true,
+} as const;
+
+const OIDC4IDA_EVIDENCE_SCHEMA = {
+  description: 'OIDC4IDA evidence object.',
+  oneOf: [
+    OIDC4IDA_EVIDENCE_DOCUMENT_SCHEMA,
+    OIDC4IDA_EVIDENCE_ELECTRONIC_RECORD_SCHEMA,
+    OIDC4IDA_EVIDENCE_ELECTRONIC_SIGNATURE_SCHEMA,
+  ],
+} as const;
+
+const ADD_EVIDENCE_DATA_ITEM_SCHEMA = {
   type: 'object',
   required: ['evidence'],
   properties: {
     issuedCredentialRecordId: { type: 'string' },
     operatorDid: { type: 'string' },
-    evidence: { type: 'object', additionalProperties: true },
+    evidence: OIDC4IDA_EVIDENCE_SCHEMA,
   },
+  additionalProperties: false,
+} as const;
+
+const ADD_EVIDENCE_REQUEST_BODY_SCHEMA = {
+  type: 'object',
+  description: 'Provide either body.evidence (single record) or body.data[] (batch).',
+  properties: {
+    issuedCredentialRecordId: { type: 'string' },
+    operatorDid: { type: 'string' },
+    evidence: OIDC4IDA_EVIDENCE_SCHEMA,
+    data: {
+      type: 'array',
+      minItems: 1,
+      items: ADD_EVIDENCE_DATA_ITEM_SCHEMA,
+    },
+  },
+  oneOf: [
+    { required: ['evidence'] },
+    { required: ['data'] },
+  ],
 } as const;
 
 const ADD_EVIDENCE_DIDCOMM_REQUEST_SCHEMA = {
@@ -723,7 +866,7 @@ const ADD_EVIDENCE_RESPONSE_SUCCESS_EXAMPLE = {
         {
           severity: 'information',
           code: 'informational',
-          diagnostics: 'Evidence record stored.',
+          diagnostics: 'Evidence record(s) stored: 2.',
         },
       ],
     },
@@ -738,7 +881,7 @@ const ADD_EVIDENCE_RESPONSE_SUCCESS_EXAMPLE = {
               {
                 severity: 'information',
                 code: 'informational',
-                diagnostics: 'Evidence record stored.',
+                diagnostics: 'Evidence record(s) stored: 2.',
               },
             ],
           },
@@ -762,6 +905,14 @@ const ADD_EVIDENCE_RESPONSE_SUCCESS_EXAMPLE = {
               linkedToCredential: true,
               storedAt: '2026-03-06T12:03:02.000Z',
               operatorDid: 'did:web:localhost%3A3310#employee-01',
+            },
+            {
+              evidenceRecordId: 'urn:uuid:evidence-record-002',
+              evidenceType: 'official-registry',
+              issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+              linkedToCredential: true,
+              storedAt: '2026-03-06T12:03:02.000Z',
+              operatorDid: 'did:web:localhost%3A3310#employee-02',
             },
           ],
         },
@@ -1169,7 +1320,7 @@ export function buildIcaVerifyOpenApiSpec() {
               'application/didcomm-plain+json': {
                 examples: {
                   addOfficialRegistryEvidence: {
-                    summary: 'Add official registry evidence',
+                    summary: 'Add single OIDC4IDA evidence (legacy body.evidence)',
                     value: {
                       jti: 'evidence-add-001',
                       thid: 'evidence-add-001',
@@ -1178,16 +1329,100 @@ export function buildIcaVerifyOpenApiSpec() {
                         issuedCredentialRecordId: 'urn:uuid:issued-record-001',
                         operatorDid: 'did:web:localhost%3A3310#employee-01',
                         evidence: {
-                          type: 'official-registry',
-                          source: 'mercantile-registry',
-                          registryId: 'B-123456',
-                          checkedAt: '2026-03-06T10:00:00.000Z',
-                          proof: {
-                            type: 'OperatorApprovalProof',
-                            signer: 'did:web:localhost%3A3310#employee-01',
-                            signature: '<jws>',
+                          type: 'electronic_record',
+                          time: '2026-03-06T10:00:00.000Z',
+                          verifier: {
+                            organization: 'did:web:localhost%3A3310',
                           },
+                          record: {
+                            type: 'official-registry',
+                            source: {
+                              id: 'did:web:mercantile-registry.example.org',
+                              type: 'PublicRegistry',
+                              country_code: 'ES',
+                              jurisdiction: 'ES',
+                            },
+                            created_at: '2026-03-06T10:00:00.000Z',
+                          },
+                          attachments: [
+                            {
+                              digest: {
+                                alg: 'sha3-384',
+                                value: '<base64>',
+                              },
+                              url: 'urn:uuid:evidence-doc-001',
+                            },
+                          ],
+                          check_details: [
+                            {
+                              check_method: 'vcrypt',
+                              organization: 'did:web:localhost%3A3310',
+                              time: '2026-03-06T10:00:00.000Z',
+                            },
+                          ],
                         },
+                      },
+                    },
+                  },
+                  addOfficialRegistryEvidenceBatch: {
+                    summary: 'Add evidence batch with body.data[]',
+                    value: {
+                      jti: 'evidence-add-002',
+                      thid: 'evidence-add-002',
+                      type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
+                      body: {
+                        data: [
+                          {
+                            issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+                            operatorDid: 'did:web:localhost%3A3310#employee-01',
+                            evidence: {
+                              type: 'electronic_record',
+                              time: '2026-03-06T10:00:00.000Z',
+                              verifier: {
+                                organization: 'did:web:localhost%3A3310',
+                              },
+                              record: {
+                                type: 'official-registry',
+                                source: {
+                                  id: 'did:web:mercantile-registry.example.org',
+                                  type: 'PublicRegistry',
+                                },
+                              },
+                              attachments: [
+                                {
+                                  digest: {
+                                    alg: 'sha3-384',
+                                    value: '<base64>',
+                                  },
+                                  url: 'urn:uuid:evidence-doc-001',
+                                },
+                              ],
+                            },
+                          },
+                          {
+                            issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+                            operatorDid: 'did:web:localhost%3A3310#employee-02',
+                            evidence: {
+                              type: 'document',
+                              method: 'eid',
+                              time: '2026-03-06T10:05:00.000Z',
+                              verifier: {
+                                organization: 'did:web:localhost%3A3310',
+                              },
+                              document_details: {
+                                type: 'official-registry-certificate',
+                                document_number: 'B-123456',
+                              },
+                              attachments: {
+                                digest: {
+                                  alg: 'sha3-384',
+                                  value: '<base64>',
+                                },
+                                url: 'urn:uuid:evidence-doc-002',
+                              },
+                            },
+                          },
+                        ],
                       },
                     },
                   },
