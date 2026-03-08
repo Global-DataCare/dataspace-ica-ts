@@ -3,13 +3,13 @@
 TypeScript repository with two capabilities:
 
 - ICA CLI operations (onboarding, CSR signing, publication).
-- Async ICA API for verification and network lifecycle operations (`_verify`, `_activate`, `_add`, `_issue`, `_status`, `_revoke` + polling).
+- Async ICA API for *Terms & Conditions* (PDF file) verification and network lifecycle operations (`_verify`, `_activate`, `_add`, `_upsert`, `_issue`, `_status`, `_revoke` + polling).
 
 ## Current Status
 
-- `_verify`, `_activate`, `_add` (evidence), `_issue` (credentials), `_status`, and `_revoke` are implemented with async pattern (`202 + Location` + polling).
+- `_verify`, `_activate`, `_add` (evidence), `_upsert` (delegation policy), `_issue` (credentials), `_status`, and `_revoke` are implemented with async pattern (`202 + Location` + polling).
 - Business responses and early `4xx/5xx` errors are returned as DIDComm plaintext (`jti/iss/aud/thid/type/body`).
-- `body` is a `Bundle` (`batch-response`) with `issues`, `data[]`, and optional `result`.
+- `body` is a `Bundle` (`batch-response`) with `issues` and `data[]` as source of truth.
 
 ## Canonical Interop Baseline
 
@@ -17,13 +17,13 @@ The API uses one stable interoperability baseline across all endpoints:
 
 - DIDComm plaintext envelope for requests/responses.
 - `body` payload as `Bundle` (`resourceType: "Bundle"`, `type: "batch-response"`).
-- `body.data[]` as the primary business result container.
+- `body.data[]` as the primary business result container (authoritative source).
 - `body.issues` as FHIR `OperationOutcome` (including early `4xx/5xx` errors).
 - `resource.content` represented as array (`content[]`) in endpoint result resources.
 - Evidence objects aligned with OIDC4IDA structures.
 - `credentialSubject` semantics based on `schema.org` types (`Organization`, `Person`).
 
-Only business payload changes per endpoint (`_verify`, `_add`, `_issue`, `_status`, `_revoke`, `_activate`); envelope and bundle structure remain the same.
+Only business payload changes per endpoint (`_verify`, `_add`, `_upsert`, `_issue`, `_status`, `_revoke`, `_activate`); envelope and bundle structure remain the same.
 
 ## Quick Start (5 minutes)
 
@@ -45,12 +45,76 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
+Self-signed ICA mode (no external CA required):
+
+```bash
+echo 'ICA_SELF_SIGN_TEST=true' >> .env.local
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE=replace-with-strong-passphrase' >> .env.local
+echo 'ICA_VC_PRIVATE_KEY_SEED_CONFIG=17:8:1:48' >> .env.local
+echo 'ICA_VC_PRIVATE_KEY_SEED_SALT=ica-seed-salt-v1' >> .env.local
+echo 'ICA_VC_SEED_ALG=ES384' >> .env.local
+# Bootstrap controller metadata while CA credentials are still pending
+echo 'ICA_SELF_CONTROLLER_KID=ica-controller-es384-001' >> .env.local
+echo 'ICA_SELF_CONTROLLER_EMAIL=it-director@example.org' >> .env.local
+echo 'ICA_SELF_CONTROLLER_MEMBER_TYPE=controller' >> .env.local
+echo 'ICA_SELF_CONTROLLER_ROLE=1120' >> .env.local
+echo 'ICA_SELF_CONTROLLER_JURISDICTION=ES' >> .env.local
+echo 'ICA_SELF_CONTROLLER_SECTOR=controller' >> .env.local
+# Optional: sign test-* proofs as valid JWS (default keeps invalid test proof for test routes)
+echo 'ICA_SELF_SIGN_TEST_VALID_PROOF=true' >> .env.local
+npm run dev
+```
+
+In production, disable self-sign mode and use `_activate` (or `ICA_VC_SIGNING_PRIVATE_KEY_PEM`) with CA-issued material.
+
+Bootstrap details (seed/direct key + CA transition): [`bootstrap.md`](./bootstrap.md)
+
+Controller + ICA bootstrap (CA submission flow):
+
+```bash
+# 1) Controller artifacts
+node ./bin/ica-cli.js controller:bootstrap \
+  --domain ica.example.com \
+  --email it-director@example.org \
+  --jurisdiction ES \
+  --role-isco 1120 \
+  --sector controller \
+  --alg ES384 \
+  --scrypt 17:8:1:48 \
+  --salt ica-controller-salt-v1 \
+  --passphrase "<controller-passphrase>" \
+  --out-dir output/controller-bootstrap
+
+# 2) ICA signing artifacts (linked to controller DID)
+node ./bin/ica-cli.js ica:bootstrap \
+  --domain ica.example.com \
+  --jurisdiction ES \
+  --scope onehealth:ica \
+  --alg ES384 \
+  --scrypt 17:8:1:48 \
+  --salt ica-signing-salt-v1 \
+  --passphrase "<ica-passphrase>" \
+  --controller-dir output/controller-bootstrap \
+  --out-dir output/ica-bootstrap
+
+# 3) Prepare one CA/bucket submission package
+node ./bin/ica-cli.js ca:prepare-submission \
+  --controller-dir output/controller-bootstrap \
+  --ica-dir output/ica-bootstrap \
+  --request-id req-es-20260307-001 \
+  --out-dir output/ca-submission
+```
+
+After CA returns signed chains, activate using `_activate` with canonical `body.data[]` and controller `body.signature`.
+
 Quick checks:
 
 ```bash
 curl -sS http://localhost:3310/ | jq .
 curl -sS http://localhost:3310/openapi.json | jq '.openapi'
 curl -sS http://localhost:3310/.well-known/did.json | jq '.id'
+curl -sS http://localhost:3310/ | jq '.controllerDid'
+curl -sS http://localhost:3310/ | jq '.controllerDidPath'
 curl -i http://localhost:3310/api-docs
 ```
 
@@ -66,10 +130,29 @@ TENANT="ica"
 JUR="ES"
 SECTOR="animal-care"
 VERSION="202603051133"          # production-style version
-# VERSION="test-202603051133"   # test version (requires ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX=true)
+# VERSION="test-202603051133"   # test version (requires ICA_ENABLE_TEST_TERMS_PREFIX=true)
 THID="verify-terms-001"
 PDF_FILE="$HOME/Documents/TEST-A4-signed-fnmt.pdf"
 ```
+
+Swagger UI tip:
+
+- For submit actions (`_verify`, `_activate`, `_add`, `_upsert`, `_issue`, `_status`, `_revoke`), set `thid: "thid-auto"` and/or `jti: "req-auto"` to auto-generate timestamped ids on send:
+  - `thid-yyyymmddhhmmss`
+  - `req-yyyymmddhhmmss`
+- `_*-response` polling endpoints are not auto-modified.
+- In Swagger UI for `_verify`, direct-link normalization is applied to known share URLs:
+  - Dropbox: `dl=0` -> `dl=1` (recommended and tested)
+  - Google Drive viewer/share links: converted best-effort to direct download
+- Outside Swagger (curl/scripts), use a direct PDF URL.
+- Manual Dropbox conversion:
+  - From: `https://www.dropbox.com/s/<id>/<file>.pdf?dl=0`
+  - To: `https://www.dropbox.com/s/<id>/<file>.pdf?dl=1`
+- Manual Google Drive conversion (best effort):
+  - From: `https://drive.google.com/file/d/<FILE_ID>/view?usp=sharing`
+  - To: `https://drive.google.com/uc?export=download&id=<FILE_ID>`
+  - Also valid from: `https://drive.google.com/open?id=<FILE_ID>` -> same `uc?export=download&id=...`
+  - The file must be publicly readable (or served by a URL accessible by this API process).
 
 ### 1) Submit verification job (`_verify`)
 
@@ -125,13 +208,6 @@ Successful terminal response example (`POST /ica/cds-{jurisdiction}/v1/{sector}/
     "resourceType": "Bundle",
     "type": "batch-response",
     "total": 2,
-    "result": {
-      "ok": true,
-      "templateMatch": true,
-      "signatureValid": true,
-      "chainValid": true,
-      "revocationStatus": "good"
-    },
     "issues": {
       "resourceType": "OperationOutcome",
       "issue": [
@@ -202,7 +278,6 @@ Successful terminal response example (`POST /ica/cds-{jurisdiction}/v1/{sector}/
           "type": ["VerifiableCredential", "PersonCredential", "LegalRepresentativeCredential"],
           "credentialSubject": {
             "@type": "Person",
-            "roleName": "legal-representative",
             "memberOf": {
               "@type": "Organization",
               "legalName": "Acme Health SL",
@@ -232,9 +307,21 @@ Successful terminal response example (`POST /ica/cds-{jurisdiction}/v1/{sector}/
 }
 ```
 
+For verification polling, consume `body.data[].resource` (including `resource.evidence`) as authoritative business output.
+
 ### 3) Activate credential signing keys (`_activate`)
 
-Single key (`body.key`):
+`_activate` requires controller authorization signature in `body.signature` by default (`DISABLE_CONTROLLER_DIDCOMM_PROOF=false`):
+
+- `signature.data`: detached compact JWS (`<protected>..<signature>`) or base64 of that compact value
+- JWS `kid` must match controller `kid` and at least one `body.data[].key.kid`
+- `signature.who.reference`: controller DID verification method (`did:web:...#kid`)
+- Signature is verified over canonical request `body` excluding `signature` and, if `body.resourceType="Bundle"`, also excluding root `id` and `meta`
+- each `body.data[].key` must include CA chain (`x5c` or `certificateChainPem`) unless `DISABLE_CONTROLLER_CA_CREDENTIAL_VALIDATION=true`
+
+Keep transport as `application/didcomm-plain+json` over TLS and protect private keys via secret manager/KMS/HSM.
+
+Single key (always as `body.data[]`):
 
 ```bash
 curl -i -X POST \
@@ -245,14 +332,23 @@ curl -i -X POST \
     "thid":"activate-signing-001",
     "type":"https://globaldatacare.es/didcomm/ica/signing-keys/activate-request/v1",
     "body":{
-      "key":{
-        "kid":"ica-es384-20260305",
-        "alg":"ES384",
-        "privateKeyPem":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
-        "certificateChainPem":[
-          "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
-        ]
-      }
+      "signature":{
+        "sigFormat":"application/jose",
+        "who":{"reference":"did:web:ica.example.com#ica-es384-20260305"},
+        "data":"<detached-compact-jws-or-base64>"
+      },
+      "data":[
+        {
+          "key":{
+            "kid":"ica-es384-20260305",
+            "alg":"ES384",
+            "privateKeyPem":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+            "certificateChainPem":[
+              "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+            ]
+          }
+        }
+      ]
     }
   }'
 ```
@@ -268,27 +364,36 @@ curl -i -X POST \
     "thid":"activate-signing-002",
     "type":"https://globaldatacare.es/didcomm/ica/signing-keys/activate-request/v1",
     "body":{
+      "signature":{
+        "sigFormat":"application/jose",
+        "who":{"reference":"did:web:ica.example.com#ica-es384-20260305"},
+        "data":"<detached-compact-jws-or-base64>"
+      },
       "data":[
         {
           "key":{
             "kid":"ica-es384-20260305",
             "alg":"ES384",
-            "privateKeyPem":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+            "privateKeyPem":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+            "certificateChainPem":[
+              "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+            ]
           }
         },
         {
           "key":{
             "kid":"ica-es256k-20260305",
             "alg":"ES256K",
-            "privateKeyPem":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+            "privateKeyPem":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+            "certificateChainPem":[
+              "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+            ]
           }
         }
       ]
     }
   }'
 ```
-
-Backward compatibility: `body.key` remains supported.
 
 Deterministic test payload for Swagger/curl:
 
@@ -302,7 +407,7 @@ curl -i -X POST \
   --data @/tmp/ica_activate_payload.json
 ```
 
-OpenAPI schema check (`_activate` exposes both `body.key` and `body.data[]`):
+OpenAPI schema check (`_activate` requires `body.data[]`):
 
 ```bash
 curl -sS "$BASE/openapi.json" | jq '.paths["/{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate"].post.requestBody.content["application/didcomm-plain+json"].schema.properties.body.properties | keys'
@@ -317,7 +422,9 @@ curl -sS -X POST \
 
 ### 4) Add evidence (`_add`)
 
-`_add` validates OIDC4IDA evidence objects. Use batch mode with `body.data[]` (recommended) or single mode with `body.evidence` (legacy).
+`_add` validates OIDC4IDA evidence objects. Canonical mode is `body.data[]` (one or many entries), and each `data[i].resource` can be either:
+- direct OIDC4IDA evidence object, or
+- wrapper with `verified_claims.verification.evidence[]` plus optional `verified_claims.claims` (additional claims like registry/professional IDs).
 
 ```bash
 curl -i -X POST \
@@ -332,23 +439,37 @@ curl -i -X POST \
         {
           "issuedCredentialRecordId":"urn:uuid:issued-credential-record-001",
           "operatorDid":"did:web:localhost%3A3310#employee-01",
-          "evidence":{
-            "type":"electronic_record",
-            "time":"2026-03-06T10:00:00.000Z",
-            "verifier":{"organization":"did:web:localhost%3A3310"},
-            "record":{
-              "type":"official-registry",
-              "source":{"id":"did:web:registry.example.org","type":"PublicRegistry"}
-            },
-            "attachments":[
-              {"digest":{"alg":"sha3-384","value":"<base64>"},"url":"urn:uuid:evidence-doc-001"}
-            ]
+          "resource":{
+            "verified_claims":{
+              "verification":{
+                "trust_framework":null,
+                "time":"2026-03-06T10:00:00.000Z",
+                "evidence":[
+                  {
+                    "type":"electronic_record",
+                    "time":"2026-03-06T10:00:00.000Z",
+                    "verifier":{"organization":"did:web:localhost%3A3310"},
+                    "record":{
+                      "type":"official-registry",
+                      "source":{"id":"did:web:registry.example.org","type":"PublicRegistry"}
+                    },
+                    "attachments":[
+                      {"digest":{"alg":"sha3-384","value":"<base64>"},"url":"urn:uuid:evidence-doc-001"}
+                    ]
+                  }
+                ]
+              },
+              "claims":{
+                "healthcareRegistrationNumber":"ES-SAN-REG-0001",
+                "professionalLicenseDid":"did:web:college.example.org:member:12345"
+              }
+            }
           }
         },
         {
           "issuedCredentialRecordId":"urn:uuid:issued-credential-record-001",
           "operatorDid":"did:web:localhost%3A3310#employee-02",
-          "evidence":{
+          "resource":{
             "type":"document",
             "method":"eid",
             "time":"2026-03-06T10:05:00.000Z",
@@ -367,7 +488,90 @@ curl -sS -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/evidence/official-registry/_add-response?thid=evidence-add-001" | jq .
 ```
 
-### 5) Issue credential (`_issue`)
+### 5) Upsert ICA delegation policy (`_upsert`)
+
+Use this endpoint for ICA controller delegation rules (who can add/verify specific evidence types for ICA members).  
+Canonical mode is `body.data[]` and each `data[i].resource` is an ODRL policy object.
+
+Minimum constraints expected in policy resource:
+- one constraint for `$.credentialSubject.id` (delegate DID)
+- one constraint for `$.credentialSubject.hasOccupation.identifier` (role, e.g. `urn:ilo:ilostat:isco-08:1120`)
+
+Practical pattern:
+- delegate DID is in `credentialSubject.id`
+- role is in `credentialSubject.hasOccupation.identifier`
+- email hash can be in `credentialSubject.identifier` (instead of plain `schema:email`)
+- if policy scope is `onehealth`, authorization applies to any API path sector starting with `animal` or `health`
+
+```bash
+curl -i -X POST \
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/policies/delegations/_upsert" \
+  -H "Content-Type: application/didcomm-plain+json" \
+  -d '{
+    "jti":"delegation-policy-upsert-msg-001",
+    "thid":"delegation-policy-upsert-001",
+    "type":"https://globaldatacare.es/didcomm/ica/network/policies/delegations/upsert-request/v1",
+    "body":{
+      "data":[
+        {
+          "resource":{
+            "@context":[
+              "http://www.w3.org/ns/odrl.jsonld",
+              {
+                "ovc":"https://w3id.org/gaia-x/ovc/1/",
+                "sdo":"https://schema.org/",
+                "onehealth":"https://onehealth.example/ns#"
+              }
+            ],
+            "profile":"https://w3id.org/gaia-x/ovc/1/",
+            "uid":"urn:policy:ica:es:delegate:1120:zEmailHash:official-registry:v1",
+            "type":"Set",
+            "assigner":{"@id":"did:web:ica.example.org:ica:cds-ES:v1:onehealth:controller:1120:zControllerHash"},
+            "assignee":{"@id":"did:web:ica.example.org:ica:cds-ES:v1:onehealth:delegate:1120:zEmailHash"},
+            "permission":[
+              {
+                "target":"urn:ica:organization:*:evidence:official-registry",
+                "action":{"@id":"odrl:write"},
+                "ovc:constraint":[
+                  {
+                    "ovc:leftOperand":"$.credentialSubject.id",
+                    "odrl:operator":"odrl:eq",
+                    "odrl:rightOperand":"did:web:ica.example.org:ica:cds-ES:v1:onehealth:delegate:1120:zEmailHash"
+                  },
+                  {
+                    "ovc:leftOperand":"$.credentialSubject.hasOccupation.identifier",
+                    "odrl:operator":"odrl:eq",
+                    "odrl:rightOperand":"urn:ilo:ilostat:isco-08:1120"
+                  },
+                  {
+                    "ovc:leftOperand":"$.credentialSubject.identifier",
+                    "odrl:operator":"odrl:eq",
+                    "odrl:rightOperand":"zEmailHash"
+                  },
+                  {
+                    "ovc:leftOperand":"$.credentialSubject.walletKid",
+                    "odrl:operator":"odrl:eq",
+                    "odrl:rightOperand":"did:key:z6MkInvitee...#z6MkInvitee..."
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }'
+```
+
+```bash
+curl -sS -X POST \
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/policies/delegations/_upsert-response?thid=delegation-policy-upsert-001" | jq .
+```
+
+### 6) Issue credential (`_issue`)
+
+`body.data[]` is canonical. Put the VC in `data[i].resource` and optional extra evidence in `data[i].evidence`.
+`credentialSubject` must follow `schema.org` semantics and include `@type` (`Person` or `Organization`).
 
 ```bash
 curl -i -X POST \
@@ -378,20 +582,48 @@ curl -i -X POST \
     "thid":"credential-issue-001",
     "type":"https://globaldatacare.es/didcomm/ica/network/credentials/issue-request/v1",
     "body":{
-      "credential":{
-        "id":"urn:uuid:vc-member-001",
-        "type":["VerifiableCredential","MemberCredential"],
-        "issuer":"did:web:localhost%3A3310",
-        "credentialSubject":{
-          "id":"mailto:member@example.org",
-          "memberNumber":"COL-0001"
-        }
-      },
-      "evidence":[
+      "data":[
         {
-          "type":"qualification",
-          "checkedAt":"2026-03-06T10:01:00.000Z",
-          "proof":{"type":"OperatorApprovalProof","signature":"<jws>"}
+          "resource":{
+            "id":"urn:uuid:vc-member-001",
+            "type":["VerifiableCredential","LegalRepresentativeCredential"],
+            "issuer":"did:web:localhost%3A3310",
+            "credentialSubject":{
+              "id":"did:web:member.example.org:alice",
+              "@type":"Person",
+              "memberOf":{
+                "@type":"Organization",
+                "legalName":"Acme Health SL",
+                "taxID":"VATES-A12345678"
+              }
+            },
+            "evidence":[
+              {
+                "type":"qualification",
+                "checkedAt":"2026-03-06T10:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "resource":{
+            "id":"urn:uuid:vc-member-002",
+            "type":["VerifiableCredential","OrganizationCredential"],
+            "issuer":"did:web:localhost%3A3310",
+            "credentialSubject":{
+              "id":"did:web:member.example.org",
+              "@type":"Organization",
+              "legalName":"Acme Health SL",
+              "taxID":"VATES-A12345678"
+            }
+          },
+          "evidence":[
+            {
+              "type":"address",
+              "checkedAt":"2026-03-06T10:01:00.000Z",
+              "proof":{"type":"OperatorApprovalProof","signature":"<jws>"}
+            }
+          ]
         }
       ]
     }
@@ -403,7 +635,9 @@ curl -sS -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/credentials/member-onboarding/_issue-response?thid=credential-issue-001" | jq .
 ```
 
-### 6) Credential status (`_status`)
+### 7) Credential status (`_status`)
+
+Use canonical `body.data[]` with one or many lookup entries (`credentialId`, `issuedCredentialRecordId`, `subjectId`, or `credentialStatusId`).
 
 ```bash
 curl -i -X POST \
@@ -414,7 +648,15 @@ curl -i -X POST \
     "thid":"credential-status-001",
     "type":"https://globaldatacare.es/didcomm/ica/network/credentials/status-request/v1",
     "body":{
-      "credentialId":"urn:uuid:vc-member-001"
+      "data":[
+        {
+          "credentialId":"urn:uuid:vc-member-001",
+          "resource":{
+            "id":"urn:uuid:vc-member-001",
+            "credentialStatus":{"id":"urn:uuid:issued-record-001#status"}
+          }
+        }
+      ]
     }
   }'
 ```
@@ -424,7 +666,9 @@ curl -sS -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/credentials/member-onboarding/_status-response?thid=credential-status-001" | jq .
 ```
 
-### 7) Revoke credential (`_revoke`)
+### 8) Revoke credential (`_revoke`)
+
+Use canonical `body.data[]` for one or many revocations. Keep credential identifier in the payload (batch-friendly), not in path.
 
 ```bash
 curl -i -X POST \
@@ -435,9 +679,17 @@ curl -i -X POST \
     "thid":"credential-revoke-001",
     "type":"https://globaldatacare.es/didcomm/ica/network/credentials/revoke-request/v1",
     "body":{
-      "credentialId":"urn:uuid:vc-member-001",
-      "reason":"membership-terminated",
-      "revokedBy":"did:web:localhost%3A3310#employee-02"
+      "data":[
+        {
+          "credentialId":"urn:uuid:vc-member-001",
+          "reason":"membership-terminated",
+          "revokedBy":"did:web:localhost%3A3310#employee-02",
+          "resource":{
+            "id":"urn:uuid:vc-member-001",
+            "credentialStatus":{"id":"urn:uuid:issued-record-001#status"}
+          }
+        }
+      ]
     }
   }'
 ```
@@ -469,7 +721,7 @@ Basic DIDComm fields used by this API:
 | `jti` | request/response | Message identifier. If `thid` is missing, request parsing can fallback to `jti` as thread id source. |
 | `thid` | request/response | Thread identifier for async flow. Required in polling (`_*-response`) via query/body; if absent in early errors it can be `""`. |
 | `type` | request/response | Semantic message type. Responses use `application/bundle-api+json`; requests use endpoint-specific DIDComm types. |
-| `body` | request/response | Main business payload. In responses it is always a `Bundle` with `data[]`, `total`, `issues` (and optional `result`). |
+| `body` | request/response | Main business payload. In responses it is always a `Bundle` with `data[]`, `total`, and `issues`. |
 | `iss` | response | Issuer DID of ICA service (`did:web:...`) used to build response envelope. |
 | `aud` | response | Audience DID resolved by config/routing; in early errors it can be `""` if request context is incomplete. |
 | `attachments` | request (`_verify`) | Transport for PDF: use `attachments[].data.base64` (or `attachments[].data.links`). |
@@ -518,6 +770,7 @@ Discovery:
 - `GET /api-docs`
 - `GET /.well-known/did.json`
 - `GET /did.json`
+- `GET /ica/cds-{jurisdiction}/v1/{sector}/{membertype}/{role}/{idHash}/did.json` (controller/member DID when configured)
 
 Verification and keys:
 
@@ -530,10 +783,14 @@ Verification and keys:
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate` (stub)
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate-response` (stub)
 
+`_rotate` submit endpoints validate controller authorization signature (`body.signature.data`) before returning `202`.
+
 Network evidence and credentials:
 
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add-response`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert-response`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue-response`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_status`
@@ -543,10 +800,13 @@ Network evidence and credentials:
 
 Route constraints:
 
-- `sector`: `animal-care` or `health-care`
+- `sector`: any value starting with `animal` or `health` (for `onehealth` umbrella)
+- `idHash` (discovery DID path): `multibase58(multihash(SHA3-256(id)))`
+- controller bootstrap `id`: normalized email (`trim().toLowerCase()`)
 - `resourceType` (prod): `yyyyddmmhhmm` (12 digits)
-- `resourceType` (test): `test-yyyyddmmhhmm` (requires `ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX=true`)
+- `resourceType` (test): `test-yyyyddmmhhmm` (requires `ICA_ENABLE_TEST_TERMS_PREFIX=true`)
 - `evidenceType`: free classifier for `_add` (e.g., `address`, `official-registry`, `qualification`)
+- delegation policy path is fixed to `network/policies/delegations`; policy scope lives in `body.data[].resource.permission[]`
 - `credentialType`: free classifier for `_issue`, `_status`, `_revoke` (e.g., `member-onboarding`)
 
 ## npm Scripts
@@ -557,6 +817,25 @@ Route constraints:
 - `npm run api:example:activate`: generates deterministic DIDComm payload for `_activate`
 - `npm run test`: API behavior tests
 - `npm run typecheck`: strict TypeScript checks
+
+Test suite is split by concern (to avoid a single unmaintainable mega-file):
+- `test/api.identity-signing.test.ts`: controller/issuer DID + proof + seed/self-signing behavior
+- `test/api.verify.test.ts`: verify routing, parser, storage and request manager behavior
+- `test/api.activation-keys.test.ts`: `_activate` / `_rotate` parsing and controller-signed key activation flow
+- `test/api.vc-bundle.test.ts`: VC bundle assembly/evidence mapping output
+- `test/api.delegation-policy.test.ts`: ODRL delegation policy `_upsert` parsing, validation and polling flow
+- `test/api.lifecycle-collections.test.ts`: verify polling, issue/status/revoke/add lifecycle and collections persistence
+
+## VC Debug Output (manual)
+
+`test-output-vc-resources.json` is not generated automatically by API runtime or by `npm run api:test`.
+It is created only when you run a manual export command.
+
+Generate/update export of `body.data[].resource` from a stored verification response:
+
+```bash
+cd /Users/fernando/GITS/gdc-workspace/dataspace-ica-cli && node -e "import fs from 'node:fs/promises'; (async()=>{ const source='/Users/fernando/GITS/gdc-workspace/response_1772857305295.json'; const raw=await fs.readFile(source,'utf8'); const didcomm=JSON.parse(raw); const dataEntries=Array.isArray(didcomm.body?.data)?didcomm.body.data:[]; const resources=dataEntries.map((e)=>({ type:e?.type, resource:e?.resource })).filter((e)=>e.resource); const out={ generatedAt:new Date().toISOString(), source, resources }; const target='/Users/fernando/GITS/gdc-workspace/dataspace-ica-cli/test-output-vc-resources.json'; await fs.writeFile(target, JSON.stringify(out,null,2)); console.log(target); })();"
+```
 
 ## Docker and GKE
 
@@ -584,15 +863,42 @@ Server and DID:
 - `ICA_DIDCOMM_AUDIENCE_DID` (optional)
 - `ICA_DID_DOCUMENT_JSON` (optional)
 - `ICA_DID_SERVICE_ENDPOINT` (optional)
+- `ICA_SELF_CONTROLLER_KID` (bootstrap controller `kid` when CA credentials are not yet available)
+- `ICA_SELF_CONTROLLER_EMAIL` (bootstrap controller email for T&C metadata fallback)
+- `ICA_SELF_CONTROLLER_MEMBER_TYPE` (default `controller`; e.g. `organization`, `controller`, `delegate`)
+- `ICA_SELF_CONTROLLER_ROLE` (default `1120`; used in controller/member DID path)
+- `ICA_SELF_CONTROLLER_JURISDICTION` (required for derived controller/member DID)
+- `ICA_SELF_CONTROLLER_SECTOR` (optional; defaults to `controller` for derived controller/member DID)
+- `ICA_SELF_CONTROLLER_EMAIL_HASH` (optional precomputed member email hash; format `multibase58(multihash(SHA3-256(id)))`; if omitted derives from email)
+- `ICA_SELF_CONTROLLER_DID` (optional explicit controller DID override)
+- `ICA_SELF_CONTROLLER_PUBLIC_KEY_JWK` (optional controller public key for DID publication)
+- `ICA_SELF_CONTROLLER_X5C` (optional CSV x5c chain for controller DID key)
+- `ICA_SELF_CONTROLLER_ALG` (optional alg hint for `ICA_SELF_CONTROLLER_PUBLIC_KEY_JWK`)
+- `DISABLE_CONTROLLER_DIDCOMM_PROOF` (default `false`; keep `false` in production)
+- `DISABLE_CONTROLLER_CA_CREDENTIAL_VALIDATION` (default `false`; keep `false` in production)
+- `ICA_CONTROLLER_CA_TRUST_ANCHOR_PINS_SHA256` (optional CSV trust anchors pinning for controller x509 chains)
+- `ICA_CONTROLLER_CA_ALLOWED_ISSUER_SUBSTRINGS` (optional CSV issuer allowlist for controller x509 chains)
+
+Controller x509 identity check for `_activate`:
+- If `ICA_SELF_CONTROLLER_EMAIL` is set, certificate must include that email (subject/SAN).
+- If `ICA_SELF_CONTROLLER_EMAIL_HASH` is set, certificate email values must hash to that id (multibase/multihash sha3-256).
 
 VC signing:
 
 - `ICA_VC_SIGNING_PRIVATE_KEY_PEM` (optional)
 - `ICA_VC_SIGNING_ALG` (`ES384` | `ES256K` | `RS256` | `PS256` | `EdDSA`)
-- `ICA_VC_SIGNING_KEY_ID`
+- `ICA_VC_SIGNING_KEY_ID` (optional override; if omitted, kid is auto-derived)
 - `ICA_VC_SIGNING_PREFERRED_ALG`
-- `ICA_ACTIVE_SIGNING_KEYS_FILE`
 - `ICA_VC_SIGNING_REQUIRED_FOR_PROD`
+- `ICA_SELF_SIGN_TEST` (self-sign bootstrap for local key)
+- `ICA_SELF_SIGN_IF_MISSING` (auto-generate self-sign key when no key is configured)
+- `ICA_SELF_SIGN_TEST_ALG` (`ES384` default)
+- `ICA_SELF_SIGN_TEST_KEY_ID` (optional forced `kid` for bootstrap key)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE` (optional deterministic seed passphrase)
+- `ICA_VC_PRIVATE_KEY_SEED_CONFIG` (optional scrypt config: `<log2N>:<r>:<p>:<dkLen>` or JSON)
+- `ICA_VC_PRIVATE_KEY_SEED_SALT` (optional salt override, recommended separate from config)
+- `ICA_VC_SEED_ALG` (`ES384` | `ES256K` for seed-derived key)
+- `ICA_SELF_SIGN_TEST_VALID_PROOF` (if `true`, signs `test-*` proofs; default keeps invalid test proof)
 
 Verification behavior:
 
@@ -625,7 +931,8 @@ Template source:
 - `ICA_TERMS_TEMPLATE_URL_PATTERN`
 - placeholders: `{tenantId}`, `{jurisdiction}`, `{jurisdictionLower}`, `{jurisdictionUpper}`, `{sector}`, `{sectorLower}`, `{sectorUpper}`, `{section}`, `{format}`, `{resourceType}`, `{resourceVersion}`
 - recommended pattern: `.../terms/dataspace/{sector}/{jurisdictionLower}/{resourceVersion}/terms.pdf`
-- `ICA_TERMS_TEMPLATE_USE_TEST_PREFIX`
+- `ICA_ENABLE_TEST_TERMS_PREFIX`
+- `ICA_TERMS_TEMPLATE_USE_TEST_PREFIX` (deprecated fallback)
 - `ICA_TERMS_TEMPLATE_CACHE_TTL_SECONDS`
 - `ICA_TERMS_TEMPLATE_CACHE_MAX_ENTRIES`
 - `ICA_TERMS_TEMPLATE_PRELOAD_ENABLED`
@@ -633,7 +940,7 @@ Template source:
 - `ICA_TERMS_TEMPLATE_PRELOAD_SECTORS`
 - `ICA_TERMS_TEMPLATE_PRELOAD_JURISDICTIONS`
 - `ICA_TERMS_TEMPLATE_PRELOAD_TENANT_ID`
-- `ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX`
+- `ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX` (deprecated fallback)
 - `ICA_TERMS_ACTIVE_RESOURCE_TYPES`
 
 FNMT trust material priority:
@@ -658,3 +965,15 @@ FNMT trust material priority:
 
 - Verify you are running the latest process.
 - Check `GET /openapi.json` and `GET /api-docs`.
+## TODO: Terms & Conditions annex form
+
+- Capture `organization.additionalType`/`sector` (animal-care | health-care | research | etc.) so the credential can flag the registered activity.
+- Record `organization.sameAs` (or `organization.alternateName`) with the public domain/subdomain or node operator URL where the `did.web` metadata will live.
+- Include `organization.alternateName` for the internal path when the DID is hosted under `/ica` or another namespaced segment.
+- Expose `legalRepresentative.email` and a `controller.email` field (controller can differ from the representative when delegation occurs).
+- Capture `controller.kid`, `controller.alg`, and controller public key reference (`publicKeyJwk` or equivalent) for communications keys used in DID control.
+- If a health/veterinary registration is required, capture the official `registrationNumber` (e.g., `organization.registrationNumber` or `organization["sectorRegistrationNumber"]`).
+- Persist the `did.web` values (organization + legal rep) in the credential as `sameAs` once the form is signed.
+- Document that `credentialSubject.id` defaults to the certificate-derived URN (`urn:organization:taxid:<VAT>` / `urn:person:identifier:<serialNumber>`) until the annex provides a concrete DID.
+
+The annex form becomes the authoritative evidence for these fields and is signed together with the template PDF so the API can include them inside the Organization or LegalRepresentative VC.

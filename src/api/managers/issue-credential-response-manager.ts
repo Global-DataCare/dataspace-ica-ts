@@ -148,7 +148,7 @@ export class IssueCredentialResponseManager {
       {
         severity: 'information',
         code: 'informational',
-        diagnostics: 'Credential record stored.',
+        diagnostics: `Credential record(s) stored: ${job.result.storedCount}.`,
       },
     ]);
     const succeededBody: VerifyBundleResponse = {
@@ -170,7 +170,7 @@ export class IssueCredentialResponseManager {
             status: 'stored',
             createdAt: new Date(job.createdAt).toISOString(),
             updatedAt: new Date(job.updatedAt).toISOString(),
-            content: [job.result],
+            content: job.result.items,
           },
           response: {
             status: '200',

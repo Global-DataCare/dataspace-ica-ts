@@ -1,11 +1,12 @@
 import type { IDecodedDidcommPayload } from 'gdc-common-utils-ts/models/confidential-message';
 
-export type AllowedSector = 'animal-care' | 'health-care';
+export type AllowedSector = string;
 
 export type VerifyAction = '_verify' | '_verify-response';
 export type ActivateAction = '_activate' | '_activate-response';
 export type RotateAction = '_rotate' | '_rotate-response';
 export type AddEvidenceAction = '_add' | '_add-response';
+export type DelegationPolicyAction = '_upsert' | '_upsert-response';
 export type IssueCredentialAction = '_issue' | '_issue-response';
 export type CredentialStatusAction = '_status' | '_status-response';
 export type CredentialRevokeAction = '_revoke' | '_revoke-response';
@@ -83,6 +84,16 @@ export interface AddEvidenceRouteContext {
   action: AddEvidenceAction;
 }
 
+export interface DelegationPolicyRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'network';
+  format: 'policies';
+  policyType: 'delegations';
+  action: DelegationPolicyAction;
+}
+
 export interface IssueCredentialRouteContext {
   tenantId: string;
   jurisdiction: string;
@@ -129,9 +140,25 @@ export interface ActivateSigningKeyInput {
   certificateChainPem?: string[];
 }
 
+export interface ControllerDidcommProof {
+  jws: string;
+  kid?: string;
+  alg?: string;
+}
+
 export interface ActivateSigningKeySubmission {
   thid: string;
+  jti?: string;
   keys: ActivateSigningKeyInput[];
+  controllerProof?: ControllerDidcommProof;
+  controllerAuthorizationPayloadBase64Url?: string;
+}
+
+export interface RotateSubmission {
+  thid: string;
+  jti?: string;
+  controllerProof?: ControllerDidcommProof;
+  controllerAuthorizationPayloadBase64Url?: string;
 }
 
 export interface AddEvidenceSubmission {
@@ -145,24 +172,43 @@ export interface AddEvidenceInput {
   operatorDid?: string;
 }
 
+export interface DelegationPolicySubmission {
+  thid: string;
+  policies: DelegationPolicyInput[];
+}
+
+export interface DelegationPolicyInput {
+  resource: Record<string, unknown>;
+}
+
 export interface IssueCredentialSubmission {
   thid: string;
+  items: IssueCredentialInput[];
+}
+
+export interface IssueCredentialInput {
   credential: Record<string, unknown>;
   evidence: Record<string, unknown>[];
 }
 
 export interface CredentialStatusSubmission {
   thid: string;
-  issuedCredentialRecordId?: string;
-  credentialId?: string;
-  subjectId?: string;
+  lookups: CredentialLookupInput[];
 }
 
 export interface CredentialRevokeSubmission {
   thid: string;
+  items: CredentialRevokeInput[];
+}
+
+export interface CredentialLookupInput {
   issuedCredentialRecordId?: string;
   credentialId?: string;
   subjectId?: string;
+  credentialStatusId?: string;
+}
+
+export interface CredentialRevokeInput extends CredentialLookupInput {
   reason?: string;
   revokedBy?: string;
 }
@@ -260,6 +306,18 @@ export interface AddEvidenceResultItem {
   operatorDid?: string;
 }
 
+export interface DelegationPolicyUpsertResult {
+  upsertedCount: number;
+  items: DelegationPolicyUpsertResultItem[];
+}
+
+export interface DelegationPolicyUpsertResultItem {
+  policyId: string;
+  assigneeDid: string;
+  roleIdentifier: string;
+  upsertedAt: string;
+}
+
 export interface AddEvidenceJob {
   thid: string;
   route: AddEvidenceRouteContext;
@@ -271,6 +329,11 @@ export interface AddEvidenceJob {
 }
 
 export interface IssueCredentialResult {
+  storedCount: number;
+  items: IssueCredentialResultItem[];
+}
+
+export interface IssueCredentialResultItem {
   issuedCredentialRecordId: string;
   credentialId: string;
   credentialType: string;
@@ -289,11 +352,17 @@ export interface IssueCredentialJob {
 }
 
 export interface CredentialStatusResult {
+  resolvedCount: number;
+  items: CredentialStatusResultItem[];
+}
+
+export interface CredentialStatusResultItem {
   status: RevocationStatus;
   checkedAt: string;
   issuedCredentialRecordId?: string;
   credentialId?: string;
   subjectId?: string;
+  credentialStatusId?: string;
   revokedAt?: string;
 }
 
@@ -308,11 +377,17 @@ export interface CredentialStatusJob {
 }
 
 export interface CredentialRevokeResult {
+  revokedCount: number;
+  items: CredentialRevokeResultItem[];
+}
+
+export interface CredentialRevokeResultItem {
   status: 'revoked';
   revokedAt: string;
   issuedCredentialRecordId: string;
   credentialId: string;
   subjectId?: string;
+  credentialStatusId?: string;
   reason?: string;
   revokedBy?: string;
 }
@@ -362,8 +437,21 @@ export interface VerifyBundleResponse {
   total: number;
   data: VerifyBundleDataEntry[];
   issues?: OperationOutcomeResource;
-  result?: VerifyResult;
+}
+
+export interface DidcommAttachmentData {
+  base64?: string;
+  json?: unknown;
+  links?: string[];
+}
+
+export interface DidcommAttachment {
+  id: string;
+  media_type?: string;
+  format?: string;
+  filename?: string;
+  data: DidcommAttachmentData;
 }
 
 export type DidcommPlaintextMessage<TBody = unknown> =
-  Omit<IDecodedDidcommPayload, 'body'> & { body: TBody };
+  Omit<IDecodedDidcommPayload, 'body'> & { body: TBody; attachments?: DidcommAttachment[] };

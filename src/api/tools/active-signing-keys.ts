@@ -1,6 +1,4 @@
 import { createHash, createPrivateKey, createPublicKey } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 import type { SupportedSigningAlgorithm } from '../types.ts';
 
 type JsonObject = Record<string, unknown>;
@@ -14,21 +12,6 @@ export type ActiveSigningKeyRecord = {
   activatedAt: string;
 };
 
-type PersistedSigningKeyRecord = {
-  kid: string;
-  alg: SupportedSigningAlgorithm;
-  privateKeyPem: string;
-  x5c?: string[];
-  activatedAt: string;
-};
-
-type PersistedSigningState = {
-  version: 1;
-  updatedAt: string;
-  activeByAlg: Record<string, string>;
-  keys: PersistedSigningKeyRecord[];
-};
-
 const state = {
   loaded: false,
   keysByKid: new Map<string, ActiveSigningKeyRecord>(),
@@ -37,12 +20,6 @@ const state = {
 
 function decodeMultilineEnv(value: string): string {
   return value.includes('\\n') ? value.replace(/\\n/g, '\n') : value;
-}
-
-function resolveStateFilePath(): string {
-  const configured = (process.env.ICA_ACTIVE_SIGNING_KEYS_FILE || '').trim();
-  const relativeOrAbsolute = configured || 'data/ica/active-signing-keys.json';
-  return path.resolve(process.cwd(), relativeOrAbsolute);
 }
 
 function supportedAlgorithms(): SupportedSigningAlgorithm[] {
@@ -191,59 +168,9 @@ function buildRecordFromInput(input: {
   };
 }
 
-function persistState(): void {
-  const filePath = resolveStateFilePath();
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  const payload: PersistedSigningState = {
-    version: 1,
-    updatedAt: new Date().toISOString(),
-    activeByAlg: { ...state.activeByAlg },
-    keys: Array.from(state.keysByKid.values()).map((entry) => ({
-      kid: entry.kid,
-      alg: entry.alg,
-      privateKeyPem: entry.privateKeyPem,
-      ...(entry.x5c?.length ? { x5c: entry.x5c } : {}),
-      activatedAt: entry.activatedAt,
-    })),
-  };
-  writeFileSync(filePath, JSON.stringify(payload, null, 2), { mode: 0o600 });
-}
-
 function loadState(): void {
   if (state.loaded) return;
   state.loaded = true;
-
-  const filePath = resolveStateFilePath();
-  let parsed: PersistedSigningState | null = null;
-  try {
-    const raw = readFileSync(filePath, 'utf8');
-    parsed = JSON.parse(raw) as PersistedSigningState;
-  } catch {
-    return;
-  }
-  if (!parsed || !Array.isArray(parsed.keys)) return;
-
-  for (const keyRecord of parsed.keys) {
-    try {
-      const runtimeRecord = buildRecordFromInput({
-        kid: keyRecord.kid,
-        alg: keyRecord.alg,
-        privateKeyPem: keyRecord.privateKeyPem,
-        x5c: keyRecord.x5c,
-        activatedAt: keyRecord.activatedAt,
-      });
-      state.keysByKid.set(runtimeRecord.kid, runtimeRecord);
-    } catch {
-      // Ignore malformed persisted records to keep startup resilient.
-    }
-  }
-  if (parsed.activeByAlg && typeof parsed.activeByAlg === 'object') {
-    for (const [alg, kid] of Object.entries(parsed.activeByAlg)) {
-      if (!isSupportedAlgorithm(alg)) continue;
-      if (!state.keysByKid.has(kid)) continue;
-      state.activeByAlg[alg] = kid;
-    }
-  }
 }
 
 export function activateSigningKey(input: {
@@ -257,7 +184,6 @@ export function activateSigningKey(input: {
   const record = buildRecordFromInput(input);
   state.keysByKid.set(record.kid, record);
   state.activeByAlg[record.alg] = record.kid;
-  persistState();
   return record;
 }
 

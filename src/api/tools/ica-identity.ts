@@ -9,7 +9,9 @@ import {
 import type { IncomingMessage } from 'node:http';
 import type { VerifiableCredentialV2 } from 'gdc-common-utils-ts/models/verifiable-credential';
 import type { SupportedSigningAlgorithm, VerifyRouteContext } from '../types.ts';
-import { getPreferredSigningKey, upsertDidSigningMethods } from './active-signing-keys.ts';
+import { getPreferredSigningKey, listActiveSigningKeys, upsertDidSigningMethods } from './active-signing-keys.ts';
+import { resolveControllerMemberDescriptor } from './controller-identity.ts';
+import { useInvalidProofForTestResourceVersion } from './self-signing.ts';
 
 type JsonObject = Record<string, unknown>;
 
@@ -18,6 +20,11 @@ type SigningKeyMaterial = {
   publicJwk: JsonObject;
   alg: SupportedSigningAlgorithm;
   keyId: string;
+};
+
+type ControllerVerificationMethod = {
+  methodId: string;
+  method: JsonObject;
 };
 
 function firstHeaderValue(header: string | string[] | undefined): string {
@@ -48,6 +55,11 @@ function tryParseJson(value: string | undefined): JsonObject | null {
   } catch {
     return null;
   }
+}
+
+function parseOptionalJsonObject(value: string | undefined): JsonObject | undefined {
+  const parsed = tryParseJson(value);
+  return parsed || undefined;
 }
 
 function normalizeAuthority(raw: string): string {
@@ -130,6 +142,126 @@ function resolveSigningKeyMaterial(): SigningKeyMaterial | null {
   return resolveEnvSigningKeyMaterial();
 }
 
+function normalizeKid(raw: string | undefined): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '';
+  const fragmentIndex = trimmed.lastIndexOf('#');
+  if (fragmentIndex < 0 || fragmentIndex >= trimmed.length - 1) return trimmed;
+  return trimmed.slice(fragmentIndex + 1);
+}
+
+function parseControllerX5cFromEnv(): string[] | undefined {
+  const csv = (process.env.ICA_SELF_CONTROLLER_X5C || '').trim();
+  if (!csv) return undefined;
+  const values = csv
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return values.length ? values : undefined;
+}
+
+function resolveControllerVerificationMethod(controllerDid: string): ControllerVerificationMethod | null {
+  const configuredKid = normalizeKid(process.env.ICA_SELF_CONTROLLER_KID);
+  const configuredAlg = parseSupportedSigningAlgorithm(process.env.ICA_SELF_CONTROLLER_ALG);
+  const configuredJwk = parseOptionalJsonObject(process.env.ICA_SELF_CONTROLLER_PUBLIC_KEY_JWK);
+  const configuredX5c = parseControllerX5cFromEnv();
+
+  if (configuredJwk) {
+    const kid = normalizeKid(String(configuredJwk.kid || configuredKid || 'controller-key'));
+    const methodId = `${controllerDid}#${kid}`;
+    return {
+      methodId,
+      method: {
+        id: methodId,
+        type: 'JsonWebKey2020',
+        controller: controllerDid,
+        publicKeyJwk: {
+          ...configuredJwk,
+          kid,
+          ...(configuredAlg ? { alg: configuredAlg } : {}),
+          ...(configuredX5c?.length ? { x5c: configuredX5c } : {}),
+        },
+      },
+    };
+  }
+
+  if (configuredKid) {
+    const active = listActiveSigningKeys().find((entry) => normalizeKid(entry.kid) === configuredKid);
+    if (active) {
+      const methodId = `${controllerDid}#${active.kid}`;
+      return {
+        methodId,
+        method: {
+          id: methodId,
+          type: 'JsonWebKey2020',
+          controller: controllerDid,
+          publicKeyJwk: {
+            ...active.publicJwk,
+            kid: active.kid,
+            alg: active.alg,
+            use: 'sig',
+            ...(active.x5c?.length ? { x5c: active.x5c } : {}),
+          },
+        },
+      };
+    }
+  }
+
+  const envSigning = resolveEnvSigningKeyMaterial();
+  if (envSigning && configuredKid && normalizeKid(envSigning.keyId) === configuredKid) {
+    const methodId = `${controllerDid}#${envSigning.keyId}`;
+    return {
+      methodId,
+      method: {
+        id: methodId,
+        type: 'JsonWebKey2020',
+        controller: controllerDid,
+        publicKeyJwk: {
+          ...envSigning.publicJwk,
+          kid: envSigning.keyId,
+          alg: envSigning.alg,
+          use: 'sig',
+        },
+      },
+    };
+  }
+
+  return null;
+}
+
+function appendVerificationMethod(document: JsonObject, method: JsonObject): void {
+  const methods = Array.isArray(document.verificationMethod)
+    ? [...(document.verificationMethod as JsonObject[])]
+    : [];
+  const methodId = String(method.id || '').trim();
+  if (!methodId) return;
+  const exists = methods.some((entry) => String(entry.id || '').trim() === methodId);
+  if (!exists) {
+    methods.push(method);
+    document.verificationMethod = methods;
+  }
+}
+
+function mergeControllerDidReference(document: JsonObject, controllerDid: string): void {
+  const existing = document.controller;
+  if (typeof existing === 'string' && existing.trim()) {
+    if (existing.trim() === controllerDid) return;
+    document.controller = [existing.trim(), controllerDid];
+    return;
+  }
+  if (Array.isArray(existing)) {
+    const values = existing
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean);
+    if (!values.includes(controllerDid)) {
+      values.push(controllerDid);
+    }
+    document.controller = values;
+    return;
+  }
+  document.controller = controllerDid;
+}
+
 function base64UrlEncode(input: Buffer | string): string {
   return Buffer.from(input)
     .toString('base64')
@@ -151,6 +283,11 @@ function buildDetachedJws(
   const payloadEncoded = base64UrlEncode(payloadBytes);
   const signingInput = `${headerEncoded}.${payloadEncoded}`;
 
+  const signatureEncoded = base64UrlEncode(signJwsInput(signingInput, signing));
+  return `${headerEncoded}..${signatureEncoded}`;
+}
+
+function signJwsInput(signingInput: string, signing: SigningKeyMaterial): Buffer {
   let signatureBytes: Buffer;
   if (signing.alg === 'EdDSA') {
     signatureBytes = signDetachedRaw(null, Buffer.from(signingInput), signing.privateKey);
@@ -179,9 +316,60 @@ function buildDetachedJws(
     signer.end();
     signatureBytes = signer.sign(signing.privateKey);
   }
+  return signatureBytes;
+}
 
-  const signatureEncoded = base64UrlEncode(signatureBytes);
-  return `${headerEncoded}..${signatureEncoded}`;
+function buildCompactJws(
+  payload: Record<string, unknown>,
+  signing: SigningKeyMaterial,
+  verificationMethod: string,
+): string {
+  const protectedHeader = {
+    alg: signing.alg,
+    kid: verificationMethod,
+    typ: 'vc+jwt',
+  };
+  const headerEncoded = base64UrlEncode(JSON.stringify(protectedHeader));
+  const payloadEncoded = base64UrlEncode(JSON.stringify(payload));
+  const signingInput = `${headerEncoded}.${payloadEncoded}`;
+  const signatureEncoded = base64UrlEncode(signJwsInput(signingInput, signing));
+  return `${headerEncoded}.${payloadEncoded}.${signatureEncoded}`;
+}
+
+function buildUnsecuredCompactJwt(
+  payload: Record<string, unknown>,
+  verificationMethod: string,
+): string {
+  const protectedHeader = {
+    alg: 'none',
+    kid: verificationMethod,
+    typ: 'vc+jwt',
+  };
+  const headerEncoded = base64UrlEncode(JSON.stringify(protectedHeader));
+  const payloadEncoded = base64UrlEncode(JSON.stringify(payload));
+  return `${headerEncoded}.${payloadEncoded}.`;
+}
+
+function unixTimeFromIsoDate(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const epochMs = Date.parse(value);
+  if (!Number.isFinite(epochMs)) return undefined;
+  return Math.floor(epochMs / 1000);
+}
+
+function extractCredentialSubjectId(vc: VerifiableCredentialV2): string | undefined {
+  const subject = vc.credentialSubject as unknown;
+  if (Array.isArray(subject)) {
+    for (const entry of subject) {
+      if (!entry || typeof entry !== 'object') continue;
+      const id = String((entry as Record<string, unknown>).id || '').trim();
+      if (id) return id;
+    }
+    return undefined;
+  }
+  if (!subject || typeof subject !== 'object') return undefined;
+  const id = String((subject as Record<string, unknown>).id || '').trim();
+  return id || undefined;
 }
 
 function buildInvalidDetachedJws(verificationMethod: string): string {
@@ -294,6 +482,15 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
   };
   mergeSigningMethods(document, issuerDid);
 
+  const controllerDescriptor = resolveControllerMemberDescriptor(issuerDid);
+  if (controllerDescriptor?.did) {
+    mergeControllerDidReference(document, controllerDescriptor.did);
+    const controllerVerificationMethod = resolveControllerVerificationMethod(controllerDescriptor.did);
+    if (controllerVerificationMethod) {
+      appendVerificationMethod(document, controllerVerificationMethod.method);
+    }
+  }
+
   if (serviceEndpoint) {
     const services = Array.isArray(document.service)
       ? [...(document.service as JsonObject[])]
@@ -311,6 +508,30 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
   return document;
 }
 
+export function resolveControllerDidDocumentPath(req?: IncomingMessage): string | null {
+  const issuerDid = resolveIcaIssuerDid(req);
+  const descriptor = resolveControllerMemberDescriptor(issuerDid);
+  return descriptor?.didJsonPath || null;
+}
+
+export function buildControllerDidDocument(req?: IncomingMessage): JsonObject | null {
+  const issuerDid = resolveIcaIssuerDid(req);
+  const descriptor = resolveControllerMemberDescriptor(issuerDid);
+  if (!descriptor?.did) return null;
+
+  const document: JsonObject = {
+    '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
+    id: descriptor.did,
+  };
+  const controllerVerificationMethod = resolveControllerVerificationMethod(descriptor.did);
+  if (controllerVerificationMethod) {
+    document.verificationMethod = [controllerVerificationMethod.method];
+    document.assertionMethod = [controllerVerificationMethod.methodId];
+    document.authentication = [controllerVerificationMethod.methodId];
+  }
+  return document;
+}
+
 export function attachProofToCredential(
   vc: VerifiableCredentialV2,
   route: VerifyRouteContext,
@@ -324,7 +545,7 @@ export function attachProofToCredential(
   const verificationMethod = `${issuerDid}#${signing?.keyId || (process.env.ICA_VC_SIGNING_KEY_ID || 'key-1').trim()}`;
 
   const isTestVersion = route.resourceType.toLowerCase().startsWith('test-');
-  if (isTestVersion) {
+  if (isTestVersion && useInvalidProofForTestResourceVersion()) {
     return {
       ...vcWithoutProof,
       proof: {
@@ -358,6 +579,55 @@ export function attachProofToCredential(
       jws: detachedJws,
     },
   };
+}
+
+export function convertCredentialToVcJwt(
+  vc: VerifiableCredentialV2,
+  route: VerifyRouteContext,
+): string {
+  const issuerDid = resolveIcaIssuerDid();
+  const signing = resolveSigningKeyMaterial();
+  const isTestVersion = route.resourceType.toLowerCase().startsWith('test-');
+
+  if (!signing) {
+    if (!isTestVersion
+      && parseBoolean(process.env.ICA_VC_SIGNING_REQUIRED_FOR_PROD, false)) {
+      throw new Error(
+        'Missing active signing key for production VC-JWT signing (activate key or configure ICA_VC_SIGNING_PRIVATE_KEY_PEM).',
+      );
+    }
+  }
+
+  const verificationMethod = `${issuerDid}#${signing?.keyId || (process.env.ICA_VC_SIGNING_KEY_ID || 'key-1').trim()}`;
+  const vcWithoutProof = { ...vc };
+  delete vcWithoutProof.proof;
+  const vcRecord = vc as unknown as Record<string, unknown>;
+
+  const jwtPayload: Record<string, unknown> = {
+    iss: typeof vc.issuer === 'string' ? vc.issuer : issuerDid,
+    iat: Math.floor(Date.now() / 1000),
+    vc: vcWithoutProof,
+  };
+
+  const subjectId = extractCredentialSubjectId(vc);
+  if (subjectId) jwtPayload.sub = subjectId;
+
+  const jwtId = String(vc.id || '').trim();
+  if (jwtId) jwtPayload.jti = jwtId;
+
+  const notBefore = unixTimeFromIsoDate(vcRecord.validFrom);
+  if (notBefore !== undefined) jwtPayload.nbf = notBefore;
+
+  const expiresAt =
+    unixTimeFromIsoDate(vcRecord.validUntil)
+    ?? unixTimeFromIsoDate(vcRecord.expirationDate);
+  if (expiresAt !== undefined) jwtPayload.exp = expiresAt;
+
+  if (!signing) {
+    return buildUnsecuredCompactJwt(jwtPayload, verificationMethod);
+  }
+
+  return buildCompactJws(jwtPayload, signing, verificationMethod);
 }
 
 export function buildDidDocumentMessage(req?: IncomingMessage): {

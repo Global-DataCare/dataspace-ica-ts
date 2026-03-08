@@ -4,6 +4,7 @@ import { buildVerifyResponseLocation } from '../path.ts';
 import { parsePollingThreadId } from '../request-parsing.ts';
 import { InMemoryVerificationJobStore } from '../job-store.ts';
 import type {
+  DidcommAttachment,
   DidcommPlaintextMessage,
   OperationOutcomeIssue,
   OperationOutcomeResource,
@@ -12,6 +13,7 @@ import type {
   VerifyRouteContext,
 } from '../types.ts';
 import { buildVerificationVcBundle } from '../tools/vc-bundle.ts';
+import { buildVcJwtAttachments } from '../tools/vc-jwt.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 
@@ -35,11 +37,13 @@ function buildDidcommVerifyMessage(
   thid: string,
   body: VerifyBundleResponse,
   req: IncomingMessage,
+  attachments?: DidcommAttachment[],
 ): DidcommPlaintextMessage<VerifyBundleResponse> {
   return buildDidcommMessage(req, body, {
     route,
     thid,
     type: DIDCOMM_BUNDLE_TYPE,
+    attachments,
   });
 }
 
@@ -133,7 +137,7 @@ export class VerifyResponseManager {
     if (job.status === 'queued' || job.status === 'running') {
       return {
         type: 'pending',
-        location: buildVerifyResponseLocation(route),
+        location: buildVerifyResponseLocation(route, { thid }),
         retryAfter: 5,
       };
     }
@@ -197,10 +201,7 @@ export class VerifyResponseManager {
       };
     }
 
-    const body = {
-      ...buildVerificationVcBundle(route, verificationResult),
-      result: verificationResult,
-    } as VerifyBundleResponse;
+    const body = buildVerificationVcBundle(route, verificationResult) as VerifyBundleResponse;
 
     try {
       await this.collectionsService.persistFromVerificationBundle(route, thid, body);
@@ -214,7 +215,7 @@ export class VerifyResponseManager {
 
     return {
       type: 'succeeded',
-      payload: buildDidcommVerifyMessage(route, thid, body, req),
+      payload: buildDidcommVerifyMessage(route, thid, body, req, buildVcJwtAttachments(route, body)),
     };
   }
 }

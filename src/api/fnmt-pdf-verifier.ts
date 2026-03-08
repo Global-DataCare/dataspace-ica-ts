@@ -33,6 +33,11 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
+function parseUnifiedTestTermsPrefixFlag(): boolean | undefined {
+  if (process.env.ICA_ENABLE_TEST_TERMS_PREFIX === undefined) return undefined;
+  return parseBoolean(process.env.ICA_ENABLE_TEST_TERMS_PREFIX, false);
+}
+
 function parsePositiveInteger(value: string | undefined, fallback: number, minimum = 1): number {
   if (value === undefined) return fallback;
   const parsed = Number.parseInt(value.trim(), 10);
@@ -661,7 +666,10 @@ export function loadFnmtVerifierConfigFromEnv(): FnmtVerifierConfig {
     process.env.ICA_TERMS_TEMPLATE_PRELOAD_ENABLED,
     templatePreloadResourceTypes.length > 0,
   );
-  const templateUseTestPrefix = parseBoolean(process.env.ICA_TERMS_TEMPLATE_USE_TEST_PREFIX, false);
+  const unifiedTestTermsPrefix = parseUnifiedTestTermsPrefixFlag();
+  const templateUseTestPrefix = unifiedTestTermsPrefix !== undefined
+    ? unifiedTestTermsPrefix
+    : parseBoolean(process.env.ICA_TERMS_TEMPLATE_USE_TEST_PREFIX, false);
   const templateUrlPattern =
     process.env.ICA_TERMS_TEMPLATE_URL_PATTERN ||
     'https://raw.githubusercontent.com/gdc-ecosystem/gwtemplate-nodejs/main/terms/dataspace/{sector}/{jurisdiction}/{resourceVersion}/terms.pdf';

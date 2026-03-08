@@ -148,7 +148,7 @@ export class CredentialStatusResponseManager {
       {
         severity: 'information',
         code: 'informational',
-        diagnostics: 'Credential status resolved.',
+        diagnostics: `Credential status resolved for ${job.result.resolvedCount} item(s).`,
       },
     ]);
     const succeededBody: VerifyBundleResponse = {
@@ -170,7 +170,7 @@ export class CredentialStatusResponseManager {
             status: 'resolved',
             createdAt: new Date(job.createdAt).toISOString(),
             updatedAt: new Date(job.updatedAt).toISOString(),
-            content: [job.result],
+            content: job.result.items,
           },
           response: {
             status: '200',

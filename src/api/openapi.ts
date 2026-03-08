@@ -121,7 +121,6 @@ const VERIFY_BUNDLE_BODY_SCHEMA = {
     resourceType: { type: 'string', enum: ['Bundle'] },
     type: { type: 'string', enum: ['batch-response'] },
     total: { type: 'integer' },
-    result: VERIFY_RESULT_SCHEMA,
     issues: OPERATION_OUTCOME_SCHEMA,
     data: {
       type: 'array',
@@ -154,6 +153,31 @@ const DIDCOMM_VERIFY_RESPONSE_SCHEMA = {
     aud: { type: 'string' },
     thid: { type: 'string' },
     type: { type: 'string', enum: ['application/bundle-api+json'] },
+    attachments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'media_type', 'data'],
+        properties: {
+          id: { type: 'string' },
+          format: { type: 'string', enum: ['vc+jwt'] },
+          media_type: { type: 'string', enum: ['application/vc+jwt'] },
+          filename: { type: 'string' },
+          data: {
+            type: 'object',
+            properties: {
+              json: {
+                type: 'object',
+                properties: {
+                  format: { type: 'string', enum: ['vc+jwt'] },
+                  jwt: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     body: VERIFY_BUNDLE_BODY_SCHEMA,
   },
 } as const;
@@ -214,6 +238,10 @@ const ACTIVATE_KEY_SCHEMA = {
     x5c: { type: 'array', items: { type: 'string' } },
     certificateChainPem: { type: 'array', items: { type: 'string' } },
   },
+  anyOf: [
+    { required: ['x5c'] },
+    { required: ['certificateChainPem'] },
+  ],
 } as const;
 
 const ACTIVATE_KEY_DATA_ITEM_SCHEMA = {
@@ -228,25 +256,67 @@ const ACTIVATE_KEY_DATA_ITEM_SCHEMA = {
   },
   oneOf: [
     { required: ['key'] },
-    { required: ['alg', 'privateKeyPem'] },
+    {
+      required: ['alg', 'privateKeyPem'],
+      anyOf: [
+        { required: ['x5c'] },
+        { required: ['certificateChainPem'] },
+      ],
+    },
   ],
+} as const;
+
+const CONTROLLER_FHIR_SIGNATURE_SCHEMA = {
+  type: 'object',
+  required: ['who', 'data'],
+  properties: {
+    type: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: true,
+      },
+      description: 'FHIR Signature.type coding (optional).',
+    },
+    when: { type: 'string', description: 'FHIR Signature.when timestamp (optional).' },
+    who: {
+      type: 'object',
+      required: ['reference'],
+      properties: {
+        reference: {
+          type: 'string',
+          description: 'FHIR Reference to controller verification method, e.g. did:web:...#kid.',
+        },
+      },
+      additionalProperties: true,
+      description: 'FHIR Signature.who reference.',
+    },
+    sigFormat: { type: 'string', description: 'e.g., application/jose' },
+    targetFormat: { type: 'string' },
+    data: {
+      type: 'string',
+      description:
+        'Detached compact JWS (`<protected>..<signature>`) or base64-encoded detached compact JWS. Signature is verified over canonical request body excluding signature and, for body.resourceType="Bundle", excluding root id/meta.',
+    },
+    kid: { type: 'string', description: 'Optional controller kid hint.' },
+    alg: { type: 'string', enum: ['ES384', 'ES256K', 'RS256', 'PS256', 'EdDSA'] },
+  },
+  additionalProperties: true,
 } as const;
 
 const ACTIVATE_REQUEST_BODY_SCHEMA = {
   type: 'object',
-  description: 'Provide either body.key (single key) or body.data[] (multiple keys).',
+  description:
+    'Provide keys in body.data[] (even for a single key). Use body.signature (FHIR Signature) for controller authorization.',
+  required: ['data', 'signature'],
   properties: {
-    key: ACTIVATE_KEY_SCHEMA,
     data: {
       type: 'array',
       minItems: 1,
       items: ACTIVATE_KEY_DATA_ITEM_SCHEMA,
     },
+    signature: CONTROLLER_FHIR_SIGNATURE_SCHEMA,
   },
-  oneOf: [
-    { required: ['key'] },
-    { required: ['data'] },
-  ],
 } as const;
 
 const ACTIVATE_DIDCOMM_REQUEST_SCHEMA = {
@@ -258,6 +328,28 @@ const ACTIVATE_DIDCOMM_REQUEST_SCHEMA = {
     type: { type: 'string' },
     body: ACTIVATE_REQUEST_BODY_SCHEMA,
   },
+} as const;
+
+const ROTATE_REQUEST_BODY_SCHEMA = {
+  type: 'object',
+  description: 'Controller-signed authorization for key rotation using body.signature (FHIR Signature).',
+  required: ['signature'],
+  properties: {
+    signature: CONTROLLER_FHIR_SIGNATURE_SCHEMA,
+  },
+  additionalProperties: true,
+} as const;
+
+const ROTATE_DIDCOMM_REQUEST_SCHEMA = {
+  type: 'object',
+  required: ['type', 'body'],
+  properties: {
+    jti: { type: 'string' },
+    thid: { type: 'string' },
+    type: { type: 'string' },
+    body: ROTATE_REQUEST_BODY_SCHEMA,
+  },
+  additionalProperties: true,
 } as const;
 
 const OIDC4IDA_CHECK_DETAILS_ITEM_SCHEMA = {
@@ -383,34 +475,88 @@ const OIDC4IDA_EVIDENCE_SCHEMA = {
   ],
 } as const;
 
+const OIDC4IDA_VERIFIED_CLAIMS_RESOURCE_SCHEMA = {
+  type: 'object',
+  required: ['verified_claims'],
+  properties: {
+    verified_claims: {
+      type: 'object',
+      required: ['verification'],
+      properties: {
+        verification: {
+          type: 'object',
+          required: ['evidence'],
+          properties: {
+            trust_framework: {
+              oneOf: [
+                { type: 'string' },
+                { type: 'null' },
+              ],
+            },
+            time: {
+              oneOf: [
+                { type: 'string' },
+                { type: 'null' },
+              ],
+            },
+            evidence: {
+              type: 'array',
+              minItems: 1,
+              items: OIDC4IDA_EVIDENCE_SCHEMA,
+            },
+          },
+          additionalProperties: true,
+        },
+        claims: {
+          type: 'object',
+          additionalProperties: true,
+          description: 'Additional claims proven by evidence (e.g. healthcare/certification registry identifiers).',
+        },
+      },
+      additionalProperties: true,
+    },
+  },
+  additionalProperties: true,
+} as const;
+
+const ADD_EVIDENCE_RESOURCE_SCHEMA = {
+  description: 'Either plain OIDC4IDA evidence object or resource wrapper with verified_claims.',
+  oneOf: [
+    OIDC4IDA_EVIDENCE_SCHEMA,
+    OIDC4IDA_VERIFIED_CLAIMS_RESOURCE_SCHEMA,
+  ],
+} as const;
+
 const ADD_EVIDENCE_DATA_ITEM_SCHEMA = {
   type: 'object',
-  required: ['evidence'],
   properties: {
     issuedCredentialRecordId: { type: 'string' },
     operatorDid: { type: 'string' },
     evidence: OIDC4IDA_EVIDENCE_SCHEMA,
+    resource: ADD_EVIDENCE_RESOURCE_SCHEMA,
   },
+  oneOf: [
+    { required: ['evidence'] },
+    { required: ['resource'] },
+  ],
   additionalProperties: false,
 } as const;
 
 const ADD_EVIDENCE_REQUEST_BODY_SCHEMA = {
   type: 'object',
-  description: 'Provide either body.evidence (single record) or body.data[] (batch).',
+  description:
+    'Canonical form: body.data[] (batch, one or many).',
   properties: {
     issuedCredentialRecordId: { type: 'string' },
     operatorDid: { type: 'string' },
-    evidence: OIDC4IDA_EVIDENCE_SCHEMA,
+    evidence: ADD_EVIDENCE_RESOURCE_SCHEMA,
     data: {
       type: 'array',
       minItems: 1,
       items: ADD_EVIDENCE_DATA_ITEM_SCHEMA,
     },
   },
-  oneOf: [
-    { required: ['evidence'] },
-    { required: ['data'] },
-  ],
+  required: ['data'],
 } as const;
 
 const ADD_EVIDENCE_DIDCOMM_REQUEST_SCHEMA = {
@@ -424,16 +570,312 @@ const ADD_EVIDENCE_DIDCOMM_REQUEST_SCHEMA = {
   },
 } as const;
 
-const ISSUE_CREDENTIAL_REQUEST_BODY_SCHEMA = {
+const ODRL_DELEGATION_POLICY_RESOURCE_SCHEMA = {
   type: 'object',
-  required: ['credential'],
+  description:
+    'ODRL delegation policy (Gaia-X OVC style constraints) used by ICA controller to delegate evidence operations.',
+  required: ['@context', 'permission'],
   properties: {
-    credential: { type: 'object', additionalProperties: true },
+    '@context': {
+      type: 'array',
+      minItems: 1,
+      items: {
+        oneOf: [
+          { type: 'string' },
+          { type: 'object', additionalProperties: true },
+        ],
+      },
+    },
+    profile: { type: 'string' },
+    uid: { type: 'string' },
+    id: { type: 'string' },
+    type: {
+      oneOf: [
+        { type: 'string' },
+        { type: 'array', items: { type: 'string' } },
+      ],
+    },
+    assigner: {
+      oneOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          properties: {
+            '@id': { type: 'string' },
+            id: { type: 'string' },
+          },
+          additionalProperties: true,
+        },
+      ],
+    },
+    assignee: {
+      oneOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          properties: {
+            '@id': { type: 'string' },
+            id: { type: 'string' },
+          },
+          additionalProperties: true,
+        },
+      ],
+    },
+    permission: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        required: ['action'],
+        properties: {
+          target: { type: 'string' },
+          action: {
+            oneOf: [
+              { type: 'string' },
+              {
+                type: 'object',
+                properties: {
+                  '@id': { type: 'string' },
+                },
+                additionalProperties: true,
+              },
+              { type: 'array', items: { type: 'object', additionalProperties: true } },
+            ],
+          },
+          assigner: {
+            oneOf: [
+              { type: 'string' },
+              { type: 'object', additionalProperties: true },
+            ],
+          },
+          assignee: {
+            oneOf: [
+              { type: 'string' },
+              { type: 'object', additionalProperties: true },
+            ],
+          },
+          constraint: {
+            type: 'array',
+            items: { type: 'object', additionalProperties: true },
+          },
+          'ovc:constraint': {
+            type: 'array',
+            items: { type: 'object', additionalProperties: true },
+          },
+        },
+        additionalProperties: true,
+      },
+    },
+  },
+  additionalProperties: true,
+} as const;
+
+const POLICY_UPSERT_DATA_ITEM_SCHEMA = {
+  type: 'object',
+  required: ['resource'],
+  properties: {
+    resource: ODRL_DELEGATION_POLICY_RESOURCE_SCHEMA,
+  },
+  additionalProperties: false,
+} as const;
+
+const POLICY_UPSERT_REQUEST_BODY_SCHEMA = {
+  type: 'object',
+  description: 'Canonical form: body.data[] (batch, one or many).',
+  properties: {
+    data: {
+      type: 'array',
+      minItems: 1,
+      items: POLICY_UPSERT_DATA_ITEM_SCHEMA,
+    },
+  },
+  required: ['data'],
+} as const;
+
+const POLICY_UPSERT_DIDCOMM_REQUEST_SCHEMA = {
+  type: 'object',
+  required: ['type', 'body'],
+  properties: {
+    jti: { type: 'string' },
+    thid: { type: 'string' },
+    type: { type: 'string' },
+    body: POLICY_UPSERT_REQUEST_BODY_SCHEMA,
+  },
+} as const;
+
+const SCHEMA_ORG_CREDENTIAL_SCHEMA = {
+  type: 'object',
+  required: ['credentialSubject'],
+  properties: {
+    id: { type: 'string' },
+    type: {
+      oneOf: [
+        { type: 'string' },
+        { type: 'array', items: { type: 'string' } },
+      ],
+    },
+    issuer: {
+      oneOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+          },
+          additionalProperties: true,
+        },
+      ],
+    },
+    credentialSubject: {
+      description: 'schema.org subject. Must include @type Person or Organization.',
+      oneOf: [
+        {
+          type: 'object',
+          required: ['@type'],
+          properties: {
+            id: { type: 'string' },
+            '@type': {
+              oneOf: [
+                {
+                  type: 'string',
+                  enum: [
+                    'Person',
+                    'Organization',
+                    'https://schema.org/Person',
+                    'https://schema.org/Organization',
+                    'schema:Person',
+                    'schema:Organization',
+                  ],
+                },
+                {
+                  type: 'array',
+                  items: {
+                    type: 'string',
+                    enum: [
+                      'Person',
+                      'Organization',
+                      'https://schema.org/Person',
+                      'https://schema.org/Organization',
+                      'schema:Person',
+                      'schema:Organization',
+                    ],
+                  },
+                },
+              ],
+            },
+            name: { type: 'string' },
+            legalName: { type: 'string' },
+            taxID: { type: 'string' },
+            identifier: { type: 'string' },
+            memberOf: { type: 'object', additionalProperties: true },
+            affiliation: { type: 'object', additionalProperties: true },
+          },
+          additionalProperties: true,
+        },
+        {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['@type'],
+            properties: {
+              id: { type: 'string' },
+              '@type': {
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: [
+                      'Person',
+                      'Organization',
+                      'https://schema.org/Person',
+                      'https://schema.org/Organization',
+                      'schema:Person',
+                      'schema:Organization',
+                    ],
+                  },
+                  {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                      enum: [
+                        'Person',
+                        'Organization',
+                        'https://schema.org/Person',
+                        'https://schema.org/Organization',
+                        'schema:Person',
+                        'schema:Organization',
+                      ],
+                    },
+                  },
+                ],
+              },
+              name: { type: 'string' },
+              legalName: { type: 'string' },
+              taxID: { type: 'string' },
+              identifier: { type: 'string' },
+              memberOf: { type: 'object', additionalProperties: true },
+              affiliation: { type: 'object', additionalProperties: true },
+            },
+            additionalProperties: true,
+          },
+        },
+      ],
+    },
+  },
+  additionalProperties: true,
+} as const;
+
+const ISSUE_CREDENTIAL_DATA_ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    resource: SCHEMA_ORG_CREDENTIAL_SCHEMA,
+    credential: SCHEMA_ORG_CREDENTIAL_SCHEMA,
     evidence: {
       type: 'array',
       items: { type: 'object', additionalProperties: true },
     },
   },
+  oneOf: [
+    { required: ['resource'] },
+    { required: ['credential'] },
+  ],
+  additionalProperties: true,
+} as const;
+
+const ISSUE_CREDENTIAL_REQUEST_BODY_SCHEMA = {
+  type: 'object',
+  required: ['data'],
+  properties: {
+    data: {
+      type: 'array',
+      minItems: 1,
+      items: ISSUE_CREDENTIAL_DATA_ITEM_SCHEMA,
+    },
+  },
+} as const;
+
+const CREDENTIAL_LOOKUP_DATA_ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    issuedCredentialRecordId: { type: 'string' },
+    credentialId: { type: 'string' },
+    subjectId: { type: 'string' },
+    credentialStatusId: { type: 'string' },
+    resource: {
+      type: 'object',
+      additionalProperties: true,
+      description:
+        'Optional lookup container. Resolver can use resource.id, resource.credentialStatus.id, and resource.credentialSubject.id.',
+    },
+  },
+  anyOf: [
+    { required: ['issuedCredentialRecordId'] },
+    { required: ['credentialId'] },
+    { required: ['subjectId'] },
+    { required: ['credentialStatusId'] },
+    { required: ['resource'] },
+  ],
+  additionalProperties: true,
 } as const;
 
 const ISSUE_CREDENTIAL_DIDCOMM_REQUEST_SCHEMA = {
@@ -449,16 +891,14 @@ const ISSUE_CREDENTIAL_DIDCOMM_REQUEST_SCHEMA = {
 
 const CREDENTIAL_STATUS_REQUEST_BODY_SCHEMA = {
   type: 'object',
+  required: ['data'],
   properties: {
-    issuedCredentialRecordId: { type: 'string' },
-    credentialId: { type: 'string' },
-    subjectId: { type: 'string' },
+    data: {
+      type: 'array',
+      minItems: 1,
+      items: CREDENTIAL_LOOKUP_DATA_ITEM_SCHEMA,
+    },
   },
-  anyOf: [
-    { required: ['issuedCredentialRecordId'] },
-    { required: ['credentialId'] },
-    { required: ['subjectId'] },
-  ],
 } as const;
 
 const CREDENTIAL_STATUS_DIDCOMM_REQUEST_SCHEMA = {
@@ -474,18 +914,33 @@ const CREDENTIAL_STATUS_DIDCOMM_REQUEST_SCHEMA = {
 
 const CREDENTIAL_REVOKE_REQUEST_BODY_SCHEMA = {
   type: 'object',
+  required: ['data'],
   properties: {
-    issuedCredentialRecordId: { type: 'string' },
-    credentialId: { type: 'string' },
-    subjectId: { type: 'string' },
-    reason: { type: 'string' },
-    revokedBy: { type: 'string' },
+    data: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        properties: {
+          issuedCredentialRecordId: { type: 'string' },
+          credentialId: { type: 'string' },
+          subjectId: { type: 'string' },
+          credentialStatusId: { type: 'string' },
+          reason: { type: 'string' },
+          revokedBy: { type: 'string' },
+          resource: { type: 'object', additionalProperties: true },
+        },
+        anyOf: [
+          { required: ['issuedCredentialRecordId'] },
+          { required: ['credentialId'] },
+          { required: ['subjectId'] },
+          { required: ['credentialStatusId'] },
+          { required: ['resource'] },
+        ],
+        additionalProperties: true,
+      },
+    },
   },
-  anyOf: [
-    { required: ['issuedCredentialRecordId'] },
-    { required: ['credentialId'] },
-    { required: ['subjectId'] },
-  ],
 } as const;
 
 const CREDENTIAL_REVOKE_DIDCOMM_REQUEST_SCHEMA = {
@@ -505,35 +960,36 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
   aud: 'did:web:localhost%3A3310',
   thid: 'verify-terms-001',
   type: 'application/bundle-api+json',
+  attachments: [
+    {
+      id: 'vc-jwt-1',
+      format: 'vc+jwt',
+      media_type: 'application/vc+jwt',
+      filename: 'Organization-verification-v1.0-1.jwt',
+      data: {
+        json: {
+          format: 'vc+jwt',
+          jwt: '<vc-jwt-organization>',
+        },
+      },
+    },
+    {
+      id: 'vc-jwt-2',
+      format: 'vc+jwt',
+      media_type: 'application/vc+jwt',
+      filename: 'LegalRepresentative-verification-v1.0-2.jwt',
+      data: {
+        json: {
+          format: 'vc+jwt',
+          jwt: '<vc-jwt-legal-representative>',
+        },
+      },
+    },
+  ],
   body: {
     resourceType: 'Bundle',
     type: 'batch-response',
     total: 2,
-    result: {
-      ok: true,
-      verifiedAt: '2026-03-06T12:00:00.000Z',
-      templateUrl:
-        'https://raw.githubusercontent.com/Global-DataCare/terms/refs/heads/main/dataspace/animal-care/es/202603051133/terms.pdf',
-      templateMatch: true,
-      signatureValid: true,
-      chainValid: true,
-      revocationStatus: 'good',
-      digest: {
-        alg: 'sha3-384',
-        signedPdfHex: 'a1b2c3',
-        unsignedPdfHex: 'd4e5f6',
-        templateHex: '0a0b0c',
-      },
-      signerCertificateSerialNumber: '1234567890',
-      signerSubject: '/C=ES/O=Acme Health SL/CN=Juan Perez',
-      signerIssuer: '/C=ES/O=FNMT-RCM/OU=AC REPRESENTACION',
-      hashes: {
-        signedPdfSha256Hex: '11aa22bb',
-        unsignedPdfSha256Hex: '33cc44dd',
-        templateSha256Hex: '55ee66ff',
-      },
-      notes: ['Verification completed.'],
-    },
     issues: {
       resourceType: 'OperationOutcome',
       issue: [
@@ -571,6 +1027,11 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
             '@type': 'Organization',
             legalName: 'Acme Health SL',
             taxID: 'VATES-A12345678',
+            controller: {
+              kid: 'ica-controller-20260305',
+              email: 'it-director@example.org',
+              alg: 'ES384',
+            },
             address: {
               '@type': 'PostalAddress',
               addressCountry: 'ES',
@@ -620,6 +1081,11 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
                 type: 'terms-and-conditions',
                 document_number: '202603051133',
                 serial_number: '1234567890',
+                controller: {
+                  kid: 'ica-controller-20260305',
+                  email: 'it-director@example.org',
+                  alg: 'ES384',
+                },
                 issuer: {
                   id: 'did:web:localhost%3A3310',
                   type: 'TrustServiceProvider',
@@ -664,6 +1130,7 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
             },
             identifier: '99999999R',
             nationality: 'ES',
+            email: 'it-director@example.org',
           },
           evidence: [
             {
@@ -709,6 +1176,11 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
                 type: 'terms-and-conditions',
                 document_number: '202603051133',
                 serial_number: '1234567890',
+                controller: {
+                  kid: 'ica-controller-20260305',
+                  email: 'it-director@example.org',
+                  alg: 'ES384',
+                },
                 issuer: {
                   id: 'did:web:localhost%3A3310',
                   type: 'TrustServiceProvider',
@@ -921,6 +1393,67 @@ const ADD_EVIDENCE_RESPONSE_SUCCESS_EXAMPLE = {
   },
 } as const;
 
+const DELEGATION_POLICY_UPSERT_RESPONSE_SUCCESS_EXAMPLE = {
+  jti: 'urn:uuid:delegation-policy-upsert-resp-001',
+  iss: 'did:web:localhost%3A3310',
+  aud: 'did:web:localhost%3A3310',
+  thid: 'delegation-policy-upsert-001',
+  type: 'application/bundle-api+json',
+  body: {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    total: 1,
+    issues: {
+      resourceType: 'OperationOutcome',
+      issue: [
+        {
+          severity: 'information',
+          code: 'informational',
+          diagnostics: 'Delegation policy record(s) upserted: 1.',
+        },
+      ],
+    },
+    data: [
+      {
+        type: 'DelegationPolicyUpsert-v1.0',
+        response: {
+          status: '200',
+          outcome: {
+            resourceType: 'OperationOutcome',
+            issue: [
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: 'Delegation policy record(s) upserted: 1.',
+              },
+            ],
+          },
+        },
+        resource: {
+          id: 'urn:uuid:delegation-policy-upsert-resource-001',
+          type: 'delegation-policy-upsert-v1.0',
+          thid: 'delegation-policy-upsert-001',
+          tenantId: 'ica',
+          jurisdiction: 'ES',
+          sector: 'animal-care',
+          policyType: 'delegations',
+          status: 'upserted',
+          createdAt: '2026-03-06T12:03:00.000Z',
+          updatedAt: '2026-03-06T12:03:02.000Z',
+          content: [
+            {
+              policyId: 'urn:policy:ica:es:delegate:1120:zEmailHash:official-registry:v1',
+              assigneeDid: 'did:web:ica.example.org:ica:cds-ES:v1:onehealth:delegate:1120:zEmailHash',
+              roleIdentifier: 'urn:ilo:ilostat:isco-08:1120',
+              upsertedAt: '2026-03-06T12:03:02.000Z',
+            },
+          ],
+        },
+      },
+    ],
+  },
+} as const;
+
 const ISSUE_CREDENTIAL_RESPONSE_SUCCESS_EXAMPLE = {
   jti: 'urn:uuid:issue-resp-001',
   iss: 'did:web:localhost%3A3310',
@@ -937,7 +1470,7 @@ const ISSUE_CREDENTIAL_RESPONSE_SUCCESS_EXAMPLE = {
         {
           severity: 'information',
           code: 'informational',
-          diagnostics: 'Credential record stored.',
+          diagnostics: 'Credential record(s) stored: 1.',
         },
       ],
     },
@@ -952,7 +1485,7 @@ const ISSUE_CREDENTIAL_RESPONSE_SUCCESS_EXAMPLE = {
               {
                 severity: 'information',
                 code: 'informational',
-                diagnostics: 'Credential record stored.',
+                diagnostics: 'Credential record(s) stored: 1.',
               },
             ],
           },
@@ -999,7 +1532,7 @@ const CREDENTIAL_STATUS_RESPONSE_SUCCESS_EXAMPLE = {
         {
           severity: 'information',
           code: 'informational',
-          diagnostics: 'Credential status resolved.',
+          diagnostics: 'Credential status resolved for 1 item(s).',
         },
       ],
     },
@@ -1014,7 +1547,7 @@ const CREDENTIAL_STATUS_RESPONSE_SUCCESS_EXAMPLE = {
               {
                 severity: 'information',
                 code: 'informational',
-                diagnostics: 'Credential status resolved.',
+                diagnostics: 'Credential status resolved for 1 item(s).',
               },
             ],
           },
@@ -1060,7 +1593,7 @@ const CREDENTIAL_REVOKE_RESPONSE_SUCCESS_EXAMPLE = {
         {
           severity: 'information',
           code: 'informational',
-          diagnostics: 'Credential status set to revoked.',
+          diagnostics: 'Credential status set to revoked for 1 item(s).',
         },
       ],
     },
@@ -1075,7 +1608,7 @@ const CREDENTIAL_REVOKE_RESPONSE_SUCCESS_EXAMPLE = {
               {
                 severity: 'information',
                 code: 'informational',
-                diagnostics: 'Credential status set to revoked.',
+                diagnostics: 'Credential status set to revoked for 1 item(s).',
               },
             ],
           },
@@ -1115,7 +1648,7 @@ export function buildIcaVerifyOpenApiSpec() {
       title: 'DataSpace ICA Verification API',
       version: '1.0.0',
       description:
-        'Asynchronous API for verifying FNMT-signed PDF terms, persisting network evidence/credentials, checking credential status, revoking credentials, and activating ICA cryptographic keys before production issuance. Current deployment is monotenant and uses alternateName "ica".',
+        'Asynchronous API for verifying FNMT-signed PDF terms, persisting network evidence/credentials, upserting ICA delegation policies (ODRL), checking credential status, revoking credentials, and activating ICA cryptographic keys before production issuance. Current deployment is monotenant and uses alternateName "ica".',
     },
     servers: [{ url: 'http://localhost:3310' }],
     tags: [
@@ -1138,6 +1671,10 @@ export function buildIcaVerifyOpenApiSpec() {
       {
         name: 'network/evidence',
         description: 'Evidence ingestion and polling (_add / _add-response).',
+      },
+      {
+        name: 'network/policies',
+        description: 'ICA delegation policy upsert and polling (_upsert / _upsert-response).',
       },
       {
         name: 'network/credentials',
@@ -1178,12 +1715,12 @@ export function buildIcaVerifyOpenApiSpec() {
           },
         },
       },
-      '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate': {
-        post: {
-          tags: ['entity/keys/credentials'],
-          summary: 'Activate ICA signing key',
+      '/ica/cds-{jurisdiction}/v1/{sector}/{membertype}/{role}/{idHash}/did.json': {
+        get: {
+          tags: ['discovery'],
+          summary: 'Get controller/member DID document',
           description:
-            'Starts async activation/import of one or more signing keys and returns polling location. For a runnable deterministic test payload use npm run api:example:activate.',
+            'Returns the controller DID document when ICA_SELF_CONTROLLER_* DID settings match this route.',
           parameters: [
             {
               name: 'jurisdiction',
@@ -1195,7 +1732,62 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', example: 'health-care' },
+            },
+            {
+              name: 'membertype',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'controller' },
+            },
+            {
+              name: 'role',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: '1120' },
+            },
+            {
+              name: 'idHash',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'zQmExampleControllerHash' },
+              description:
+                'Deterministic member identifier hash: multibase58(multihash(SHA3-256(id))). For controller bootstrap, id is typically normalized email.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Controller DID document.',
+              content: {
+                'application/did+ld+json': {
+                  schema: { type: 'object', additionalProperties: true },
+                },
+              },
+            },
+            '404': {
+              description: 'Controller DID document is not configured for the requested route.',
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate': {
+        post: {
+          tags: ['entity/keys/credentials'],
+          summary: 'Activate ICA signing key',
+          description:
+            'Starts async activation/import of one or more signing keys and returns polling location. Supports controller authorization via body.signature (FHIR Signature with detached compact JWS over canonical body) and validates CA x509 credential chain (x5c/certificateChainPem) per key. For a runnable deterministic test payload use npm run api:example:activate.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
           ],
           requestBody: {
@@ -1206,16 +1798,26 @@ export function buildIcaVerifyOpenApiSpec() {
                   activateMultipleKeys: {
                     summary: 'Activate multiple keys in one request',
                     value: {
-                      jti: 'activate-req-002',
-                      thid: 'activate-signing-key-002',
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/signing-keys/activate-request/v1',
                       body: {
+                        signature: {
+                          sigFormat: 'application/jose',
+                          who: {
+                            reference: 'did:web:ica.example.com#ica-es384-20260305',
+                          },
+                          data: '<detached-compact-jws-or-base64>',
+                        },
                         data: [
                           {
                             key: {
                               kid: 'ica-es384-20260305',
                               alg: 'ES384',
                               privateKeyPem: '-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----',
+                              certificateChainPem: [
+                                '-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----',
+                              ],
                             },
                           },
                           {
@@ -1223,6 +1825,9 @@ export function buildIcaVerifyOpenApiSpec() {
                               kid: 'ica-es256k-20260305',
                               alg: 'ES256K',
                               privateKeyPem: '-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----',
+                              certificateChainPem: [
+                                '-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----',
+                              ],
                             },
                           },
                         ],
@@ -1230,21 +1835,32 @@ export function buildIcaVerifyOpenApiSpec() {
                     },
                   },
                   activateEs384: {
-                    summary: 'Activate ES384 key + certificate chain',
+                    summary: 'Activate single ES384 key via body.data[]',
                     value: {
-                      jti: 'activate-req-001',
-                      thid: 'activate-signing-key-001',
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/signing-keys/activate-request/v1',
                       body: {
-                        key: {
-                          kid: 'ica-es384-20260305',
-                          alg: 'ES384',
-                          privateKeyPem: '-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----',
-                          certificateChainPem: [
-                            '-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----',
-                            '-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----',
-                          ],
+                        signature: {
+                          sigFormat: 'application/jose',
+                          who: {
+                            reference: 'did:web:ica.example.com#ica-es384-20260305',
+                          },
+                          data: '<detached-compact-jws-or-base64>',
                         },
+                        data: [
+                          {
+                            key: {
+                              kid: 'ica-es384-20260305',
+                              alg: 'ES384',
+                              privateKeyPem: '-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----',
+                              certificateChainPem: [
+                                '-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----',
+                                '-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----',
+                              ],
+                            },
+                          },
+                        ],
                       },
                     },
                   },
@@ -1292,7 +1908,7 @@ export function buildIcaVerifyOpenApiSpec() {
           tags: ['network/evidence'],
           summary: 'Add verified evidence record',
           description:
-            'Starts async persistence of an evidence record (`address`, `official-registry`, `qualification`, etc.) and returns polling location.',
+            'Starts async persistence of evidence records (`address`, `official-registry`, `qualification`, etc.) using body.data[] batch and returns polling location. data[].resource supports direct OIDC4IDA evidence object or verified_claims wrapper with verification.evidence[] and optional claims.',
           parameters: [
             {
               name: 'jurisdiction',
@@ -1304,7 +1920,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'evidenceType',
@@ -1320,62 +1936,81 @@ export function buildIcaVerifyOpenApiSpec() {
               'application/didcomm-plain+json': {
                 examples: {
                   addOfficialRegistryEvidence: {
-                    summary: 'Add single OIDC4IDA evidence (legacy body.evidence)',
+                    summary: 'Add single evidence using resource.verified_claims + claims',
                     value: {
-                      jti: 'evidence-add-001',
-                      thid: 'evidence-add-001',
-                      type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
-                      body: {
-                        issuedCredentialRecordId: 'urn:uuid:issued-record-001',
-                        operatorDid: 'did:web:localhost%3A3310#employee-01',
-                        evidence: {
-                          type: 'electronic_record',
-                          time: '2026-03-06T10:00:00.000Z',
-                          verifier: {
-                            organization: 'did:web:localhost%3A3310',
-                          },
-                          record: {
-                            type: 'official-registry',
-                            source: {
-                              id: 'did:web:mercantile-registry.example.org',
-                              type: 'PublicRegistry',
-                              country_code: 'ES',
-                              jurisdiction: 'ES',
-                            },
-                            created_at: '2026-03-06T10:00:00.000Z',
-                          },
-                          attachments: [
-                            {
-                              digest: {
-                                alg: 'sha3-384',
-                                value: '<base64>',
-                              },
-                              url: 'urn:uuid:evidence-doc-001',
-                            },
-                          ],
-                          check_details: [
-                            {
-                              check_method: 'vcrypt',
-                              organization: 'did:web:localhost%3A3310',
-                              time: '2026-03-06T10:00:00.000Z',
-                            },
-                          ],
-                        },
-                      },
-                    },
-                  },
-                  addOfficialRegistryEvidenceBatch: {
-                    summary: 'Add evidence batch with body.data[]',
-                    value: {
-                      jti: 'evidence-add-002',
-                      thid: 'evidence-add-002',
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
                       body: {
                         data: [
                           {
                             issuedCredentialRecordId: 'urn:uuid:issued-record-001',
                             operatorDid: 'did:web:localhost%3A3310#employee-01',
-                            evidence: {
+                            resource: {
+                              verified_claims: {
+                                verification: {
+                                  trust_framework: null,
+                                  time: '2026-03-06T10:00:00.000Z',
+                                  evidence: [
+                                    {
+                                      type: 'electronic_record',
+                                      time: '2026-03-06T10:00:00.000Z',
+                                      verifier: {
+                                        organization: 'did:web:localhost%3A3310',
+                                      },
+                                      record: {
+                                        type: 'official-registry',
+                                        source: {
+                                          id: 'did:web:mercantile-registry.example.org',
+                                          type: 'PublicRegistry',
+                                          country_code: 'ES',
+                                          jurisdiction: 'ES',
+                                        },
+                                        created_at: '2026-03-06T10:00:00.000Z',
+                                      },
+                                      attachments: [
+                                        {
+                                          digest: {
+                                            alg: 'sha3-384',
+                                            value: '<base64>',
+                                          },
+                                          url: 'urn:uuid:evidence-doc-001',
+                                        },
+                                      ],
+                                      check_details: [
+                                        {
+                                          check_method: 'vcrypt',
+                                          organization: 'did:web:localhost%3A3310',
+                                          time: '2026-03-06T10:00:00.000Z',
+                                        },
+                                      ],
+                                    },
+                                  ],
+                                },
+                                claims: {
+                                  healthcareRegistrationNumber: 'ES-SAN-REG-0001',
+                                  professionalLicenseDid: 'did:web:college.example.org:member:12345',
+                                  organizationDid: 'did:web:member.example.org',
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  addOfficialRegistryEvidenceBatch: {
+                    summary: 'Add evidence batch with body.data[]',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
+                      body: {
+                        data: [
+                          {
+                            issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+                            operatorDid: 'did:web:localhost%3A3310#employee-01',
+                            resource: {
                               type: 'electronic_record',
                               time: '2026-03-06T10:00:00.000Z',
                               verifier: {
@@ -1397,12 +2032,19 @@ export function buildIcaVerifyOpenApiSpec() {
                                   url: 'urn:uuid:evidence-doc-001',
                                 },
                               ],
+                              check_details: [
+                                {
+                                  check_method: 'vcrypt',
+                                  organization: 'did:web:localhost%3A3310',
+                                  time: '2026-03-06T10:00:00.000Z',
+                                },
+                              ],
                             },
                           },
                           {
                             issuedCredentialRecordId: 'urn:uuid:issued-record-001',
                             operatorDid: 'did:web:localhost%3A3310#employee-02',
-                            evidence: {
+                            resource: {
                               type: 'document',
                               method: 'eid',
                               time: '2026-03-06T10:05:00.000Z',
@@ -1465,12 +2107,12 @@ export function buildIcaVerifyOpenApiSpec() {
           },
         },
       },
-      '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue': {
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert': {
         post: {
-          tags: ['network/credentials'],
-          summary: 'Issue credential record',
+          tags: ['network/policies'],
+          summary: 'Upsert ICA delegation policy (ODRL)',
           description:
-            'Starts async persistence of an issued credential plus attached evidence records and returns polling location.',
+            'Starts async upsert of ICA delegation policies using body.data[] batch. Policies are ODRL resources (with optional Gaia-X OVC constraints) that delegate who can add/verify evidence for member organizations. OneHealth umbrella scope is mapped to API sectors by prefix: animal* and health*.',
           parameters: [
             {
               name: 'jurisdiction',
@@ -1482,7 +2124,133 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                examples: {
+                  upsertDelegateInvitationPolicy: {
+                    summary: 'Controller invites delegate with ODRL policy scoped to evidence type',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/network/policies/delegations/upsert-request/v1',
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              '@context': [
+                                'http://www.w3.org/ns/odrl.jsonld',
+                                {
+                                  ovc: 'https://w3id.org/gaia-x/ovc/1/',
+                                  sdo: 'https://schema.org/',
+                                  onehealth: 'https://onehealth.example/ns#',
+                                },
+                              ],
+                              profile: 'https://w3id.org/gaia-x/ovc/1/',
+                              uid: 'urn:policy:ica:es:delegate:1120:zEmailHash:official-registry:v1',
+                              type: 'Set',
+                              assigner: {
+                                '@id': 'did:web:ica.example.org:ica:cds-ES:v1:onehealth:controller:1120:zControllerHash',
+                              },
+                              assignee: {
+                                '@id': 'did:web:ica.example.org:ica:cds-ES:v1:onehealth:delegate:1120:zEmailHash',
+                              },
+                              permission: [
+                                {
+                                  target: 'urn:ica:organization:*:evidence:official-registry',
+                                  action: { '@id': 'odrl:write' },
+                                  'ovc:constraint': [
+                                    {
+                                      'ovc:leftOperand': '$.credentialSubject.id',
+                                      'odrl:operator': 'odrl:eq',
+                                      'odrl:rightOperand':
+                                        'did:web:ica.example.org:ica:cds-ES:v1:onehealth:delegate:1120:zEmailHash',
+                                    },
+                                    {
+                                      'ovc:leftOperand': '$.credentialSubject.hasOccupation.identifier',
+                                      'odrl:operator': 'odrl:eq',
+                                      'odrl:rightOperand': 'urn:ilo:ilostat:isco-08:1120',
+                                    },
+                                    {
+                                      'ovc:leftOperand': '$.credentialSubject.identifier',
+                                      'odrl:operator': 'odrl:eq',
+                                      'odrl:rightOperand': 'zEmailHash',
+                                    },
+                                    {
+                                      'ovc:leftOperand': '$.credentialSubject.walletKid',
+                                      'odrl:operator': 'odrl:eq',
+                                      'odrl:rightOperand': 'did:key:z6MkInvitee...#z6MkInvitee...',
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+                schema: POLICY_UPSERT_DIDCOMM_REQUEST_SCHEMA,
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted. Poll _upsert-response endpoint using Location header.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Polling endpoint path ending in _upsert-response (thread id must be sent separately as query/body).',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue': {
+        post: {
+          tags: ['network/credentials'],
+          summary: 'Issue credential record',
+          description:
+            'Starts async persistence of issued credential records from body.data[] (resource + optional evidence) and returns polling location.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'credentialType',
@@ -1498,29 +2266,57 @@ export function buildIcaVerifyOpenApiSpec() {
               'application/didcomm-plain+json': {
                 examples: {
                   issueCredentialWithEvidence: {
-                    summary: 'Issue member credential with extra evidence',
+                    summary: 'Issue credential batch via body.data[]',
                     value: {
-                      jti: 'credential-issue-001',
-                      thid: 'credential-issue-001',
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/network/credentials/issue-request/v1',
                       body: {
-                        credential: {
-                          id: 'urn:uuid:vc-member-001',
-                          type: ['VerifiableCredential', 'MemberCredential'],
-                          issuer: 'did:web:localhost%3A3310',
-                          credentialSubject: {
-                            id: 'mailto:member@example.org',
-                            membershipId: 'COL-0001',
-                          },
-                        },
-                        evidence: [
+                        data: [
                           {
-                            type: 'address',
-                            checkedAt: '2026-03-06T10:01:00.000Z',
-                            proof: {
-                              type: 'OperatorApprovalProof',
-                              signer: 'did:web:localhost%3A3310#employee-02',
-                              signature: '<jws>',
+                            resource: {
+                              id: 'urn:uuid:vc-member-001',
+                              type: ['VerifiableCredential', 'LegalRepresentativeCredential'],
+                              issuer: 'did:web:localhost%3A3310',
+                              credentialSubject: {
+                                id: 'did:web:member.example.org:alice',
+                                '@type': 'Person',
+                                memberOf: {
+                                  '@type': 'Organization',
+                                  legalName: 'Acme Health SL',
+                                  taxID: 'VATES-A12345678',
+                                },
+                              },
+                              evidence: [
+                                {
+                                  type: 'qualification',
+                                  checkedAt: '2026-03-06T10:00:00.000Z',
+                                },
+                              ],
+                            },
+                            evidence: [
+                              {
+                                type: 'address',
+                                checkedAt: '2026-03-06T10:01:00.000Z',
+                                proof: {
+                                  type: 'OperatorApprovalProof',
+                                  signer: 'did:web:localhost%3A3310#employee-02',
+                                  signature: '<jws>',
+                                },
+                              },
+                            ],
+                          },
+                          {
+                            resource: {
+                              id: 'urn:uuid:vc-member-002',
+                              type: ['VerifiableCredential', 'OrganizationCredential'],
+                              issuer: 'did:web:localhost%3A3310',
+                              credentialSubject: {
+                                id: 'did:web:member.example.org',
+                                '@type': 'Organization',
+                                legalName: 'Acme Health SL',
+                                taxID: 'VATES-A12345678',
+                              },
                             },
                           },
                         ],
@@ -1571,7 +2367,7 @@ export function buildIcaVerifyOpenApiSpec() {
           tags: ['network/credentials'],
           summary: 'Resolve credential status',
           description:
-            'Starts async credential status lookup (good/revoked/unknown) for a network credential and returns polling location.',
+            'Starts async credential-status lookup batch (good/revoked/unknown) from body.data[] and returns polling location.',
           parameters: [
             {
               name: 'jurisdiction',
@@ -1583,7 +2379,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'credentialType',
@@ -1599,13 +2395,23 @@ export function buildIcaVerifyOpenApiSpec() {
               'application/didcomm-plain+json': {
                 examples: {
                   statusByCredentialId: {
-                    summary: 'Query status by credential id',
+                    summary: 'Query status batch via body.data[]',
                     value: {
-                      jti: 'credential-status-001',
-                      thid: 'credential-status-001',
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/network/credentials/status-request/v1',
                       body: {
-                        credentialId: 'urn:uuid:vc-member-001',
+                        data: [
+                          {
+                            credentialId: 'urn:uuid:vc-member-001',
+                            resource: {
+                              id: 'urn:uuid:vc-member-001',
+                              credentialStatus: {
+                                id: 'urn:uuid:issued-record-001#status',
+                              },
+                            },
+                          },
+                        ],
                       },
                     },
                   },
@@ -1653,7 +2459,7 @@ export function buildIcaVerifyOpenApiSpec() {
           tags: ['network/credentials'],
           summary: 'Revoke credential record',
           description:
-            'Starts async revocation update for a network credential (sets credentialStatus=revoked) and returns polling location.',
+            'Starts async credential revocation batch from body.data[] (sets credentialStatus=revoked) and returns polling location.',
           parameters: [
             {
               name: 'jurisdiction',
@@ -1665,7 +2471,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'credentialType',
@@ -1681,15 +2487,25 @@ export function buildIcaVerifyOpenApiSpec() {
               'application/didcomm-plain+json': {
                 examples: {
                   revokeByCredentialId: {
-                    summary: 'Revoke by credential id with operator',
+                    summary: 'Revoke batch via body.data[]',
                     value: {
-                      jti: 'credential-revoke-001',
-                      thid: 'credential-revoke-001',
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/network/credentials/revoke-request/v1',
                       body: {
-                        credentialId: 'urn:uuid:vc-member-001',
-                        reason: 'membership-terminated',
-                        revokedBy: 'did:web:localhost%3A3310#employee-02',
+                        data: [
+                          {
+                            credentialId: 'urn:uuid:vc-member-001',
+                            reason: 'membership-terminated',
+                            revokedBy: 'did:web:localhost%3A3310#employee-02',
+                            resource: {
+                              id: 'urn:uuid:vc-member-001',
+                              credentialStatus: {
+                                id: 'urn:uuid:issued-record-001#status',
+                              },
+                            },
+                          },
+                        ],
                       },
                     },
                   },
@@ -1736,7 +2552,8 @@ export function buildIcaVerifyOpenApiSpec() {
         post: {
           tags: ['terms/pdf'],
           summary: 'Submit PDF verification job',
-          description: 'Starts an async verification job and returns polling location in headers.',
+          description:
+            'Starts an async verification job and returns polling location in headers. In Swagger UI, known share links in attachments[].data.links are normalized to direct-download URLs before sending (Dropbox dl=0->dl=1 and Google Drive best-effort conversion).',
           parameters: [
             {
               name: 'jurisdiction',
@@ -1748,7 +2565,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'resourceType',
@@ -1756,7 +2573,7 @@ export function buildIcaVerifyOpenApiSpec() {
               required: true,
               schema: { type: 'string', pattern: '^(?:\\d{12}|test-\\d{12})$', example: '202630011200' },
               description:
-                'Document version token. Production: yyyyddmmhhmm. Testing: test-yyyyddmmhhmm (requires ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX=true).',
+                'Document version token. Production: yyyyddmmhhmm. Testing: test-yyyyddmmhhmm (requires ICA_ENABLE_TEST_TERMS_PREFIX=true).',
             },
           ],
           requestBody: {
@@ -1767,8 +2584,8 @@ export function buildIcaVerifyOpenApiSpec() {
                   viaUrl: {
                     summary: 'DIDComm con PDF accesible por URL',
                     value: {
-                      jti: 'verify-req-001',
-                      thid: 'verify-terms-001',
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
                       body: {},
                       attachments: [
@@ -1782,11 +2599,47 @@ export function buildIcaVerifyOpenApiSpec() {
                       ],
                     },
                   },
+                  viaDropboxSharedUrl: {
+                    summary: 'DIDComm con URL compartida de Dropbox (Swagger cambia dl=0 a dl=1)',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
+                      body: {},
+                      attachments: [
+                        {
+                          id: 'signed-terms',
+                          media_type: 'application/pdf',
+                          data: {
+                            links: ['https://www.dropbox.com/s/example123/terms-signed.pdf?dl=0'],
+                          },
+                        },
+                      ],
+                    },
+                  },
+                  viaGoogleDriveViewerUrl: {
+                    summary: 'DIDComm con URL viewer de Google Drive (conversión best-effort en Swagger)',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
+                      body: {},
+                      attachments: [
+                        {
+                          id: 'signed-terms',
+                          media_type: 'application/pdf',
+                          data: {
+                            links: ['https://drive.google.com/file/d/17AtilZ0hjmfqXUx_2eqnjmQ2IrAzKSyO/view'],
+                          },
+                        },
+                      ],
+                    },
+                  },
                   viaBase64: {
                     summary: 'DIDComm con PDF en base64',
                     value: {
-                      jti: 'verify-req-002',
-                      thid: 'verify-terms-002',
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
                       body: {},
                       attachments: [
@@ -1887,7 +2740,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'thid',
@@ -1968,7 +2821,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'evidenceType',
@@ -2040,6 +2893,87 @@ export function buildIcaVerifyOpenApiSpec() {
           },
         },
       },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert-response': {
+        post: {
+          tags: ['network/policies'],
+          summary: 'Poll delegation policy upsert result',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+            {
+              name: 'thid',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Delegation policy upsert thread id. Can also be sent in body as thid or jti.',
+            },
+          ],
+          responses: {
+            '202': {
+              description: 'Still pending.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Same _upsert-response endpoint path; continue polling with same thid.',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '200': {
+              description: 'Delegation policy upsert completed (success or handled failure payload).',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                  examples: {
+                    delegationPolicyUpsertCompleted: {
+                      summary: 'Delegation policy upserted',
+                      value: DELEGATION_POLICY_UPSERT_RESPONSE_SUCCESS_EXAMPLE,
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Missing or invalid thread id.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '404': {
+              description: 'Delegation policy upsert job not found.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue-response': {
         post: {
           tags: ['network/credentials'],
@@ -2055,7 +2989,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'credentialType',
@@ -2142,7 +3076,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'credentialType',
@@ -2229,7 +3163,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'credentialType',
@@ -2306,7 +3240,7 @@ export function buildIcaVerifyOpenApiSpec() {
           tags: ['entity/keys/credentials'],
           summary: 'Rotate keys for credential issuance (stub)',
           description:
-            'Reserved endpoint for rotating ICA keys used in credential issuance. Current implementation returns 202 with polling Location.',
+            'Reserved endpoint for rotating ICA keys used in credential issuance. Current implementation validates controller authorization signature and returns 202 with polling Location.',
           parameters: [
             {
               name: 'jurisdiction',
@@ -2318,9 +3252,36 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
           ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                examples: {
+                  rotateCredentialsRequest: {
+                    summary: 'Rotate credentials keys (controller-signed)',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/signing-keys/rotate-request/v1',
+                      body: {
+                        signature: {
+                          sigFormat: 'application/jose',
+                          who: {
+                            reference: 'did:web:ica.example.com#ica-controller-20260305',
+                          },
+                          data: '<detached-compact-jws-or-base64>',
+                        },
+                      },
+                    },
+                  },
+                },
+                schema: ROTATE_DIDCOMM_REQUEST_SCHEMA,
+              },
+            },
+          },
           responses: {
             '202': {
               description: 'Accepted. Poll _rotate-response endpoint.',
@@ -2365,7 +3326,7 @@ export function buildIcaVerifyOpenApiSpec() {
           tags: ['entity/keys/communications'],
           summary: 'Rotate keys for communication messages (stub)',
           description:
-            'Reserved endpoint for rotating keys used in communication messages. Current implementation returns 202 with polling Location.',
+            'Reserved endpoint for rotating keys used in communication messages. Current implementation validates controller authorization signature and returns 202 with polling Location.',
           parameters: [
             {
               name: 'jurisdiction',
@@ -2377,9 +3338,36 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
           ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                examples: {
+                  rotateCommunicationsRequest: {
+                    summary: 'Rotate communications keys (controller-signed)',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/signing-keys/rotate-request/v1',
+                      body: {
+                        signature: {
+                          sigFormat: 'application/jose',
+                          who: {
+                            reference: 'did:web:ica.example.com#ica-controller-20260305',
+                          },
+                          data: '<detached-compact-jws-or-base64>',
+                        },
+                      },
+                    },
+                  },
+                },
+                schema: ROTATE_DIDCOMM_REQUEST_SCHEMA,
+              },
+            },
+          },
           responses: {
             '202': {
               description: 'Accepted. Poll _rotate-response endpoint.',
@@ -2434,7 +3422,7 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', enum: ['animal-care', 'health-care'] },
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
             },
             {
               name: 'resourceType',
@@ -2442,7 +3430,7 @@ export function buildIcaVerifyOpenApiSpec() {
               required: true,
               schema: { type: 'string', pattern: '^(?:\\d{12}|test-\\d{12})$', example: '202630011200' },
               description:
-                'Document version token. Production: yyyyddmmhhmm. Testing: test-yyyyddmmhhmm (requires ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX=true).',
+                'Document version token. Production: yyyyddmmhhmm. Testing: test-yyyyddmmhhmm (requires ICA_ENABLE_TEST_TERMS_PREFIX=true).',
             },
             {
               name: 'thid',

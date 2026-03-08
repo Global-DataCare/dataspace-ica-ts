@@ -7,6 +7,7 @@ import {
   buildRotateResponseLocation,
   parseActivateRoute,
   parseAddEvidenceRoute,
+  parseDelegationPolicyRoute,
   parseCredentialRevokeRoute,
   parseCredentialStatusRoute,
   parseIssueCredentialRoute,
@@ -17,6 +18,8 @@ import { ActivateRequestManager } from './managers/activate-request-manager.ts';
 import { ActivateResponseManager } from './managers/activate-response-manager.ts';
 import { AddEvidenceRequestManager } from './managers/add-evidence-request-manager.ts';
 import { AddEvidenceResponseManager } from './managers/add-evidence-response-manager.ts';
+import { DelegationPolicyUpsertRequestManager } from './managers/delegation-policy-upsert-request-manager.ts';
+import { DelegationPolicyUpsertResponseManager } from './managers/delegation-policy-upsert-response-manager.ts';
 import { CredentialRevokeRequestManager } from './managers/credential-revoke-request-manager.ts';
 import { CredentialRevokeResponseManager } from './managers/credential-revoke-response-manager.ts';
 import { CredentialStatusRequestManager } from './managers/credential-status-request-manager.ts';
@@ -26,11 +29,18 @@ import { IssueCredentialResponseManager } from './managers/issue-credential-resp
 import { VerifyRequestManager } from './managers/verify-request-manager.ts';
 import { VerifyResponseManager } from './managers/verify-response-manager.ts';
 import { buildIcaVerifyOpenApiSpec } from './openapi.ts';
+import { parseRotateSubmission } from './request-parsing.ts';
 import { createDefaultSignatureVerificationManagerFromEnv } from './signature-verification-manager.ts';
 import { createAuditDocumentStorageServiceFromEnv } from './tools/audit-document-storage.ts';
+import { validateRotateControllerDidcommProof } from './tools/controller-didcomm-proof.ts';
 import { createVerificationCollectionsServiceFromEnv } from './tools/verification-collections-storage.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from './tools/didcomm-message.ts';
-import { buildIcaDidDocument } from './tools/ica-identity.ts';
+import {
+  buildControllerDidDocument,
+  buildIcaDidDocument,
+  resolveControllerDidDocumentPath,
+} from './tools/ica-identity.ts';
+import { bootstrapSelfSigningKey } from './tools/self-signing.ts';
 import type {
   OperationOutcomeIssue,
   OperationOutcomeResource,
@@ -39,6 +49,8 @@ import type {
   ActivateRouteContext,
   AddEvidenceResult,
   AddEvidenceRouteContext,
+  DelegationPolicyRouteContext,
+  DelegationPolicyUpsertResult,
   CredentialRevokeResult,
   CredentialRevokeRouteContext,
   CredentialStatusResult,
@@ -131,6 +143,7 @@ function sendError(
     | ActivateRouteContext
     | RotateRouteContext
     | AddEvidenceRouteContext
+    | DelegationPolicyRouteContext
     | IssueCredentialRouteContext
     | CredentialStatusRouteContext
     | CredentialRevokeRouteContext,
@@ -150,6 +163,12 @@ function sendMethodNotAllowed(res: ServerResponse, allow: string): void {
   res.end();
 }
 
+function statusCodeFromDidcommParseError(message: string): number {
+  return message.startsWith('Unsupported Content-Type') || message.startsWith('Unsupported Content-Encoding')
+    ? 415
+    : 400;
+}
+
 function buildApiDocsHtml(): string {
   return `<!doctype html>
 <html lang="en">
@@ -167,12 +186,162 @@ function buildApiDocsHtml(): string {
     <div id="swagger-ui"></div>
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
     <script>
+      function pad2(value) {
+        return String(value).padStart(2, '0');
+      }
+
+      function buildDidcommTimeToken() {
+        const now = new Date();
+        return [
+          now.getFullYear(),
+          pad2(now.getMonth() + 1),
+          pad2(now.getDate()),
+          pad2(now.getHours()),
+          pad2(now.getMinutes()),
+          pad2(now.getSeconds())
+        ].join('');
+      }
+
+      function shouldAutoToken(value, prefix) {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (!normalized) return true;
+        return normalized === prefix + '-auto'
+          || normalized === prefix + '-yyyymmddhhss'
+          || normalized === prefix + '-yyyymmddhhmmss';
+      }
+
+      function isSubmitActionUrl(url) {
+        const normalized = String(url || '');
+        return /\/_(verify|activate|rotate|add|issue|status|revoke)(?:\\?.*)?$/i.test(normalized);
+      }
+
+      function isVerifySubmitActionUrl(url) {
+        const normalized = String(url || '');
+        return /\/_verify(?:\\?.*)?$/i.test(normalized);
+      }
+
+      function parseObjectJson(value) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          return value;
+        }
+        try {
+          const parsed = JSON.parse(String(value || ''));
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function getHeaderValue(headers, name) {
+        if (!headers) return '';
+        if (typeof headers.get === 'function') {
+          return String(headers.get(name) || headers.get(name.toLowerCase()) || '').trim();
+        }
+        const key = Object.keys(headers).find(function (candidate) {
+          return String(candidate || '').toLowerCase() === String(name || '').toLowerCase();
+        });
+        if (!key) return '';
+        return String(headers[key] || '').trim();
+      }
+
+      function normalizeGoogleDriveDirectDownloadUrl(inputUrl) {
+        try {
+          var url = new URL(String(inputUrl || '').trim());
+          var host = String(url.hostname || '').toLowerCase();
+          var isGoogleDriveHost = host === 'drive.google.com' || host === 'docs.google.com';
+          if (!isGoogleDriveHost) return String(inputUrl || '');
+
+          var segments = String(url.pathname || '').split('/').filter(Boolean);
+          var fileDIndex = segments.indexOf('d');
+          var fileId = '';
+          if (fileDIndex >= 0 && segments.length > fileDIndex + 1) {
+            fileId = segments[fileDIndex + 1] || '';
+          }
+          if (!fileId) {
+            fileId = url.searchParams.get('id') || '';
+          }
+          if (!fileId) {
+            return String(inputUrl || '');
+          }
+          return 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(fileId);
+        } catch {
+          return String(inputUrl || '');
+        }
+      }
+
+      function normalizeDropboxDirectDownloadUrl(inputUrl) {
+        try {
+          var url = new URL(String(inputUrl || '').trim());
+          var host = String(url.hostname || '').toLowerCase();
+          var isDropboxHost = host === 'dropbox.com'
+            || host === 'www.dropbox.com'
+            || host === 'dl.dropboxusercontent.com';
+          if (!isDropboxHost) return String(inputUrl || '');
+          if (host === 'dl.dropboxusercontent.com') return String(url.toString() || inputUrl || '');
+          url.searchParams.set('dl', '1');
+          return String(url.toString() || inputUrl || '');
+        } catch {
+          return String(inputUrl || '');
+        }
+      }
+
+      function normalizeAttachmentDirectDownloadUrl(inputUrl) {
+        var dropboxNormalized = normalizeDropboxDirectDownloadUrl(inputUrl);
+        return normalizeGoogleDriveDirectDownloadUrl(dropboxNormalized);
+      }
+
+      function normalizeVerifyAttachmentLinks(payload) {
+        if (!payload || typeof payload !== 'object') return;
+        if (!Array.isArray(payload.attachments)) return;
+        payload.attachments.forEach(function (attachment) {
+          if (!attachment || typeof attachment !== 'object') return;
+          var data = attachment.data;
+          if (!data || typeof data !== 'object') return;
+          if (!Array.isArray(data.links)) return;
+          data.links = data.links.map(function (link) {
+            return normalizeAttachmentDirectDownloadUrl(link);
+          });
+        });
+      }
+
       window.ui = SwaggerUIBundle({
         url: '/openapi.json',
         dom_id: '#swagger-ui',
         deepLinking: true,
         docExpansion: 'list',
-        presets: [SwaggerUIBundle.presets.apis]
+        presets: [SwaggerUIBundle.presets.apis],
+        requestInterceptor: function (req) {
+          try {
+            if (!isSubmitActionUrl(req && req.url)) {
+              return req;
+            }
+            const headers = req && req.headers ? req.headers : {};
+            const rawContentType = getHeaderValue(headers, 'Content-Type');
+            const contentType = String(rawContentType).toLowerCase();
+            if (!contentType.includes('application/didcomm-plain+json')) {
+              return req;
+            }
+            const payload = parseObjectJson(req.body);
+            if (!payload) {
+              return req;
+            }
+
+            const stamp = buildDidcommTimeToken();
+            if (shouldAutoToken(payload.jti, 'req')) {
+              payload.jti = 'req-' + stamp;
+            }
+            if (shouldAutoToken(payload.thid, 'thid')) {
+              payload.thid = 'thid-' + stamp;
+            }
+            if (isVerifySubmitActionUrl(req.url)) {
+              normalizeVerifyAttachmentLinks(payload);
+            }
+            req.body = JSON.stringify(payload);
+          } catch {
+            // keep original request on interceptor errors
+          }
+          return req;
+        }
       });
     </script>
   </body>
@@ -186,6 +355,10 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const addEvidenceJobStore = new InMemoryEntityJobStore<AddEvidenceRouteContext, AddEvidenceResult>(
     options.jobResultTtlSeconds || 3600,
   );
+  const delegationPolicyJobStore = new InMemoryEntityJobStore<
+    DelegationPolicyRouteContext,
+    DelegationPolicyUpsertResult
+  >(options.jobResultTtlSeconds || 3600);
   const issueCredentialJobStore = new InMemoryEntityJobStore<IssueCredentialRouteContext, IssueCredentialResult>(
     options.jobResultTtlSeconds || 3600,
   );
@@ -203,6 +376,8 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const activateResponseManager = new ActivateResponseManager(activationJobStore);
   const addEvidenceRequestManager = new AddEvidenceRequestManager(addEvidenceJobStore, verificationCollectionsService);
   const addEvidenceResponseManager = new AddEvidenceResponseManager(addEvidenceJobStore);
+  const delegationPolicyUpsertRequestManager = new DelegationPolicyUpsertRequestManager(delegationPolicyJobStore);
+  const delegationPolicyUpsertResponseManager = new DelegationPolicyUpsertResponseManager(delegationPolicyJobStore);
   const issueCredentialRequestManager = new IssueCredentialRequestManager(
     issueCredentialJobStore,
     verificationCollectionsService,
@@ -232,12 +407,16 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           sendMethodNotAllowed(res, 'GET');
           return;
         }
+        const controllerDidPath = resolveControllerDidDocumentPath(req) || undefined;
+        const controllerDidDocument = buildControllerDidDocument(req);
         sendJson(res, 200, {
           name: 'dataspace-ica verification api',
           status: 'ok',
           docs: '/api-docs',
           openapi: '/openapi.json',
           did: '/.well-known/did.json',
+          controllerDid: controllerDidDocument?.id || undefined,
+          controllerDidPath,
           endpoints: {
             verify: 'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify',
             verifyResponse:
@@ -250,6 +429,10 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
               'POST /ica/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add',
             addEvidenceResponse:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add-response',
+            upsertDelegationPolicy:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert',
+            upsertDelegationPolicyResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert-response',
             issueCredential:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue',
             issueCredentialResponse:
@@ -290,6 +473,21 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           return;
         }
         sendDidDocumentJson(res, 200, buildIcaDidDocument(req));
+        return;
+      }
+
+      const controllerDidPath = resolveControllerDidDocumentPath(req);
+      if (controllerDidPath && pathname === controllerDidPath) {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const controllerDidDocument = buildControllerDidDocument(req);
+        if (!controllerDidDocument) {
+          sendError(req, res, 404, 'Controller DID document is not configured.');
+          return;
+        }
+        sendDidDocumentJson(res, 200, controllerDidDocument);
         return;
       }
 
@@ -413,6 +611,48 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         }
 
         const outcome = await addEvidenceResponseManager.poll(route, req, requestUrl);
+        if (outcome.type === 'error') {
+          sendError(req, res, outcome.statusCode, outcome.message, route);
+          return;
+        }
+        if (outcome.type === 'pending') {
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        sendDidcommJson(res, 200, outcome.payload);
+        return;
+      }
+
+      const parsedDelegationPolicy = parseDelegationPolicyRoute(requestUrl.pathname);
+      if (parsedDelegationPolicy) {
+        if (!parsedDelegationPolicy.ok) {
+          sendError(req, res, parsedDelegationPolicy.statusCode, parsedDelegationPolicy.message);
+          return;
+        }
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', parsedDelegationPolicy.context);
+          return;
+        }
+
+        const route = parsedDelegationPolicy.context;
+        if (route.action === '_upsert') {
+          const outcome = await delegationPolicyUpsertRequestManager.submit(route, req);
+          if (outcome.type === 'error') {
+            sendError(req, res, outcome.statusCode, outcome.message, route);
+            return;
+          }
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+
+        const outcome = await delegationPolicyUpsertResponseManager.poll(route, req, requestUrl);
         if (outcome.type === 'error') {
           sendError(req, res, outcome.statusCode, outcome.message, route);
           return;
@@ -566,6 +806,20 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           return;
         }
         if (parsedRotate.context.action === '_rotate') {
+          try {
+            const submission = await parseRotateSubmission(req);
+            validateRotateControllerDidcommProof(submission, parsedRotate.context, req);
+          } catch (error: unknown) {
+            const message = (error as Error)?.message || 'Invalid rotate payload.';
+            sendError(
+              req,
+              res,
+              statusCodeFromDidcommParseError(message),
+              message,
+              parsedRotate.context,
+            );
+            return;
+          }
           res.statusCode = 202;
           res.setHeader('Location', buildRotateResponseLocation(parsedRotate.context));
           res.setHeader('Retry-After', '5');
@@ -586,6 +840,21 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
 export function startIcaApiServer(options: IcaApiServerOptions = {}) {
   const host = options.host || process.env.ICA_API_HOST || '0.0.0.0';
   const port = options.port || Number.parseInt(process.env.ICA_API_PORT || process.env.PORT || '3310', 10);
+  const selfBootstrap = bootstrapSelfSigningKey();
+  if (selfBootstrap.enabled) {
+    if (selfBootstrap.activated) {
+      console.log(
+        `ICA self-sign bootstrap activated key kid=${selfBootstrap.kid || 'auto'} alg=${selfBootstrap.alg || 'n/a'}.`,
+      );
+    } else {
+      console.log(
+        `ICA self-sign bootstrap using ${selfBootstrap.source || 'configured signing key'}${selfBootstrap.kid ? ` kid=${selfBootstrap.kid}` : ''}.`,
+      );
+    }
+    if (selfBootstrap.warning) {
+      console.warn(`WARNING: ${selfBootstrap.warning}`);
+    }
+  }
   const server = createIcaApiServer(options);
   server.listen(port, host, () => {
     console.log(`ICA verify API listening on http://${host}:${port}`);

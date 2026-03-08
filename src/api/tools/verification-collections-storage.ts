@@ -29,6 +29,7 @@ export type IssuedCredentialLookup = {
   issuedCredentialRecordId?: string;
   credentialId?: string;
   subjectId?: string;
+  credentialStatusId?: string;
 };
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -47,6 +48,11 @@ function asJsonObject(value: unknown): JsonObject | undefined {
 
 function asNonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function credentialStatusIdFromCredential(credential: JsonObject): string {
+  const credentialStatus = asJsonObject(credential.credentialStatus);
+  return asNonEmptyString(credentialStatus?.id);
 }
 
 function includesValue(left: string, right: string): boolean {
@@ -231,6 +237,11 @@ export class VerificationCollectionsService {
     }
     if (lookup.subjectId) {
       return scoped.find((record) => includesValue(record.subjectId, lookup.subjectId || ''));
+    }
+    if (lookup.credentialStatusId) {
+      return scoped.find((record) =>
+        includesValue(credentialStatusIdFromCredential(record.credential), lookup.credentialStatusId || ''),
+      );
     }
     return undefined;
   }

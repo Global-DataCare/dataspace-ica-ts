@@ -8,13 +8,26 @@ import type {
   ActivateSigningKeySubmission,
   AddEvidenceInput,
   AddEvidenceSubmission,
+  ControllerDidcommProof,
   CredentialRevokeSubmission,
+  DelegationPolicyInput,
+  DelegationPolicySubmission,
+  CredentialLookupInput,
+  CredentialRevokeInput,
   CredentialStatusSubmission,
+  IssueCredentialInput,
   IssueCredentialSubmission,
+  RotateSubmission,
   SupportedSigningAlgorithm,
   VerifySubmission,
 } from './types.ts';
-import { assertValidOidc4idaEvidenceObject } from './tools/oidc4ida-evidence-validation.ts';
+import {
+  assertValidOidc4idaEvidenceObject,
+  assertValidOidc4idaVerifiedClaimsResource,
+} from './tools/oidc4ida-evidence-validation.ts';
+import { assertValidDelegationPolicyResource } from './tools/odrl-delegation-policy-validation.ts';
+import { assertSchemaOrgCredential } from './tools/schemaorg-credential-validation.ts';
+import { computeControllerAuthorizationPayloadBase64Url } from './tools/controller-authorization-payload.ts';
 
 type ParsedThreadPayload = {
   thid?: string;
@@ -59,6 +72,29 @@ function normalizeContentType(headerValue: string): string {
   return headerValue.split(';')[0].trim().toLowerCase();
 }
 
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function buildThreadTimestamp(date: Date = new Date()): string {
+  return [
+    date.getFullYear(),
+    pad2(date.getMonth() + 1),
+    pad2(date.getDate()),
+    pad2(date.getHours()),
+    pad2(date.getMinutes()),
+    pad2(date.getSeconds()),
+  ].join('');
+}
+
+function isAutoToken(value: string, prefix: 'thid' | 'req'): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized === `${prefix}-auto`
+    || normalized === `${prefix}-yyyymmddhhss`
+    || normalized === `${prefix}-yyyymmddhhmmss`;
+}
+
 async function readIncomingBuffer(req: IncomingMessage): Promise<Buffer<ArrayBufferLike>> {
   const chunks: Buffer<ArrayBufferLike>[] = [];
   for await (const chunk of req) {
@@ -70,7 +106,17 @@ async function readIncomingBuffer(req: IncomingMessage): Promise<Buffer<ArrayBuf
 function extractThid(payload: ParsedThreadPayload): string {
   const fromThid = String(payload.thid || '').trim();
   const fromJti = String(payload.jti || '').trim();
-  return fromThid || fromJti || randomUUID();
+  if (fromThid) {
+    return isAutoToken(fromThid, 'thid')
+      ? `thid-${buildThreadTimestamp()}`
+      : fromThid;
+  }
+  if (fromJti) {
+    return isAutoToken(fromJti, 'req')
+      ? `thid-${buildThreadTimestamp()}`
+      : fromJti;
+  }
+  return randomUUID();
 }
 
 function buildWebRequest(req: IncomingMessage): Request {
@@ -112,6 +158,18 @@ async function resolveInputRef(inputRef: string): Promise<Buffer<ArrayBufferLike
   return readFile(trimmed);
 }
 
+function looksLikePdf(bytes: Buffer<ArrayBufferLike>): boolean {
+  if (!bytes.length) return false;
+  const head = bytes.subarray(0, Math.min(bytes.length, 1024)).toString('latin1');
+  return head.includes('%PDF-');
+}
+
+function invalidPdfAttachmentError(): Error {
+  return new Error(
+    'Attachment does not contain a valid PDF. For Google Drive use a direct download URL (not /file/d/... viewer URL) or send attachments[].data.base64.',
+  );
+}
+
 function decodeBase64Payload(base64Payload: string): Buffer<ArrayBufferLike> {
   try {
     return Buffer.from(base64Payload, 'base64');
@@ -143,7 +201,12 @@ async function resolvePdfFromDidcommAttachments(
       : [];
     if (!links.length) continue;
     const remoteBytes = await resolveInputRef(links[0]);
-    if (remoteBytes.length) return remoteBytes;
+    if (remoteBytes.length) {
+      if (!looksLikePdf(remoteBytes)) {
+        throw invalidPdfAttachmentError();
+      }
+      return remoteBytes;
+    }
   }
   return Buffer.alloc(0);
 }
@@ -269,6 +332,59 @@ function parseActivateSigningKeyInput(
   };
 }
 
+function parseControllerDidcommProof(
+  parsedBody: ParsedObject,
+): ControllerDidcommProof | undefined {
+  const signatureContainer =
+    asObject(parsedBody.signature);
+  if (signatureContainer) {
+    const jwsFromSignature = resolveJwsFromSignatureContainer(signatureContainer);
+    if (jwsFromSignature) {
+      const kidFromWho = resolveSignatureWhoKid(signatureContainer);
+      const kid = asNonEmptyString(kidFromWho || signatureContainer.kid) || undefined;
+      const alg = asNonEmptyString(signatureContainer.alg) || undefined;
+      return {
+        jws: jwsFromSignature,
+        ...(kid ? { kid } : {}),
+        ...(alg ? { alg } : {}),
+      };
+    }
+  }
+  return undefined;
+}
+
+function resolveSignatureWhoKid(signatureContainer: ParsedObject): string {
+  const who = asObject(signatureContainer.who);
+  if (!who) return '';
+  return asNonEmptyString(who.reference);
+}
+
+function tryDecodeBase64ToUtf8(value: string): string {
+  try {
+    return Buffer.from(value, 'base64').toString('utf8').trim();
+  } catch {
+    try {
+      return Buffer.from(value, 'base64url').toString('utf8').trim();
+    } catch {
+      return '';
+    }
+  }
+}
+
+function resolveJwsFromSignatureContainer(signatureContainer: ParsedObject): string {
+  const rawData = asNonEmptyString(
+    signatureContainer.data
+    || signatureContainer.jws
+    || signatureContainer.signature
+    || signatureContainer.jwt,
+  );
+  if (!rawData) return '';
+  if (rawData.includes('.')) return rawData;
+  const decoded = tryDecodeBase64ToUtf8(rawData);
+  if (decoded.includes('.')) return decoded;
+  return '';
+}
+
 export async function parseActivateSigningKeySubmission(
   req: IncomingMessage,
 ): Promise<ActivateSigningKeySubmission> {
@@ -308,23 +424,31 @@ export async function parseActivateSigningKeySubmission(
   const parsedBody = asObject(parsed.body) || {};
   const keyFallback: ParsedObject = { ...parsed, ...parsedBody };
   const rawDataEntries = Array.isArray(parsedBody.data) ? parsedBody.data : [];
-  const keys = rawDataEntries.length
-    ? rawDataEntries.map((entry, index) => parseActivateSigningKeyInput(entry, keyFallback, `body.data[${index}]`))
-    : [parseActivateSigningKeyInput(parsedBody, keyFallback, 'body.key/body')];
+  if (!rawDataEntries.length) {
+    throw new Error('Activation payload requires body.data[] with at least one key item.');
+  }
+  const keys = rawDataEntries
+    .map((entry, index) => parseActivateSigningKeyInput(entry, keyFallback, `body.data[${index}]`));
 
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
+  const jti = asNonEmptyString(parsed.jti || parsedBody.jti) || undefined;
+  const controllerProof = parseControllerDidcommProof(parsedBody);
+  const controllerAuthorizationPayloadBase64Url = computeControllerAuthorizationPayloadBase64Url(parsedBody);
   return {
     thid,
+    ...(jti ? { jti } : {}),
     keys,
+    ...(controllerProof ? { controllerProof } : {}),
+    controllerAuthorizationPayloadBase64Url,
   };
 }
 
 async function parseDidcommPlainObject(
   req: IncomingMessage,
-  action: '_add' | '_issue' | '_status' | '_revoke',
+  action: '_add' | '_issue' | '_status' | '_revoke' | '_rotate' | '_upsert',
 ): Promise<{ parsed: ParsedObject; parsedBody: ParsedObject }> {
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
@@ -365,6 +489,23 @@ async function parseDidcommPlainObject(
   };
 }
 
+export async function parseRotateSubmission(req: IncomingMessage): Promise<RotateSubmission> {
+  const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_rotate');
+  const thid = extractThid({
+    thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+  });
+  const jti = asNonEmptyString(parsed.jti || parsedBody.jti) || undefined;
+  const controllerProof = parseControllerDidcommProof(parsedBody);
+  const controllerAuthorizationPayloadBase64Url = computeControllerAuthorizationPayloadBase64Url(parsedBody);
+  return {
+    thid,
+    ...(jti ? { jti } : {}),
+    ...(controllerProof ? { controllerProof } : {}),
+    controllerAuthorizationPayloadBase64Url,
+  };
+}
+
 function parseEvidenceEntries(value: unknown): Record<string, unknown>[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -378,16 +519,40 @@ function parseAddEvidenceInput(
   indexLabel: string,
 ): AddEvidenceInput {
   const entry = asObject(rawEntry) || {};
-  const rawEvidence = asObject(entry.evidence);
+  const resource = asObject(entry.resource);
+  const directEvidence =
+    asObject(entry.evidence)
+    || asObject(resource?.evidence);
+  const wrappedVerifiedClaimsResource = resource && asObject(resource.verified_claims)
+    ? resource
+    : undefined;
+  const rawEvidence = directEvidence || wrappedVerifiedClaimsResource || resource;
   if (!rawEvidence) {
     throw new Error(`Evidence payload requires ${indexLabel}.evidence object.`);
   }
-  assertValidOidc4idaEvidenceObject(rawEvidence, `${indexLabel}.evidence`);
+  if (wrappedVerifiedClaimsResource) {
+    assertValidOidc4idaVerifiedClaimsResource(wrappedVerifiedClaimsResource, `${indexLabel}.resource`);
+  } else if (resource && !directEvidence) {
+    assertValidOidc4idaEvidenceObject(resource, `${indexLabel}.resource`);
+  } else {
+    assertValidOidc4idaEvidenceObject(rawEvidence, `${indexLabel}.evidence`);
+  }
 
   const issuedCredentialRecordId =
-    asNonEmptyString(entry.issuedCredentialRecordId || fallback.issuedCredentialRecordId) || undefined;
+    asNonEmptyString(
+      entry.issuedCredentialRecordId
+      || resource?.issuedCredentialRecordId
+      || fallback.issuedCredentialRecordId,
+    ) || undefined;
   const operatorDid =
-    asNonEmptyString(entry.operatorDid || entry.performedBy || fallback.operatorDid || fallback.performedBy)
+    asNonEmptyString(
+      entry.operatorDid
+      || entry.performedBy
+      || resource?.operatorDid
+      || resource?.performedBy
+      || fallback.operatorDid
+      || fallback.performedBy,
+    )
     || undefined;
 
   return {
@@ -417,9 +582,13 @@ export async function parseAddEvidenceSubmission(req: IncomingMessage): Promise<
     : (() => {
       const rawEvidence = asObject(parsedBody.evidence) || asObject(parsed.evidence);
       if (!rawEvidence) {
-        throw new Error('Evidence payload requires body.evidence object or body.data[].evidence entries.');
+        throw new Error('Evidence payload requires body.evidence object or body.data[].resource/body.data[].evidence entries.');
       }
-      assertValidOidc4idaEvidenceObject(rawEvidence, 'body.evidence');
+      if (asObject(rawEvidence.verified_claims)) {
+        assertValidOidc4idaVerifiedClaimsResource(rawEvidence, 'body.evidence');
+      } else {
+        assertValidOidc4idaEvidenceObject(rawEvidence, 'body.evidence');
+      }
       const issuedCredentialRecordId =
         asNonEmptyString(parsedBody.issuedCredentialRecordId || parsed.issuedCredentialRecordId) || undefined;
       const operatorDid =
@@ -440,46 +609,144 @@ export async function parseAddEvidenceSubmission(req: IncomingMessage): Promise<
   };
 }
 
-export async function parseIssueCredentialSubmission(req: IncomingMessage): Promise<IssueCredentialSubmission> {
-  const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_issue');
-
-  const rawCredential = asObject(parsedBody.credential) || asObject(parsed.credential);
-  if (!rawCredential) {
-    throw new Error('Credential payload requires body.credential object.');
+function parseDelegationPolicyInput(rawEntry: unknown, indexLabel: string): DelegationPolicyInput {
+  const entry = asObject(rawEntry) || {};
+  const resource = asObject(entry.resource);
+  if (!resource) {
+    throw new Error(`Delegation policy payload requires ${indexLabel}.resource object.`);
   }
+  assertValidDelegationPolicyResource(resource, `${indexLabel}.resource`);
+  return {
+    resource: { ...resource },
+  };
+}
+
+export async function parseDelegationPolicySubmission(req: IncomingMessage): Promise<DelegationPolicySubmission> {
+  const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_upsert');
 
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
-  const evidence = [
-    ...parseEvidenceEntries(parsedBody.evidence),
-    ...parseEvidenceEntries(parsed.evidence),
-  ];
+
+  const rawBatchEntries = Array.isArray(parsedBody.data)
+    ? parsedBody.data
+    : Array.isArray(parsed.data)
+      ? parsed.data
+      : [];
+  if (!rawBatchEntries.length) {
+    throw new Error('Delegation policy payload requires body.data[] with at least one resource item.');
+  }
+
+  const policies = rawBatchEntries
+    .map((entry, index) => parseDelegationPolicyInput(entry, `body.data[${index}]`));
 
   return {
     thid,
+    policies,
+  };
+}
+
+export async function parseIssueCredentialSubmission(req: IncomingMessage): Promise<IssueCredentialSubmission> {
+  const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_issue');
+
+  const thid = extractThid({
+    thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+  });
+
+  const fallback: ParsedObject = { ...parsed, ...parsedBody };
+  const rawBatchEntries = Array.isArray(parsedBody.data)
+    ? parsedBody.data
+    : Array.isArray(parsed.data)
+      ? parsed.data
+      : [];
+  const items: IssueCredentialInput[] = rawBatchEntries.length
+    ? rawBatchEntries.map((entry, index) => parseIssueCredentialInput(entry, fallback, `body.data[${index}]`))
+    : [parseIssueCredentialInput(parsedBody, fallback, 'body')];
+
+  return {
+    thid,
+    items,
+  };
+}
+
+function asCredentialLikeResource(value: unknown): ParsedObject | undefined {
+  const resource = asObject(value);
+  if (!resource) return undefined;
+  if (asObject(resource.credentialSubject) || asNonEmptyString(resource.issuer) || resource.type) {
+    return resource;
+  }
+  return undefined;
+}
+
+function parseIssueCredentialInput(
+  rawEntry: unknown,
+  fallback: ParsedObject,
+  indexLabel: string,
+): IssueCredentialInput {
+  const entry = asObject(rawEntry) || {};
+  const resource = asObject(entry.resource);
+  const rawCredential =
+    asCredentialLikeResource(entry.credential)
+    || asCredentialLikeResource(resource)
+    || asCredentialLikeResource(fallback.credential)
+    || asCredentialLikeResource(asObject(fallback.resource));
+  if (!rawCredential) {
+    throw new Error(`Credential payload requires ${indexLabel}.resource (or ${indexLabel}.credential) object.`);
+  }
+  assertSchemaOrgCredential(rawCredential, `${indexLabel}.resource`);
+
+  const evidence = [
+    ...parseEvidenceEntries(entry.evidence),
+  ];
+
+  return {
     credential: { ...rawCredential },
     evidence,
   };
 }
 
-function parseCredentialLookup(
-  parsed: ParsedObject,
-  parsedBody: ParsedObject,
-): {
-  issuedCredentialRecordId?: string;
-  credentialId?: string;
-  subjectId?: string;
-} {
-  const issuedCredentialRecordId =
-    asNonEmptyString(parsedBody.issuedCredentialRecordId || parsed.issuedCredentialRecordId) || undefined;
-  const credentialId = asNonEmptyString(parsedBody.credentialId || parsed.credentialId) || undefined;
-  const subjectId = asNonEmptyString(parsedBody.subjectId || parsed.subjectId) || undefined;
+function resolveCredentialSubjectIdFromResource(resource: ParsedObject): string {
+  const directSubjectId = asNonEmptyString(resource.subjectId);
+  if (directSubjectId) return directSubjectId;
+  const credentialSubject = resource.credentialSubject;
+  if (Array.isArray(credentialSubject)) {
+    for (const candidate of credentialSubject) {
+      const subject = asObject(candidate);
+      const subjectId = asNonEmptyString(subject?.id);
+      if (subjectId) return subjectId;
+    }
+    return '';
+  }
+  const subject = asObject(credentialSubject);
+  return asNonEmptyString(subject?.id);
+}
 
-  if (!issuedCredentialRecordId && !credentialId && !subjectId) {
+function parseCredentialLookupFromObject(
+  rawSource: ParsedObject,
+  indexLabel: string,
+): CredentialLookupInput {
+  const source = rawSource || {};
+  const resource = asObject(source.resource) || {};
+  const credentialStatus = asObject(resource.credentialStatus) || {};
+
+  const issuedCredentialRecordId = asNonEmptyString(
+    source.issuedCredentialRecordId || resource.issuedCredentialRecordId,
+  ) || undefined;
+  const credentialId = asNonEmptyString(
+    source.credentialId || resource.credentialId || resource.id,
+  ) || undefined;
+  const subjectId = asNonEmptyString(
+    source.subjectId || resource.subjectId || resolveCredentialSubjectIdFromResource(resource),
+  ) || undefined;
+  const credentialStatusId = asNonEmptyString(
+    source.credentialStatusId || resource.credentialStatusId || credentialStatus.id,
+  ) || undefined;
+
+  if (!issuedCredentialRecordId && !credentialId && !subjectId && !credentialStatusId) {
     throw new Error(
-      'Credential lookup requires at least one identifier: body.issuedCredentialRecordId, body.credentialId, or body.subjectId.',
+      `Credential lookup requires at least one identifier at ${indexLabel}: issuedCredentialRecordId, credentialId, subjectId, or credentialStatusId.`,
     );
   }
 
@@ -487,41 +754,84 @@ function parseCredentialLookup(
     issuedCredentialRecordId,
     credentialId,
     subjectId,
+    credentialStatusId,
   };
+}
+
+function parseCredentialRevokeInput(
+  rawEntry: unknown,
+  fallback: ParsedObject,
+  indexLabel: string,
+): CredentialRevokeInput {
+  const entry = asObject(rawEntry) || {};
+  const resource = asObject(entry.resource) || {};
+  const lookup = parseCredentialLookupFromObject({ ...fallback, ...entry }, indexLabel);
+  const reason = asNonEmptyString(entry.reason || resource.reason || fallback.reason) || undefined;
+  const revokedBy = asNonEmptyString(
+    entry.revokedBy
+    || resource.revokedBy
+    || entry.operatorDid
+    || entry.performedBy
+    || fallback.revokedBy
+    || fallback.operatorDid
+    || fallback.performedBy,
+  ) || undefined;
+
+  return {
+    ...lookup,
+    reason,
+    revokedBy,
+  };
+}
+
+function parseCredentialLookupBatch(
+  parsed: ParsedObject,
+  parsedBody: ParsedObject,
+): CredentialLookupInput[] {
+  const fallback: ParsedObject = { ...parsed, ...parsedBody };
+  const rawBatchEntries = Array.isArray(parsedBody.data)
+    ? parsedBody.data
+    : Array.isArray(parsed.data)
+      ? parsed.data
+      : [];
+  if (rawBatchEntries.length) {
+    return rawBatchEntries.map((entry, index) =>
+      parseCredentialLookupFromObject({ ...fallback, ...(asObject(entry) || {}) }, `body.data[${index}]`));
+  }
+  return [parseCredentialLookupFromObject(fallback, 'body')];
 }
 
 export async function parseCredentialStatusSubmission(req: IncomingMessage): Promise<CredentialStatusSubmission> {
   const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_status');
-  const lookup = parseCredentialLookup(parsed, parsedBody);
+  const lookups = parseCredentialLookupBatch(parsed, parsedBody);
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   return {
     thid,
-    ...lookup,
+    lookups,
   };
 }
 
 export async function parseCredentialRevokeSubmission(req: IncomingMessage): Promise<CredentialRevokeSubmission> {
   const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_revoke');
-  const lookup = parseCredentialLookup(parsed, parsedBody);
+  const fallback: ParsedObject = { ...parsed, ...parsedBody };
+  const rawBatchEntries = Array.isArray(parsedBody.data)
+    ? parsedBody.data
+    : Array.isArray(parsed.data)
+      ? parsed.data
+      : [];
+  const items = rawBatchEntries.length
+    ? rawBatchEntries.map((entry, index) => parseCredentialRevokeInput(entry, fallback, `body.data[${index}]`))
+    : [parseCredentialRevokeInput(parsedBody, fallback, 'body')];
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
-  const reason = asNonEmptyString(parsedBody.reason || parsed.reason) || undefined;
-  const revokedBy =
-    asNonEmptyString(
-      parsedBody.revokedBy || parsed.revokedBy || parsedBody.operatorDid || parsed.operatorDid || parsedBody.performedBy
-      || parsed.performedBy,
-    ) || undefined;
-
   return {
     thid,
-    ...lookup,
-    reason,
-    revokedBy,
+    items,
   };
 }
 

@@ -47,49 +47,58 @@ export class CredentialRevokeRequestManager {
         this.jobStore.markRunning(submission.thid);
         try {
           const nowIso = new Date().toISOString();
-          const record = await this.collectionsService.findIssuedCredential({
-            tenantId: route.tenantId,
-            jurisdiction: route.jurisdiction,
-            sector: route.sector,
-            credentialType: route.credentialType,
-            issuedCredentialRecordId: submission.issuedCredentialRecordId,
-            credentialId: submission.credentialId,
-            subjectId: submission.subjectId,
-          });
-          if (!record) {
-            throw new Error('Credential record not found for provided revoke lookup.');
+          const resultItems = [];
+          for (const entry of submission.items) {
+            const record = await this.collectionsService.findIssuedCredential({
+              tenantId: route.tenantId,
+              jurisdiction: route.jurisdiction,
+              sector: route.sector,
+              credentialType: route.credentialType,
+              issuedCredentialRecordId: entry.issuedCredentialRecordId,
+              credentialId: entry.credentialId,
+              subjectId: entry.subjectId,
+              credentialStatusId: entry.credentialStatusId,
+            });
+            if (!record) {
+              throw new Error('Credential record not found for provided revoke lookup.');
+            }
+
+            const credential = { ...record.credential } as JsonObject;
+            const previousStatus = asJsonObject(credential.credentialStatus) || {};
+            const nextStatus: JsonObject = {
+              ...previousStatus,
+              id: asNonEmptyString(previousStatus.id) || `${record.id}#status`,
+              type: asNonEmptyString(previousStatus.type) || 'SimpleCredentialStatus2026',
+              status: 'revoked',
+              revokedAt: nowIso,
+              ...(entry.reason ? { reason: entry.reason } : {}),
+              ...(entry.revokedBy ? { revokedBy: entry.revokedBy } : {}),
+            };
+
+            const updatedRecord = {
+              ...record,
+              credential: {
+                ...credential,
+                credentialStatus: nextStatus,
+              },
+              updatedAt: nowIso,
+            };
+            await this.collectionsService.upsertIssuedCredential(updatedRecord);
+            resultItems.push({
+              status: 'revoked' as const,
+              revokedAt: nowIso,
+              issuedCredentialRecordId: record.id,
+              credentialId: record.credentialId,
+              subjectId: record.subjectId || undefined,
+              credentialStatusId: entry.credentialStatusId,
+              reason: entry.reason,
+              revokedBy: entry.revokedBy,
+            });
           }
 
-          const credential = { ...record.credential } as JsonObject;
-          const previousStatus = asJsonObject(credential.credentialStatus) || {};
-          const nextStatus: JsonObject = {
-            ...previousStatus,
-            id: asNonEmptyString(previousStatus.id) || `${record.id}#status`,
-            type: asNonEmptyString(previousStatus.type) || 'SimpleCredentialStatus2026',
-            status: 'revoked',
-            revokedAt: nowIso,
-            ...(submission.reason ? { reason: submission.reason } : {}),
-            ...(submission.revokedBy ? { revokedBy: submission.revokedBy } : {}),
-          };
-
-          const updatedRecord = {
-            ...record,
-            credential: {
-              ...credential,
-              credentialStatus: nextStatus,
-            },
-            updatedAt: nowIso,
-          };
-          await this.collectionsService.upsertIssuedCredential(updatedRecord);
-
           this.jobStore.markSucceeded(submission.thid, {
-            status: 'revoked',
-            revokedAt: nowIso,
-            issuedCredentialRecordId: record.id,
-            credentialId: record.credentialId,
-            subjectId: record.subjectId || undefined,
-            reason: submission.reason,
-            revokedBy: submission.revokedBy,
+            revokedCount: resultItems.length,
+            items: resultItems,
           });
         } catch (error: unknown) {
           const message = (error as Error)?.message || String(error);

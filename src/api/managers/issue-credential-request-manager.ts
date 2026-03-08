@@ -86,48 +86,58 @@ export class IssueCredentialRequestManager {
         this.jobStore.markRunning(submission.thid);
         try {
           const nowIso = new Date().toISOString();
-          const issuedCredentialRecordId = `urn:uuid:${randomUUID()}`;
-          const credential = { ...submission.credential } as JsonObject;
-          const credentialId = asNonEmptyString(credential.id) || `urn:uuid:${randomUUID()}`;
-          const issuedRecord: IssuedCredentialRecord = {
-            id: issuedCredentialRecordId,
-            tenantId: route.tenantId,
-            jurisdiction: route.jurisdiction.toUpperCase(),
-            sector: route.sector,
-            resourceType: route.credentialType,
-            thid: submission.thid,
-            credentialType: route.credentialType,
-            credentialId,
-            subjectId: resolveCredentialSubjectId(credential),
-            issuerId: resolveIssuerId(credential),
-            credential,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          };
+          const issuedRecords: IssuedCredentialRecord[] = [];
+          const evidenceRecords: EvidenceRecord[] = [];
+          const resultItems = submission.items.map((item) => {
+            const issuedCredentialRecordId = `urn:uuid:${randomUUID()}`;
+            const credential = { ...item.credential } as JsonObject;
+            const credentialId = asNonEmptyString(credential.id) || `urn:uuid:${randomUUID()}`;
+            issuedRecords.push({
+              id: issuedCredentialRecordId,
+              tenantId: route.tenantId,
+              jurisdiction: route.jurisdiction.toUpperCase(),
+              sector: route.sector,
+              resourceType: route.credentialType,
+              thid: submission.thid,
+              credentialType: route.credentialType,
+              credentialId,
+              subjectId: resolveCredentialSubjectId(credential),
+              issuerId: resolveIssuerId(credential),
+              credential,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            });
 
-          const evidenceEntries = collectEvidenceEntries(credential, submission.evidence);
-          const evidenceRecords: EvidenceRecord[] = evidenceEntries.map((evidenceEntry) => ({
-            id: `urn:uuid:${randomUUID()}`,
-            issuedCredentialRecordId,
-            tenantId: route.tenantId,
-            jurisdiction: route.jurisdiction.toUpperCase(),
-            sector: route.sector,
-            resourceType: route.credentialType,
-            thid: submission.thid,
-            evidenceType: asNonEmptyString(evidenceEntry.type) || 'unknown',
-            evidence: evidenceEntry,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          }));
+            const evidenceEntryItems = collectEvidenceEntries(credential, item.evidence);
+            const entryEvidenceRecords: EvidenceRecord[] = evidenceEntryItems.map((evidenceEntry) => ({
+              id: `urn:uuid:${randomUUID()}`,
+              issuedCredentialRecordId,
+              tenantId: route.tenantId,
+              jurisdiction: route.jurisdiction.toUpperCase(),
+              sector: route.sector,
+              resourceType: route.credentialType,
+              thid: submission.thid,
+              evidenceType: asNonEmptyString(evidenceEntry.type) || 'unknown',
+              evidence: evidenceEntry,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            }));
+            evidenceRecords.push(...entryEvidenceRecords);
 
-          await this.collectionsService.storeIssuedCredentials([issuedRecord]);
+            return {
+              issuedCredentialRecordId,
+              credentialId,
+              credentialType: route.credentialType,
+              evidenceRecordIds: entryEvidenceRecords.map((record) => record.id),
+              storedAt: nowIso,
+            };
+          });
+
+          await this.collectionsService.storeIssuedCredentials(issuedRecords);
           await this.collectionsService.storeEvidenceRecords(evidenceRecords);
           this.jobStore.markSucceeded(submission.thid, {
-            issuedCredentialRecordId,
-            credentialId,
-            credentialType: route.credentialType,
-            evidenceRecordIds: evidenceRecords.map((record) => record.id),
-            storedAt: nowIso,
+            storedCount: resultItems.length,
+            items: resultItems,
           });
         } catch (error: unknown) {
           const message = (error as Error)?.message || String(error);

@@ -4,6 +4,8 @@ import type {
   AddEvidenceAction,
   AddEvidenceRouteContext,
   AllowedSector,
+  DelegationPolicyAction,
+  DelegationPolicyRouteContext,
   CredentialRevokeAction,
   CredentialRevokeRouteContext,
   CredentialStatusAction,
@@ -22,6 +24,8 @@ const ENTITY_KEYS_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/entity\/keys\/(?<resourceType>credentials|communications)\/(?<action>_(?:activate(?:-response)?|rotate(?:-response)?))$/i;
 const NETWORK_EVIDENCE_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/evidence\/(?<evidenceType>[^/]+)\/(?<action>_add(?:-response)?)$/i;
+const NETWORK_POLICY_DELEGATION_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/policies\/delegations\/(?<action>_upsert(?:-response)?)$/i;
 const NETWORK_CREDENTIAL_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/credentials\/(?<credentialType>[^/]+)\/(?<action>_issue(?:-response)?)$/i;
 const NETWORK_CREDENTIAL_STATUS_ROUTE_REGEX =
@@ -29,7 +33,15 @@ const NETWORK_CREDENTIAL_STATUS_ROUTE_REGEX =
 const NETWORK_CREDENTIAL_REVOKE_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/credentials\/(?<credentialType>[^/]+)\/(?<action>_revoke(?:-response)?)$/i;
 
-const ALLOWED_SECTORS = new Set<AllowedSector>(['animal-care', 'health-care']);
+const ONEHEALTH_SECTOR_PREFIXES = ['animal', 'health'] as const;
+const ALLOWED_SECTOR_ERROR =
+  'sector must start with "animal" or "health" (onehealth-compatible sector namespaces).';
+
+function isAllowedSector(rawSector: string): rawSector is AllowedSector {
+  const normalized = rawSector.trim().toLowerCase();
+  if (!normalized) return false;
+  return ONEHEALTH_SECTOR_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
 
 function asAction(raw: string): VerifyAction {
   return raw.toLowerCase() === '_verify-response' ? '_verify-response' : '_verify';
@@ -45,6 +57,10 @@ function asRotateAction(raw: string): RotateAction {
 
 function asAddEvidenceAction(raw: string): AddEvidenceAction {
   return raw.toLowerCase() === '_add-response' ? '_add-response' : '_add';
+}
+
+function asDelegationPolicyAction(raw: string): DelegationPolicyAction {
+  return raw.toLowerCase() === '_upsert-response' ? '_upsert-response' : '_upsert';
 }
 
 function asIssueCredentialAction(raw: string): IssueCredentialAction {
@@ -65,6 +81,11 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
   if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
   return fallback;
+}
+
+function isUnifiedTestTermsPrefixEnabled(): boolean | undefined {
+  if (process.env.ICA_ENABLE_TEST_TERMS_PREFIX === undefined) return undefined;
+  return parseBoolean(process.env.ICA_ENABLE_TEST_TERMS_PREFIX, false);
 }
 
 function parseCsvList(value: string | undefined): string[] {
@@ -112,7 +133,10 @@ function parseResourceType(rawResourceType: string):
     };
   }
 
-  const allowTestPrefix = parseBoolean(process.env.ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX, false);
+  const unifiedFlag = isUnifiedTestTermsPrefixEnabled();
+  const allowTestPrefix = unifiedFlag !== undefined
+    ? unifiedFlag
+    : parseBoolean(process.env.ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX, false);
   const isTestVersion = resourceType.toLowerCase().startsWith('test-');
   if (!isTestVersion) {
     if (!isValidVersionToken(resourceType)) {
@@ -130,7 +154,7 @@ function parseResourceType(rawResourceType: string):
       ok: false,
       statusCode: 400,
       message:
-        'resourceType with "test-" prefix is disabled. Set ICA_ALLOW_TEST_RESOURCE_TYPE_PREFIX=true for testing.',
+        'resourceType with "test-" prefix is disabled. Set ICA_ENABLE_TEST_TERMS_PREFIX=true for testing.',
     };
   }
 
@@ -174,11 +198,11 @@ export function parseVerifyRoute(pathname: string): ParsedRoute | null {
   if (!jurisdiction) {
     return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
   }
-  if (!ALLOWED_SECTORS.has(sector)) {
+  if (!isAllowedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: 'Only sectors animal-care and health-care are currently supported.',
+      message: ALLOWED_SECTOR_ERROR,
     };
   }
   const parsedResourceType = parseResourceType(rawResourceType);
@@ -206,8 +230,20 @@ export function parseVerifyRoute(pathname: string): ParsedRoute | null {
   };
 }
 
-export function buildVerifyResponseLocation(context: VerifyRouteContext): string {
-  return `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/terms/pdf/${context.resourceType}/_verify-response`;
+export function buildVerifyResponseLocation(
+  context: VerifyRouteContext,
+  params?: Record<string, string | undefined>,
+): string {
+  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/terms/pdf/${context.resourceType}/_verify-response`;
+  if (!params) return base;
+  const entries = Object.entries(params).filter(([, value]) => value && value.trim());
+  if (!entries.length) return base;
+  const search = new URLSearchParams();
+  for (const [key, value] of entries) {
+    if (value) search.set(key, value);
+  }
+  const suffix = search.toString();
+  return suffix ? `${base}?${suffix}` : base;
 }
 
 export type ParsedActivateRoute =
@@ -251,11 +287,11 @@ function parseEntityKeysRoute(pathname: string): ParsedEntityKeysRoute | null {
   if (!jurisdiction) {
     return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
   }
-  if (!ALLOWED_SECTORS.has(sector)) {
+  if (!isAllowedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: 'Only sectors animal-care and health-care are currently supported.',
+      message: ALLOWED_SECTOR_ERROR,
     };
   }
 
@@ -360,11 +396,11 @@ export function parseAddEvidenceRoute(pathname: string): ParsedAddEvidenceRoute 
   if (!jurisdiction) {
     return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
   }
-  if (!ALLOWED_SECTORS.has(sector)) {
+  if (!isAllowedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: 'Only sectors animal-care and health-care are currently supported.',
+      message: ALLOWED_SECTOR_ERROR,
     };
   }
   if (!evidenceType) {
@@ -387,6 +423,59 @@ export function parseAddEvidenceRoute(pathname: string): ParsedAddEvidenceRoute 
 
 export function buildAddEvidenceResponseLocation(context: AddEvidenceRouteContext): string {
   return `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/network/evidence/${context.evidenceType}/_add-response`;
+}
+
+export type ParsedDelegationPolicyRoute =
+  | { ok: true; context: DelegationPolicyRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseDelegationPolicyRoute(pathname: string): ParsedDelegationPolicyRoute | null {
+  const match = NETWORK_POLICY_DELEGATION_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+
+  const tenantId = match.groups.tenantId.trim();
+  const jurisdiction = match.groups.jurisdiction.trim();
+  const sector = match.groups.sector.trim().toLowerCase() as AllowedSector;
+  const action = asDelegationPolicyAction(match.groups.action.trim());
+
+  if (!tenantId) {
+    return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
+  }
+  const localTenantId = configuredLocalTenantId();
+  if (localTenantId && tenantId.toLowerCase() !== localTenantId.toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
+    };
+  }
+  if (!jurisdiction) {
+    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
+  }
+  if (!isAllowedSector(sector)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: ALLOWED_SECTOR_ERROR,
+    };
+  }
+
+  return {
+    ok: true,
+    context: {
+      tenantId,
+      jurisdiction,
+      sector,
+      section: 'network',
+      format: 'policies',
+      policyType: 'delegations',
+      action,
+    },
+  };
+}
+
+export function buildDelegationPolicyResponseLocation(context: DelegationPolicyRouteContext): string {
+  return `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/network/policies/delegations/_upsert-response`;
 }
 
 export type ParsedIssueCredentialRoute =
@@ -417,11 +506,11 @@ export function parseIssueCredentialRoute(pathname: string): ParsedIssueCredenti
   if (!jurisdiction) {
     return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
   }
-  if (!ALLOWED_SECTORS.has(sector)) {
+  if (!isAllowedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: 'Only sectors animal-care and health-care are currently supported.',
+      message: ALLOWED_SECTOR_ERROR,
     };
   }
   if (!credentialType) {
@@ -474,11 +563,11 @@ export function parseCredentialStatusRoute(pathname: string): ParsedCredentialSt
   if (!jurisdiction) {
     return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
   }
-  if (!ALLOWED_SECTORS.has(sector)) {
+  if (!isAllowedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: 'Only sectors animal-care and health-care are currently supported.',
+      message: ALLOWED_SECTOR_ERROR,
     };
   }
   if (!credentialType) {
@@ -531,11 +620,11 @@ export function parseCredentialRevokeRoute(pathname: string): ParsedCredentialRe
   if (!jurisdiction) {
     return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
   }
-  if (!ALLOWED_SECTORS.has(sector)) {
+  if (!isAllowedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: 'Only sectors animal-care and health-care are currently supported.',
+      message: ALLOWED_SECTOR_ERROR,
     };
   }
   if (!credentialType) {

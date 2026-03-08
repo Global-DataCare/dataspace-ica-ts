@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
-import type { DidcommPlaintextMessage } from '../types.ts';
+import type { DidcommAttachment, DidcommPlaintextMessage } from '../types.ts';
 import { resolveIcaIssuerDid } from './ica-identity.ts';
 
 type RouteWithTenant = {
@@ -81,6 +81,7 @@ export function buildDidcommMessage<TBody>(
     thid?: string;
     aud?: string;
     type?: string;
+    attachments?: DidcommAttachment[];
     thidFallback?: 'random' | 'empty';
     audFallback?: 'derived' | 'empty';
   } = {},
@@ -98,7 +99,7 @@ export function buildDidcommMessage<TBody>(
       : options.audFallback === 'empty'
         ? ''
         : resolveDidcommAudienceDid(req, options.route, issuerDid);
-  return {
+  const payload: DidcommPlaintextMessage<TBody> = {
     jti: `urn:uuid:${randomUUID()}`,
     iss: issuerDid,
     aud,
@@ -106,4 +107,8 @@ export function buildDidcommMessage<TBody>(
     type: options.type || DIDCOMM_BUNDLE_TYPE,
     body,
   };
+  if (options.attachments?.length) {
+    payload.attachments = options.attachments;
+  }
+  return payload;
 }

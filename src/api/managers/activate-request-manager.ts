@@ -3,7 +3,9 @@ import { InMemoryActivationJobStore } from '../activation-job-store.ts';
 import { parseActivateSigningKeySubmission } from '../request-parsing.ts';
 import { buildActivateResponseLocation } from '../path.ts';
 import type { ActivateRouteContext } from '../types.ts';
+import { validateActivateControllerCaCredential } from '../tools/controller-ca-credential.ts';
 import { activateSigningKey } from '../tools/active-signing-keys.ts';
+import { validateActivateControllerDidcommProof } from '../tools/controller-didcomm-proof.ts';
 import { resolveIcaIssuerDid } from '../tools/ica-identity.ts';
 
 export type ActivateSubmitOutcome =
@@ -26,6 +28,8 @@ export class ActivateRequestManager {
   async submit(route: ActivateRouteContext, req: IncomingMessage): Promise<ActivateSubmitOutcome> {
     try {
       const submission = await parseActivateSigningKeySubmission(req);
+      validateActivateControllerDidcommProof(submission, req);
+      validateActivateControllerCaCredential(submission);
       const issuerDid = resolveIcaIssuerDid(req);
       this.jobStore.enqueue(submission.thid, route);
 

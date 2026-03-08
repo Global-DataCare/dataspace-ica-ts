@@ -15,7 +15,9 @@ import type {
   VerifyResult,
   VerifyRouteContext,
 } from '../types.ts';
+import { listActiveSigningKeys } from './active-signing-keys.ts';
 import { attachProofToCredential, resolveIcaIssuerDid } from './ica-identity.ts';
+import { resolveControllerMemberDescriptor } from './controller-identity.ts';
 
 function normalizeDnKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, '');
@@ -26,9 +28,10 @@ function parseDistinguishedName(dn: string): Record<string, string> {
   const trimmed = dn.trim();
   if (!trimmed) return output;
 
-  const tokens = trimmed.startsWith('/')
-    ? trimmed.split('/').filter(Boolean)
-    : trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+  const normalized = trimmed.replace(/\r/g, '');
+  const tokens = normalized.startsWith('/')
+    ? normalized.split('/').filter(Boolean)
+    : normalized.split(/[,\n]+/).map((part) => part.trim()).filter(Boolean);
 
   for (const token of tokens) {
     const separator = token.indexOf('=');
@@ -54,6 +57,31 @@ function firstDefined(...values: Array<string | undefined>): string | undefined 
 
 function parseOrganizationTaxId(subjectDn: Record<string, string>): string | undefined {
   return firstDefined(subjectDn.ORGANIZATIONIDENTIFIER, subjectDn['OID.2.5.4.97']);
+}
+
+function resolveControllerBootstrapMetadata():
+  | {
+    kid?: string;
+    email?: string;
+    alg?: string;
+    did?: string;
+    role?: string;
+    idHash?: string;
+  }
+  | undefined {
+  const kid = (process.env.ICA_SELF_CONTROLLER_KID || '').trim();
+  const email = (process.env.ICA_SELF_CONTROLLER_EMAIL || '').trim();
+  if (!kid && !email) return undefined;
+
+  const activatedEntry = kid
+    ? listActiveSigningKeys().find((entry) => entry.kid === kid)
+    : undefined;
+
+  return {
+    ...(kid ? { kid } : {}),
+    ...(email ? { email } : {}),
+    ...(activatedEntry?.alg ? { alg: activatedEntry.alg } : {}),
+  };
 }
 
 function determineAssuranceLevel(result: VerifyResult): 'low' | 'medium' | 'high' {
@@ -82,6 +110,78 @@ function normalizeDigestAlgorithmForEvidence(alg: string | undefined): string {
   return normalized;
 }
 
+function parseCommaSeparatedUrls(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => /^https?:\/\//i.test(value));
+}
+
+function extractVerificationUrls(notes: string[], prefix: string): string[] {
+  const urls: string[] = [];
+  for (const note of notes) {
+    if (!note.startsWith(prefix)) continue;
+    const raw = note.slice(prefix.length).trim();
+    urls.push(...parseCommaSeparatedUrls(raw));
+  }
+  return urls;
+}
+
+function normalizeForMatching(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function filterIntermediateUrlsByIssuer(urls: string[], signerIssuer: string): string[] {
+  if (!urls.length) return urls;
+  const issuer = normalizeForMatching(signerIssuer);
+  const targetKeyword = issuer.includes('ac representacion')
+    ? 'representacion'
+    : issuer.includes('ac sector publico')
+      ? 'sector_publico'
+      : issuer.includes('ac fnmt usuarios')
+        ? 'usuarios'
+        : '';
+  if (!targetKeyword) return urls;
+  const filtered = urls.filter((url) => normalizeForMatching(url).includes(targetKeyword));
+  return filtered.length ? filtered : urls;
+}
+
+function normalizeRevocationChecksForEvidence(
+  checks: NonNullable<VerifyResult['revocationDebug']>['checks'],
+  finalStatus: VerifyResult['revocationStatus'],
+): Array<{
+  phase: string;
+  status: string;
+  url?: string;
+  httpStatus?: number;
+  message?: string;
+}> {
+  if (!checks.length) return [];
+  const fallbackSucceeded = checks.some((check) =>
+    check.phase === 'verify'
+    && check.status === 'ok'
+    && (check.message || '').includes('mode=-crl_check fallback')
+  );
+
+  return checks
+    .filter((check) => {
+      if (finalStatus !== 'good' || !fallbackSucceeded) return true;
+      if (check.phase !== 'verify') return true;
+      if (check.status !== 'verify_error') return true;
+      return !(check.message || '').includes('mode=-crl_check_all');
+    })
+    .map((check) => ({
+      phase: check.phase,
+      status: check.status,
+      ...(check.url ? { url: check.url } : {}),
+      ...(check.httpStatus !== undefined ? { httpStatus: check.httpStatus } : {}),
+      ...(check.message ? { message: check.message } : {}),
+    }));
+}
+
 function buildOperationOutcome(
   severity: 'information' | 'warning' | 'error' | 'fatal',
   code: string,
@@ -98,7 +198,29 @@ function buildOidc4IdaEvidence(
   result: VerifyResult,
   serialNumber: string,
   verifierOrganization: string,
+  controllerBootstrap?:
+    | {
+      kid?: string;
+      email?: string;
+      alg?: string;
+    }
+    | undefined,
 ): EvidenceObjectDLT[] {
+  const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
+  const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
+  const notes = result.notes || [];
+  const trustAnchors = extractVerificationUrls(notes, 'FNMT root loaded from ');
+  const intermediates = filterIntermediateUrlsByIssuer(
+    extractVerificationUrls(notes, 'FNMT intermediate loaded from '),
+    result.signerIssuer || '',
+  );
+  const revocationSources = extractVerificationUrls(notes, 'CRL loaded from ');
+  const revocationChecks = normalizeRevocationChecksForEvidence(
+    result.revocationDebug?.checks || [],
+    result.revocationStatus,
+  );
+
+  // Keep evidence attachment compact; detailed debug stays in Bundle.result.
   const attachmentPayload = {
     profile: 'oidc4ida-evidence-v1',
     assuranceLevel: determineAssuranceLevel(result),
@@ -108,16 +230,17 @@ function buildOidc4IdaEvidence(
     revocationStatus: result.revocationStatus,
     signerSubject: result.signerSubject,
     signerIssuer: result.signerIssuer,
-    digest: result.digest,
-    hashes: result.hashes,
-    templateUrl: result.templateUrl,
-    templateMatch: result.templateMatch,
-    auditDocument: result.auditDocument,
-    notes: result.notes,
+    verificationTrace: {
+      cmsSignatureValidated: notes.includes('CMS signature and authenticated attributes validated.'),
+      chainValidated: notes.includes('Signer chain validated against FNMT root/intermediate.'),
+      ...(trustAnchors.length ? { trustAnchors } : {}),
+      ...(intermediates.length ? { intermediates } : {}),
+      ...(revocationSources.length ? { revocationSources } : {}),
+      ...(revocationChecks.length ? { revocationChecks } : {}),
+    },
   };
-
-  const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
-  const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
+  const compactAttachmentJson = JSON.stringify(attachmentPayload);
+  const compactAttachmentDataUri = `data:application/json;base64,${Buffer.from(compactAttachmentJson).toString('base64')}`;
 
   const signatureEvidence: EvidenceElectronicSignatureDLT = {
     type: 'electronic_signature',
@@ -128,7 +251,7 @@ function buildOidc4IdaEvidence(
     attachments: [
       {
         content_type: 'application/json',
-        content: Buffer.from(JSON.stringify(attachmentPayload)).toString('base64'),
+        content: compactAttachmentDataUri,
       },
     ],
   };
@@ -177,6 +300,10 @@ function buildOidc4IdaEvidence(
       },
     },
   };
+  if (controllerBootstrap) {
+    const details = documentEvidence.document_details as unknown as Record<string, unknown>;
+    details.controller = controllerBootstrap;
+  }
 
   return [
     signatureEvidence,
@@ -187,6 +314,13 @@ function buildOidc4IdaEvidence(
 export function buildVerificationVcBundle(route: VerifyRouteContext, result: VerifyResult): VerifyBundleResponse {
   const subjectDn = parseDistinguishedName(result.signerSubject);
   const issuerDid = resolveIcaIssuerDid();
+  const controllerBootstrap = resolveControllerBootstrapMetadata();
+  const controllerMemberDescriptor = resolveControllerMemberDescriptor(issuerDid);
+  if (controllerBootstrap && controllerMemberDescriptor) {
+    controllerBootstrap.did = controllerMemberDescriptor.did;
+    controllerBootstrap.role = controllerMemberDescriptor.role;
+    controllerBootstrap.idHash = controllerMemberDescriptor.idHash;
+  }
   const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU);
   const organizationTaxId = parseOrganizationTaxId(subjectDn);
   const representativeName =
@@ -196,13 +330,25 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
     || subjectDn.CN
     || 'Representative from certificate';
   const personIdentifier = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']);
+  const personEmail = firstDefined(
+    subjectDn.EMAILADDRESS,
+    subjectDn.EMAIL,
+    subjectDn.E,
+    controllerBootstrap?.email,
+  );
   const country = subjectDn.C || subjectDn.COUNTRYNAME || undefined;
   const serialNumber =
     result.signerCertificateSerialNumber
     || personIdentifier
     || `cert:${route.tenantId}:${route.resourceType}`;
   const verifierOrganization = issuerDid;
-  const evidence = buildOidc4IdaEvidence(route, result, serialNumber, verifierOrganization);
+  const evidence = buildOidc4IdaEvidence(
+    route,
+    result,
+    serialNumber,
+    verifierOrganization,
+    controllerBootstrap,
+  );
 
   const organizationSubject: Record<string, unknown> = {
     id: organizationTaxId
@@ -218,6 +364,9 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
   }
   if (country) {
     organizationSubject.address = { '@type': 'PostalAddress', addressCountry: country };
+  }
+  if (controllerBootstrap) {
+    organizationSubject.controller = controllerBootstrap;
   }
 
   const unsignedOrganizationVc: VerifiableCredentialV2 = {
@@ -239,27 +388,37 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
   if (organizationTaxId) {
     organizationRef.taxID = organizationTaxId;
   }
+  if (controllerBootstrap) {
+    organizationRef.controller = controllerBootstrap;
+  }
 
   const personSubject: Record<string, unknown> = {
     id: personIdentifier
-      ? `urn:person:certificate:${personIdentifier}`
-      : `urn:person:certificate:${route.tenantId}`,
+      ? `urn:person:identifier:${personIdentifier}`
+      : `urn:person:identifier:${route.tenantId}`,
     '@type': 'Person',
     name: representativeName,
-    roleName: 'legal-representative',
+    hasOccupation: {
+      '@type': 'Occupation',
+      name: 'LegalRepresentative',
+      identifier: 'urn:ilo:ilostat:isco-08:1120',
+    },
     memberOf: organizationRef,
   };
-  if (subjectDn.GN || subjectDn.GIVENNAME) {
-    personSubject.givenName = subjectDn.GN || subjectDn.GIVENNAME;
-  }
-  if (subjectDn.SN || subjectDn.SURNAME) {
-    personSubject.familyName = subjectDn.SN || subjectDn.SURNAME;
-  }
-  if (personIdentifier) {
-    personSubject.identifier = personIdentifier;
-  }
+    if (subjectDn.GN || subjectDn.GIVENNAME) {
+      personSubject.givenName = subjectDn.GN || subjectDn.GIVENNAME;
+    }
+    if (subjectDn.SN || subjectDn.SURNAME) {
+      personSubject.familyName = subjectDn.SN || subjectDn.SURNAME;
+    }
+    if (personIdentifier) {
+      personSubject.identifier = personIdentifier;
+    }
   if (country) {
     personSubject.nationality = country;
+  }
+  if (personEmail) {
+    personSubject.email = personEmail;
   }
 
   const unsignedPersonVc: VerifiableCredentialV2 = {

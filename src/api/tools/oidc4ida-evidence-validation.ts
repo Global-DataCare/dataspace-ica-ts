@@ -212,3 +212,63 @@ export function assertValidOidc4idaEvidenceObject(evidence: JsonObject, path = '
   if (!errors.length) return;
   throw new Error(`Invalid OIDC4IDA evidence payload: ${errors.join(' ')}`);
 }
+
+export function validateOidc4idaVerifiedClaimsResource(
+  resource: JsonObject,
+  path = 'body.data[].resource',
+): string[] {
+  const errors: string[] = [];
+  const verifiedClaims = asObject(resource.verified_claims);
+  if (!verifiedClaims) {
+    pushError(errors, `${path}.verified_claims is required.`);
+    return errors;
+  }
+
+  const verification = asObject(verifiedClaims.verification);
+  if (!verification) {
+    pushError(errors, `${path}.verified_claims.verification is required.`);
+    return errors;
+  }
+
+  const trustFramework = verification.trust_framework;
+  if (
+    trustFramework !== undefined
+    && trustFramework !== null
+    && !asNonEmptyString(trustFramework)
+  ) {
+    pushError(errors, `${path}.verified_claims.verification.trust_framework must be string|null.`);
+  }
+  validateIsoDateField(verification.time, `${path}.verified_claims.verification.time`, errors);
+
+  const evidenceEntries = verification.evidence;
+  if (!Array.isArray(evidenceEntries) || !evidenceEntries.length) {
+    pushError(errors, `${path}.verified_claims.verification.evidence must be a non-empty array.`);
+    return errors;
+  }
+
+  evidenceEntries.forEach((entry, index) => {
+    const evidence = asObject(entry);
+    const evidencePath = `${path}.verified_claims.verification.evidence[${index}]`;
+    if (!evidence) {
+      pushError(errors, `${evidencePath} must be an object.`);
+      return;
+    }
+    errors.push(...validateOidc4idaEvidenceObject(evidence, evidencePath));
+  });
+
+  const claims = verifiedClaims.claims;
+  if (claims !== undefined && !asObject(claims)) {
+    pushError(errors, `${path}.verified_claims.claims must be an object when provided.`);
+  }
+
+  return errors;
+}
+
+export function assertValidOidc4idaVerifiedClaimsResource(
+  resource: JsonObject,
+  path = 'body.data[].resource',
+): void {
+  const errors = validateOidc4idaVerifiedClaimsResource(resource, path);
+  if (!errors.length) return;
+  throw new Error(`Invalid OIDC4IDA verified_claims payload: ${errors.join(' ')}`);
+}

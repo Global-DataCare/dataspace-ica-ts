@@ -58,7 +58,7 @@ export class VerifyRequestManager {
 
       return {
         type: 'accepted',
-        location: buildVerifyResponseLocation(route),
+        location: buildVerifyResponseLocation(route, { thid: submission.thid }),
         retryAfter: 5,
       };
     } catch (error: unknown) {

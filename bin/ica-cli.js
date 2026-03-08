@@ -13,9 +13,13 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { cmdControllerBootstrap } from './lib/controller-bootstrap.js';
+import { cmdIcaBootstrap } from './lib/ica-bootstrap.js';
+import { cmdCaPrepareSubmission } from './lib/ca-submission.js';
+import { cmdDcatAddService, cmdDcatBuildCatalog } from './lib/dcat.js';
 
 const SUPPORTED_SCOPES = [
+  'onehealth:ica',
   'health-care:reader',
   'health-care:provider',
   'health-tech:provider',
@@ -79,6 +83,45 @@ Usage:
     [--title "<title>"] \
     [--description "<description>"] \
     [--sign-key <ca/ica/ica-key.pem>]
+
+  ica-cli controller:bootstrap \
+    --domain <ica-domain> \
+    --email <controller-email> \
+    [--passphrase <secret> | --passphrase-env <ENV_NAME>] \
+    --jurisdiction <ISO2> \
+    [--tenant-id ica] \
+    [--sector controller] \
+    [--role-isco 1120] \
+    [--alg ES384] \
+    [--scrypt 17:8:1:48] \
+    [--salt <utf8-or-hex>] \
+    [--seed-config <legacy-profile[:salt]|json>] \
+    [--country ES] \
+    [--common-name "ICA Controller"] \
+    [--out-dir output/controller-bootstrap]
+
+  ica-cli ica:bootstrap \
+    --domain <ica-domain> \
+    --jurisdiction <ISO2> \
+    [--scope onehealth:ica] \
+    [--passphrase <secret> | --passphrase-env <ENV_NAME>] \
+    [--alg ES384] \
+    [--scrypt 17:8:1:48] \
+    [--salt <utf8-or-hex>] \
+    [--seed-config <legacy-profile[:salt]|json>] \
+    [--country ES] \
+    [--common-name "ICA Signing Key"] \
+    [--controller-dir output/controller-bootstrap] \
+    [--controller-did <did:web:...>] \
+    [--controller-kid <kid>] \
+    [--controller-jwk <path/to/controller-public-jwk.json>] \
+    [--out-dir output/ica-bootstrap]
+
+  ica-cli ca:prepare-submission \
+    --controller-dir <output/controller-bootstrap> \
+    --ica-dir <output/ica-bootstrap> \
+    [--request-id <id>] \
+    [--out-dir output/ca-submission]
 `);
 }
 
@@ -166,17 +209,6 @@ function readPemAsBase64Der(pemPath) {
     .replace(/-----BEGIN [^-]+-----/g, '')
     .replace(/-----END [^-]+-----/g, '')
     .replace(/\s+/g, '');
-}
-
-function signAndHashFile(targetPath, signKeyPath) {
-  const content = readFileSync(targetPath);
-  const digestHex = createHash('sha256').update(content).digest('hex');
-  const shaFile = `${targetPath}.sha256`;
-  const sigFile = `${targetPath}.sig`;
-  writeFileSync(shaFile, `${digestHex}  ${path.basename(targetPath)}\n`);
-  if (signKeyPath) {
-    runOpenSsl(['dgst', '-sha256', '-sign', signKeyPath, '-out', sigFile, targetPath]);
-  }
 }
 
 function getRequestDirs(args) {
@@ -652,88 +684,6 @@ function cmdPublishClient(args) {
   console.log(`Published request ${requestId} to ${clientRepo}`);
 }
 
-function cmdDcatAddService(args) {
-  const icaPublicRepo = path.resolve(requireArg(args, 'ica-public-repo'));
-  const endpointUrl = requireArg(args, 'endpoint-url');
-  const publisherDid = requireArg(args, 'publisher-did');
-  const serviceTitle = args['service-title'] || 'Data Service';
-  const serviceDescription = args['service-description'] || 'Data service published by ICA';
-  const serviceDid = args['service-did'] || `did:web:${new URL(endpointUrl).host}`;
-  const signKey = args['sign-key'] ? path.resolve(args['sign-key']) : null;
-
-  const serviceHost = new URL(endpointUrl).host;
-  const fileName = `dcat3_animal-index_${serviceHost}.jsonld`;
-  const dcatDir = path.join(icaPublicRepo, 'dsp', 'dcat3', 'animal-index');
-  ensureDir(dcatDir);
-  const targetPath = path.join(dcatDir, fileName);
-
-  const serviceDoc = {
-    '@context': [
-      'https://w3id.org/dspace/2025/1/context.jsonld',
-      {
-        dcat: 'http://www.w3.org/ns/dcat#',
-        dct: 'http://purl.org/dc/terms/',
-        sec: 'https://w3id.org/security#',
-      },
-    ],
-    '@id': serviceDid,
-    '@type': 'dcat:DataService',
-    'dct:title': serviceTitle,
-    'dct:description': serviceDescription,
-    'dct:publisher': publisherDid,
-    'dcat:endpointURL': endpointUrl,
-    'sec:signature': {
-      type: 'DetachedSignature',
-      algorithm: 'SHA-256',
-      signatureFile: `${fileName}.sig`,
-    },
-  };
-
-  writeJson(targetPath, serviceDoc);
-  signAndHashFile(targetPath, signKey);
-  console.log(`DCAT service generated: ${targetPath}`);
-}
-
-function cmdDcatBuildCatalog(args) {
-  const icaPublicRepo = path.resolve(requireArg(args, 'ica-public-repo'));
-  const publisherDid = requireArg(args, 'publisher-did');
-  const baseUrl = requireArg(args, 'base-url').replace(/\/+$/, '');
-  const catalogId = args['catalog-id'] || `${baseUrl}/dsp/dcat3/catalog`;
-  const title = args.title || 'ICA Catalog';
-  const description = args.description || 'Catalog of ICA services';
-  const signKey = args['sign-key'] ? path.resolve(args['sign-key']) : null;
-
-  const animalDir = path.join(icaPublicRepo, 'dsp', 'dcat3', 'animal-index');
-  ensureDir(animalDir);
-  const serviceFiles = readdirSync(animalDir).filter((f) => f.endsWith('.jsonld'));
-  const serviceRefs = serviceFiles.map((fileName) => ({
-    '@id': `${baseUrl}/dsp/dcat3/animal-index/${fileName}`,
-  }));
-
-  const catalog = {
-    '@context': [
-      'https://w3id.org/dspace/2025/1/context.jsonld',
-      {
-        dcat: 'http://www.w3.org/ns/dcat#',
-        dct: 'http://purl.org/dc/terms/',
-      },
-    ],
-    '@id': catalogId,
-    '@type': 'dcat:Catalog',
-    'dct:title': title,
-    'dct:description': description,
-    'dct:publisher': {
-      '@id': publisherDid,
-    },
-    'dcat:service': serviceRefs,
-  };
-
-  const catalogPath = path.join(icaPublicRepo, 'dsp', 'dcat3', 'catalog.jsonld');
-  writeJson(catalogPath, catalog);
-  signAndHashFile(catalogPath, signKey);
-  console.log(`DCAT catalog generated: ${catalogPath}`);
-}
-
 async function main() {
   const [, , command, ...rest] = process.argv;
   if (!command || command === '--help' || command === '-h' || command === 'help') {
@@ -771,10 +721,48 @@ async function main() {
       cmdPublishClient(args);
       return;
     case 'dcat:add-service':
-      cmdDcatAddService(args);
+      cmdDcatAddService(args, {
+        ensureDir,
+        requireArg,
+        runOpenSsl,
+        writeJson,
+      });
       return;
     case 'dcat:build-catalog':
-      cmdDcatBuildCatalog(args);
+      cmdDcatBuildCatalog(args, {
+        ensureDir,
+        requireArg,
+        runOpenSsl,
+        writeJson,
+      });
+      return;
+    case 'controller:bootstrap':
+      cmdControllerBootstrap(args, {
+        ensureDir,
+        normalizeDomain,
+        normalizeSubjectValue,
+        requireArg,
+        runOpenSsl,
+        writeJson,
+      });
+      return;
+    case 'ica:bootstrap':
+      cmdIcaBootstrap(args, {
+        ensureDir,
+        normalizeDomain,
+        normalizeSubjectValue,
+        requireArg,
+        runOpenSsl,
+        writeJson,
+        supportedScopes: SUPPORTED_SCOPES,
+      });
+      return;
+    case 'ca:prepare-submission':
+      cmdCaPrepareSubmission(args, {
+        ensureDir,
+        requireArg,
+        writeJson,
+      });
       return;
     default:
       throw new Error(`Unknown command: ${command}`);

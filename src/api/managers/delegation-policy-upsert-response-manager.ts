@@ -2,34 +2,34 @@ import type { IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { InMemoryEntityJobStore } from '../entity-job-store.ts';
 import { parsePollingThreadId } from '../request-parsing.ts';
-import { buildCredentialRevokeResponseLocation } from '../path.ts';
+import { buildDelegationPolicyResponseLocation } from '../path.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import type {
-  CredentialRevokeResult,
-  CredentialRevokeRouteContext,
+  DelegationPolicyRouteContext,
+  DelegationPolicyUpsertResult,
   DidcommPlaintextMessage,
   OperationOutcomeIssue,
   OperationOutcomeResource,
   VerifyBundleResponse,
 } from '../types.ts';
 
-export type CredentialRevokePollOutcome =
+export type DelegationPolicyUpsertPollOutcome =
   | { type: 'error'; statusCode: number; message: string }
   | { type: 'pending'; location: string; retryAfter: number }
   | { type: 'failed'; payload: unknown }
   | { type: 'succeeded'; payload: unknown };
 
-function sameRoute(a: CredentialRevokeRouteContext, b: CredentialRevokeRouteContext): boolean {
+function sameRoute(a: DelegationPolicyRouteContext, b: DelegationPolicyRouteContext): boolean {
   return (
-    a.tenantId === b.tenantId &&
-    a.jurisdiction.toLowerCase() === b.jurisdiction.toLowerCase() &&
-    a.sector === b.sector &&
-    a.credentialType.toLowerCase() === b.credentialType.toLowerCase()
+    a.tenantId === b.tenantId
+    && a.jurisdiction.toLowerCase() === b.jurisdiction.toLowerCase()
+    && a.sector === b.sector
+    && a.policyType === b.policyType
   );
 }
 
-function buildDidcommCredentialRevokeMessage(
-  route: CredentialRevokeRouteContext,
+function buildDidcommPolicyMessage(
+  route: DelegationPolicyRouteContext,
   thid: string,
   body: VerifyBundleResponse,
   req: IncomingMessage,
@@ -48,24 +48,24 @@ function buildOperationOutcome(issue: OperationOutcomeIssue[]): OperationOutcome
   };
 }
 
-export class CredentialRevokeResponseManager {
-  private readonly jobStore: InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>;
+export class DelegationPolicyUpsertResponseManager {
+  private readonly jobStore: InMemoryEntityJobStore<DelegationPolicyRouteContext, DelegationPolicyUpsertResult>;
 
-  constructor(jobStore: InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>) {
+  constructor(jobStore: InMemoryEntityJobStore<DelegationPolicyRouteContext, DelegationPolicyUpsertResult>) {
     this.jobStore = jobStore;
   }
 
   async poll(
-    route: CredentialRevokeRouteContext,
+    route: DelegationPolicyRouteContext,
     req: IncomingMessage,
     requestUrl: URL,
-  ): Promise<CredentialRevokePollOutcome> {
+  ): Promise<DelegationPolicyUpsertPollOutcome> {
     const thid = await parsePollingThreadId(req, requestUrl);
     if (!thid) {
       return {
         type: 'error',
         statusCode: 400,
-        message: 'Missing thid or jti for _revoke-response polling.',
+        message: 'Missing thid or jti for _upsert-response polling.',
       };
     }
 
@@ -74,7 +74,7 @@ export class CredentialRevokeResponseManager {
       return {
         type: 'error',
         statusCode: 404,
-        message: `Credential _revoke job not found for thid=${thid}.`,
+        message: `Delegation policy _upsert job not found for thid=${thid}.`,
       };
     }
     if (!sameRoute(job.route, route)) {
@@ -88,13 +88,13 @@ export class CredentialRevokeResponseManager {
     if (job.status === 'queued' || job.status === 'running') {
       return {
         type: 'pending',
-        location: buildCredentialRevokeResponseLocation(route),
+        location: buildDelegationPolicyResponseLocation(route),
         retryAfter: 3,
       };
     }
 
     if (job.status === 'failed') {
-      const diagnostics = job.error || 'Unknown credential _revoke failure.';
+      const diagnostics = job.error || 'Unknown delegation policy _upsert failure.';
       const outcome = buildOperationOutcome([
         { severity: 'error', code: 'exception', diagnostics },
       ]);
@@ -105,23 +105,19 @@ export class CredentialRevokeResponseManager {
         total: 1,
         data: [
           {
-            type: 'NetworkCredentialRevoke-v1.0',
+            type: 'DelegationPolicyUpsert-v1.0',
             resource: {
               id: `urn:uuid:${randomUUID()}`,
-              type: 'network-credential-revoke-v1.0',
+              type: 'delegation-policy-upsert-v1.0',
               thid,
               tenantId: route.tenantId,
               jurisdiction: route.jurisdiction.toUpperCase(),
               sector: route.sector,
-              credentialType: route.credentialType,
+              policyType: route.policyType,
               status: 'failed',
               createdAt: new Date(job.createdAt).toISOString(),
               updatedAt: new Date(job.updatedAt).toISOString(),
-              content: [
-                {
-                  error: diagnostics,
-                },
-              ],
+              content: [{ error: diagnostics }],
             },
             response: {
               status: '500',
@@ -132,7 +128,7 @@ export class CredentialRevokeResponseManager {
       };
       return {
         type: 'failed',
-        payload: buildDidcommCredentialRevokeMessage(route, thid, failedBody, req),
+        payload: buildDidcommPolicyMessage(route, thid, failedBody, req),
       };
     }
 
@@ -140,7 +136,7 @@ export class CredentialRevokeResponseManager {
       return {
         type: 'error',
         statusCode: 500,
-        message: `Credential _revoke job ${thid} finished without result payload.`,
+        message: `Delegation policy _upsert job ${thid} finished without result payload.`,
       };
     }
 
@@ -148,7 +144,7 @@ export class CredentialRevokeResponseManager {
       {
         severity: 'information',
         code: 'informational',
-        diagnostics: `Credential status set to revoked for ${job.result.revokedCount} item(s).`,
+        diagnostics: `Delegation policy record(s) upserted: ${job.result.upsertedCount}.`,
       },
     ]);
     const succeededBody: VerifyBundleResponse = {
@@ -158,16 +154,16 @@ export class CredentialRevokeResponseManager {
       total: 1,
       data: [
         {
-          type: 'NetworkCredentialRevoke-v1.0',
+          type: 'DelegationPolicyUpsert-v1.0',
           resource: {
             id: `urn:uuid:${randomUUID()}`,
-            type: 'network-credential-revoke-v1.0',
+            type: 'delegation-policy-upsert-v1.0',
             thid,
             tenantId: route.tenantId,
             jurisdiction: route.jurisdiction.toUpperCase(),
             sector: route.sector,
-            credentialType: route.credentialType,
-            status: 'revoked',
+            policyType: route.policyType,
+            status: 'upserted',
             createdAt: new Date(job.createdAt).toISOString(),
             updatedAt: new Date(job.updatedAt).toISOString(),
             content: job.result.items,
@@ -181,7 +177,7 @@ export class CredentialRevokeResponseManager {
     };
     return {
       type: 'succeeded',
-      payload: buildDidcommCredentialRevokeMessage(route, thid, succeededBody, req),
+      payload: buildDidcommPolicyMessage(route, thid, succeededBody, req),
     };
   }
 }

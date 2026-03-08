@@ -66,23 +66,32 @@ export class CredentialStatusRequestManager {
         this.jobStore.markRunning(submission.thid);
         try {
           const nowIso = new Date().toISOString();
-          const record = await this.collectionsService.findIssuedCredential({
-            tenantId: route.tenantId,
-            jurisdiction: route.jurisdiction,
-            sector: route.sector,
-            credentialType: route.credentialType,
-            issuedCredentialRecordId: submission.issuedCredentialRecordId,
-            credentialId: submission.credentialId,
-            subjectId: submission.subjectId,
-          });
-          const resolved = resolveStatusFromRecord(record);
+          const resultItems = [];
+          for (const lookup of submission.lookups) {
+            const record = await this.collectionsService.findIssuedCredential({
+              tenantId: route.tenantId,
+              jurisdiction: route.jurisdiction,
+              sector: route.sector,
+              credentialType: route.credentialType,
+              issuedCredentialRecordId: lookup.issuedCredentialRecordId,
+              credentialId: lookup.credentialId,
+              subjectId: lookup.subjectId,
+              credentialStatusId: lookup.credentialStatusId,
+            });
+            const resolved = resolveStatusFromRecord(record);
+            resultItems.push({
+              status: resolved.status,
+              checkedAt: nowIso,
+              issuedCredentialRecordId: record?.id || lookup.issuedCredentialRecordId,
+              credentialId: record?.credentialId || lookup.credentialId,
+              subjectId: record?.subjectId || lookup.subjectId,
+              credentialStatusId: lookup.credentialStatusId,
+              revokedAt: resolved.revokedAt,
+            });
+          }
           this.jobStore.markSucceeded(submission.thid, {
-            status: resolved.status,
-            checkedAt: nowIso,
-            issuedCredentialRecordId: record?.id || submission.issuedCredentialRecordId,
-            credentialId: record?.credentialId || submission.credentialId,
-            subjectId: record?.subjectId || submission.subjectId,
-            revokedAt: resolved.revokedAt,
+            resolvedCount: resultItems.length,
+            items: resultItems,
           });
         } catch (error: unknown) {
           const message = (error as Error)?.message || String(error);
