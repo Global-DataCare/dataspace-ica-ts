@@ -7,8 +7,14 @@ import {
   buildRotateResponseLocation,
   parseActivateRoute,
   parseAddEvidenceRoute,
+  parseDcatCatalogDdoDatasetRoute,
+  parseDcatCatalogDdoRequestRoute,
+  parseDcatCatalogDatasetRoute,
+  parseDcatCatalogRequestRoute,
   parseDelegationPolicyRoute,
   parseCredentialRevokeRoute,
+  parseCredentialSearchRoute,
+  parseSpacesRoute,
   parseCredentialStatusRoute,
   parseIssueCredentialRoute,
   parseRotateRoute,
@@ -22,6 +28,8 @@ import { DelegationPolicyUpsertRequestManager } from './managers/delegation-poli
 import { DelegationPolicyUpsertResponseManager } from './managers/delegation-policy-upsert-response-manager.ts';
 import { CredentialRevokeRequestManager } from './managers/credential-revoke-request-manager.ts';
 import { CredentialRevokeResponseManager } from './managers/credential-revoke-response-manager.ts';
+import { CredentialSearchRequestManager } from './managers/credential-search-request-manager.ts';
+import { CredentialSearchResponseManager } from './managers/credential-search-response-manager.ts';
 import { CredentialStatusRequestManager } from './managers/credential-status-request-manager.ts';
 import { CredentialStatusResponseManager } from './managers/credential-status-response-manager.ts';
 import { IssueCredentialRequestManager } from './managers/issue-credential-request-manager.ts';
@@ -29,12 +37,25 @@ import { IssueCredentialResponseManager } from './managers/issue-credential-resp
 import { VerifyRequestManager } from './managers/verify-request-manager.ts';
 import { VerifyResponseManager } from './managers/verify-response-manager.ts';
 import { buildIcaVerifyOpenApiSpec } from './openapi.ts';
-import { parseRotateSubmission } from './request-parsing.ts';
+import {
+  parseSpacesListSubmission,
+  parseSpacesReplaceSubmission,
+  parseRotateSubmission,
+} from './request-parsing.ts';
 import { createDefaultSignatureVerificationManagerFromEnv } from './signature-verification-manager.ts';
 import { createAuditDocumentStorageServiceFromEnv } from './tools/audit-document-storage.ts';
 import { validateRotateControllerDidcommProof } from './tools/controller-didcomm-proof.ts';
-import { createVerificationCollectionsServiceFromEnv } from './tools/verification-collections-storage.ts';
+import { createVerificationCollectionsServiceFromEnvWithSync } from './tools/verification-collections-storage.ts';
+import { DataspaceSyncService } from './tools/dataspace-sync.ts';
+import { SpacesRegistry } from './tools/spaces-registry.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from './tools/didcomm-message.ts';
+import {
+  buildDcatCatalog,
+  buildProviderDatasetsFromIssuedCredentials,
+  filterProviderDatasets,
+  findProviderDatasetById,
+} from './tools/dcat-catalog.ts';
+import { buildCatalogDdo } from './tools/ddo-catalog.ts';
 import {
   buildControllerDidDocument,
   buildIcaDidDocument,
@@ -53,8 +74,11 @@ import type {
   DelegationPolicyUpsertResult,
   CredentialRevokeResult,
   CredentialRevokeRouteContext,
+  CredentialSearchResult,
+  CredentialSearchRouteContext,
   CredentialStatusResult,
   CredentialStatusRouteContext,
+  SpacesRouteContext,
   IssueCredentialResult,
   IssueCredentialRouteContext,
   RotateRouteContext,
@@ -69,12 +93,23 @@ export type IcaApiServerOptions = {
   verifier?: PdfVerificationService;
 };
 
-function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
+function sendJson(
+  res: ServerResponse,
+  statusCode: number,
+  payload: unknown,
+  contentType = 'application/json',
+): void {
   const body = JSON.stringify(payload, null, 2);
   res.statusCode = statusCode;
-  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Type', contentType);
   res.setHeader('Content-Length', Buffer.byteLength(body));
   res.end(body);
+}
+
+function prefersJsonLd(req: IncomingMessage): boolean {
+  const acceptHeader = req.headers.accept;
+  const accept = Array.isArray(acceptHeader) ? acceptHeader.join(',') : (acceptHeader || '');
+  return accept.toLowerCase().includes('application/ld+json');
 }
 
 function sendHtml(res: ServerResponse, statusCode: number, html: string): void {
@@ -146,7 +181,9 @@ function sendError(
     | DelegationPolicyRouteContext
     | IssueCredentialRouteContext
     | CredentialStatusRouteContext
-    | CredentialRevokeRouteContext,
+    | CredentialRevokeRouteContext
+    | CredentialSearchRouteContext
+    | SpacesRouteContext,
 ): void {
   const payload = buildDidcommMessage(req, buildErrorBundle(statusCode, message), {
     route,
@@ -161,6 +198,64 @@ function sendMethodNotAllowed(res: ServerResponse, allow: string): void {
   res.statusCode = 405;
   res.setHeader('Allow', allow);
   res.end();
+}
+
+function firstHeaderValue(header: string | string[] | undefined): string {
+  if (Array.isArray(header)) return (header.find((value) => value && value.trim()) || '').trim();
+  return (header || '').trim();
+}
+
+function normalizeContentType(headerValue: string): string {
+  return headerValue.split(';')[0].trim().toLowerCase();
+}
+
+async function readIncomingBuffer(req: IncomingMessage): Promise<Buffer<ArrayBufferLike>> {
+  const chunks: Buffer<ArrayBufferLike>[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function parseJsonObjectBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const contentTypeHeader = firstHeaderValue(req.headers['content-type']);
+  const contentType = normalizeContentType(contentTypeHeader);
+  if (contentType && contentType !== 'application/json') {
+    throw new Error(
+      `Unsupported Content-Type for catalog request: ${contentTypeHeader || '(missing)'} (expected application/json)`,
+    );
+  }
+  const raw = await readIncomingBuffer(req);
+  if (!raw.length) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.toString('utf8'));
+  } catch (error: unknown) {
+    throw new Error(`Invalid JSON body: ${(error as Error).message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Catalog request body must be a JSON object.');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function resolveRequestOrigin(req: IncomingMessage): string {
+  const configured = String(process.env.ICA_OPENAPI_SERVER_URL || '').trim();
+  if (configured) return configured;
+
+  const forwardedProtoRaw = firstHeaderValue(req.headers['x-forwarded-proto']);
+  const forwardedProto = forwardedProtoRaw.split(',')[0]?.trim().toLowerCase() || '';
+  const protocol = forwardedProto === 'https' || forwardedProto === 'http' ? forwardedProto : 'http';
+
+  const forwardedHostRaw = firstHeaderValue(req.headers['x-forwarded-host']);
+  const forwardedHost = forwardedHostRaw.split(',')[0]?.trim() || '';
+  const host = forwardedHost || firstHeaderValue(req.headers.host) || 'localhost';
+  return `${protocol}://${host}`;
+}
+
+function toStatusCodeFromJsonParseError(message: string): number {
+  if (message.startsWith('Unsupported Content-Type')) return 415;
+  return 400;
 }
 
 function statusCodeFromDidcommParseError(message: string): number {
@@ -212,7 +307,7 @@ function buildApiDocsHtml(): string {
 
       function isSubmitActionUrl(url) {
         const normalized = String(url || '');
-        return /\/_(verify|activate|rotate|add|issue|status|revoke)(?:\\?.*)?$/i.test(normalized);
+        return /\/_(verify|activate|rotate|add|issue|status|revoke|search|list|replace)(?:\\?.*)?$/i.test(normalized);
       }
 
       function isVerifySubmitActionUrl(url) {
@@ -368,19 +463,31 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const credentialRevokeJobStore = new InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>(
     options.jobResultTtlSeconds || 3600,
   );
+  const credentialSearchJobStore = new InMemoryEntityJobStore<CredentialSearchRouteContext, CredentialSearchResult>(
+    options.jobResultTtlSeconds || 3600,
+  );
   const auditStorageService = createAuditDocumentStorageServiceFromEnv();
-  const verificationCollectionsService = createVerificationCollectionsServiceFromEnv();
+  const spacesRegistry = new SpacesRegistry();
+  const dataspaceSyncService = new DataspaceSyncService({
+    targetResolver: (scope) => spacesRegistry.resolveForSync(scope),
+  });
+  const verificationCollectionsService = createVerificationCollectionsServiceFromEnvWithSync(dataspaceSyncService);
   const verifyRequestManager = new VerifyRequestManager(jobStore, verifier, auditStorageService);
   const verifyResponseManager = new VerifyResponseManager(jobStore, verificationCollectionsService);
   const activateRequestManager = new ActivateRequestManager(activationJobStore);
   const activateResponseManager = new ActivateResponseManager(activationJobStore);
-  const addEvidenceRequestManager = new AddEvidenceRequestManager(addEvidenceJobStore, verificationCollectionsService);
+  const addEvidenceRequestManager = new AddEvidenceRequestManager(
+    addEvidenceJobStore,
+    verificationCollectionsService,
+    dataspaceSyncService,
+  );
   const addEvidenceResponseManager = new AddEvidenceResponseManager(addEvidenceJobStore);
   const delegationPolicyUpsertRequestManager = new DelegationPolicyUpsertRequestManager(delegationPolicyJobStore);
   const delegationPolicyUpsertResponseManager = new DelegationPolicyUpsertResponseManager(delegationPolicyJobStore);
   const issueCredentialRequestManager = new IssueCredentialRequestManager(
     issueCredentialJobStore,
     verificationCollectionsService,
+    dataspaceSyncService,
   );
   const issueCredentialResponseManager = new IssueCredentialResponseManager(issueCredentialJobStore);
   const credentialStatusRequestManager = new CredentialStatusRequestManager(
@@ -391,9 +498,14 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const credentialRevokeRequestManager = new CredentialRevokeRequestManager(
     credentialRevokeJobStore,
     verificationCollectionsService,
+    dataspaceSyncService,
   );
   const credentialRevokeResponseManager = new CredentialRevokeResponseManager(credentialRevokeJobStore);
-  const openApiSpec = buildIcaVerifyOpenApiSpec();
+  const credentialSearchRequestManager = new CredentialSearchRequestManager(
+    credentialSearchJobStore,
+    verificationCollectionsService,
+  );
+  const credentialSearchResponseManager = new CredentialSearchResponseManager(credentialSearchJobStore);
   const apiDocsHtml = buildApiDocsHtml();
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -415,6 +527,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           docs: '/api-docs',
           openapi: '/openapi.json',
           did: '/.well-known/did.json',
+          dspaceVersion: '/.well-known/dspace-version',
           controllerDid: controllerDidDocument?.id || undefined,
           controllerDidPath,
           endpoints: {
@@ -445,6 +558,14 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
               'POST /ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_revoke',
             credentialRevokeResponse:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_revoke-response',
+            credentialSearch:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search',
+            credentialSearchResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search-response',
+            spacesList:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/network/spaces/_list',
+            spacesReplace:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/network/spaces/_replace',
             rotateCredentials:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_rotate',
             rotateCredentialsResponse:
@@ -453,6 +574,14 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
               'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate',
             rotateCommunicationsResponse:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate-response',
+            dcatCatalogRequest:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request',
+            dcatCatalogDataset:
+              'GET /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}',
+            dcatCatalogDdoRequest:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request',
+            dcatCatalogDdoDataset:
+              'GET /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/datasets/{id}',
           },
         });
         return;
@@ -463,6 +592,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           sendMethodNotAllowed(res, 'GET');
           return;
         }
+        const openApiSpec = buildIcaVerifyOpenApiSpec({ serverUrl: resolveRequestOrigin(req) });
         sendJson(res, 200, openApiSpec);
         return;
       }
@@ -473,6 +603,19 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           return;
         }
         sendDidDocumentJson(res, 200, buildIcaDidDocument(req));
+        return;
+      }
+
+      if (pathname === '/.well-known/dspace-version') {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        sendJson(res, 200, {
+          version: '1',
+          did: '/.well-known/did.json',
+          openapi: '/openapi.json',
+        });
         return;
       }
 
@@ -497,6 +640,288 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           return;
         }
         sendHtml(res, 200, apiDocsHtml);
+        return;
+      }
+
+      const parsedDcatCatalogRequestRoute = parseDcatCatalogRequestRoute(pathname);
+      if (parsedDcatCatalogRequestRoute) {
+        if (!parsedDcatCatalogRequestRoute.ok) {
+          sendJson(res, parsedDcatCatalogRequestRoute.statusCode, { error: parsedDcatCatalogRequestRoute.message });
+          return;
+        }
+        if (method !== 'POST') {
+          sendMethodNotAllowed(res, 'POST');
+          return;
+        }
+        let body: Record<string, unknown>;
+        try {
+          body = await parseJsonObjectBody(req);
+        } catch (error: unknown) {
+          const message = (error as Error)?.message || 'Invalid catalog request payload.';
+          sendJson(res, toStatusCodeFromJsonParseError(message), { error: message });
+          return;
+        }
+        const route = parsedDcatCatalogRequestRoute.context;
+        const catalogBasePath = `/${route.tenantId}/cds-${route.jurisdiction}/v1/${route.sector}/dcat3/catalog`;
+        const catalogBaseUrl = `${resolveRequestOrigin(req)}${catalogBasePath}`;
+        const datasets = buildProviderDatasetsFromIssuedCredentials(
+          await verificationCollectionsService.listIssuedCredentials(),
+          route,
+        );
+        const filters = (body.filters && typeof body.filters === 'object')
+          ? (body.filters as Record<string, unknown>)
+          : undefined;
+        const filtered = filterProviderDatasets(datasets, {
+          sector: typeof filters?.sector === 'string' ? filters.sector : undefined,
+          jurisdiction: typeof filters?.jurisdiction === 'string' ? filters.jurisdiction : undefined,
+        });
+        const catalog = buildDcatCatalog(catalogBaseUrl, filtered);
+        setImmediate(async () => {
+          try {
+            await dataspaceSyncService.syncCatalogSnapshot({
+              tenantId: route.tenantId,
+              jurisdiction: route.jurisdiction.toUpperCase(),
+              sector: route.sector,
+              catalogUrl: catalogBaseUrl,
+              datasetList: filtered.map((entry) => entry.datasetId),
+            });
+          } catch (error: unknown) {
+            const message = (error as Error)?.message || String(error);
+            console.warn(`Catalog dataspace sync failed: ${message}`);
+          }
+        });
+        sendJson(res, 200, catalog, prefersJsonLd(req) ? 'application/ld+json' : 'application/json');
+        return;
+      }
+
+      const parsedDcatCatalogDatasetRoute = parseDcatCatalogDatasetRoute(pathname);
+      if (parsedDcatCatalogDatasetRoute) {
+        if (!parsedDcatCatalogDatasetRoute.ok) {
+          sendJson(res, parsedDcatCatalogDatasetRoute.statusCode, { error: parsedDcatCatalogDatasetRoute.message });
+          return;
+        }
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const route = parsedDcatCatalogDatasetRoute.context;
+        const catalogBasePath = `/${route.tenantId}/cds-${route.jurisdiction}/v1/${route.sector}/dcat3/catalog`;
+        const catalogBaseUrl = `${resolveRequestOrigin(req)}${catalogBasePath}`;
+        const datasets = buildProviderDatasetsFromIssuedCredentials(
+          await verificationCollectionsService.listIssuedCredentials(),
+          route,
+        );
+        const dataset = findProviderDatasetById(datasets, route.datasetId);
+        if (!dataset) {
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.end('Not Found');
+          return;
+        }
+        const catalog = buildDcatCatalog(catalogBaseUrl, [dataset]);
+        const single = Array.isArray(catalog['dcat:dataset'])
+          ? catalog['dcat:dataset'][0]
+          : undefined;
+        sendJson(res, 200, single || {}, prefersJsonLd(req) ? 'application/ld+json' : 'application/json');
+        return;
+      }
+
+      const parsedDcatCatalogDdoRequestRoute = parseDcatCatalogDdoRequestRoute(pathname);
+      if (parsedDcatCatalogDdoRequestRoute) {
+        if (!parsedDcatCatalogDdoRequestRoute.ok) {
+          sendJson(res, parsedDcatCatalogDdoRequestRoute.statusCode, { error: parsedDcatCatalogDdoRequestRoute.message });
+          return;
+        }
+        if (method !== 'POST') {
+          sendMethodNotAllowed(res, 'POST');
+          return;
+        }
+        let body: Record<string, unknown>;
+        try {
+          body = await parseJsonObjectBody(req);
+        } catch (error: unknown) {
+          const message = (error as Error)?.message || 'Invalid DDO catalog request payload.';
+          sendJson(res, toStatusCodeFromJsonParseError(message), { error: message });
+          return;
+        }
+        const route = parsedDcatCatalogDdoRequestRoute.context;
+        const catalogBasePath = `/${route.tenantId}/cds-${route.jurisdiction}/v1/${route.sector}/dcat3/catalog`;
+        const catalogBaseUrl = `${resolveRequestOrigin(req)}${catalogBasePath}`;
+        const datasets = buildProviderDatasetsFromIssuedCredentials(
+          await verificationCollectionsService.listIssuedCredentials(),
+          route,
+        );
+        const filters = (body.filters && typeof body.filters === 'object')
+          ? (body.filters as Record<string, unknown>)
+          : undefined;
+        const filtered = filterProviderDatasets(datasets, {
+          sector: typeof filters?.sector === 'string' ? filters.sector : undefined,
+          jurisdiction: typeof filters?.jurisdiction === 'string' ? filters.jurisdiction : undefined,
+        });
+        const ddo = buildCatalogDdo(catalogBaseUrl, filtered);
+        sendJson(res, 200, ddo);
+        return;
+      }
+
+      const parsedDcatCatalogDdoDatasetRoute = parseDcatCatalogDdoDatasetRoute(pathname);
+      if (parsedDcatCatalogDdoDatasetRoute) {
+        if (!parsedDcatCatalogDdoDatasetRoute.ok) {
+          sendJson(res, parsedDcatCatalogDdoDatasetRoute.statusCode, { error: parsedDcatCatalogDdoDatasetRoute.message });
+          return;
+        }
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const route = parsedDcatCatalogDdoDatasetRoute.context;
+        const catalogBasePath = `/${route.tenantId}/cds-${route.jurisdiction}/v1/${route.sector}/dcat3/catalog`;
+        const catalogBaseUrl = `${resolveRequestOrigin(req)}${catalogBasePath}`;
+        const datasets = buildProviderDatasetsFromIssuedCredentials(
+          await verificationCollectionsService.listIssuedCredentials(),
+          route,
+        );
+        const dataset = findProviderDatasetById(datasets, route.datasetId);
+        if (!dataset) {
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.end('Not Found');
+          return;
+        }
+        const ddo = buildCatalogDdo(catalogBaseUrl, [dataset]);
+        const single = Array.isArray(ddo.datasetList)
+          ? ddo.datasetList[0]
+          : undefined;
+        sendJson(res, 200, single || {});
+        return;
+      }
+
+      const parsedSpaces = parseSpacesRoute(requestUrl.pathname);
+      if (parsedSpaces) {
+        if (!parsedSpaces.ok) {
+          sendError(req, res, parsedSpaces.statusCode, parsedSpaces.message);
+          return;
+        }
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', parsedSpaces.context);
+          return;
+        }
+
+        const route = parsedSpaces.context;
+        const scope = {
+          tenantId: route.tenantId,
+          jurisdiction: route.jurisdiction.toUpperCase(),
+          sector: route.sector,
+        };
+        if (route.action === '_list') {
+          let submission;
+          try {
+            submission = await parseSpacesListSubmission(req);
+          } catch (error: unknown) {
+            const message = (error as Error)?.message || 'Invalid spaces list payload.';
+            sendError(req, res, statusCodeFromDidcommParseError(message), message, route);
+            return;
+          }
+          const targets = spacesRegistry.list(scope);
+          const body: VerifyBundleResponse = {
+            resourceType: 'Bundle',
+            type: 'batch-response',
+            total: 1,
+            issues: buildOperationOutcome([
+              {
+                severity: 'information',
+                code: 'informational',
+                diagnostics: `Spaces returned: ${targets.length}.`,
+              },
+            ]),
+            data: [
+              {
+                type: 'SpacesList-v1.0',
+                resource: {
+                  id: `urn:uuid:${submission.thid}`,
+                  type: 'spaces-list-v1.0',
+                  tenantId: route.tenantId,
+                  jurisdiction: route.jurisdiction.toUpperCase(),
+                  sector: route.sector,
+                  rootCaDid: spacesRegistry.getRootCaDid() || undefined,
+                  content: targets,
+                },
+                response: {
+                  status: '200',
+                  outcome: buildOperationOutcome([
+                    {
+                      severity: 'information',
+                      code: 'informational',
+                      diagnostics: 'Spaces list resolved.',
+                    },
+                  ]),
+                },
+              },
+            ],
+          };
+          sendDidcommJson(res, 200, buildDidcommMessage(req, body, {
+            route,
+            thid: submission.thid,
+            type: DIDCOMM_BUNDLE_TYPE,
+          }));
+          return;
+        }
+
+        let submission;
+        try {
+          submission = await parseSpacesReplaceSubmission(req);
+        } catch (error: unknown) {
+          const message = (error as Error)?.message || 'Invalid spaces replace payload.';
+          sendError(req, res, statusCodeFromDidcommParseError(message), message, route);
+          return;
+        }
+        const replaced = spacesRegistry.replace(scope, submission.targets.map((target) => ({
+          ...(target.name ? { name: target.name } : {}),
+          did: target.did,
+          ...(target.endpointUrl ? { endpointUrl: target.endpointUrl } : {}),
+          ...(target.apiKey ? { apiKey: target.apiKey } : {}),
+        })));
+        const body: VerifyBundleResponse = {
+          resourceType: 'Bundle',
+          type: 'batch-response',
+          total: 1,
+          issues: buildOperationOutcome([
+            {
+              severity: 'information',
+              code: 'informational',
+              diagnostics: `Spaces replaced: ${replaced.length}.`,
+            },
+          ]),
+          data: [
+            {
+              type: 'SpacesReplace-v1.0',
+              resource: {
+                id: `urn:uuid:${submission.thid}`,
+                type: 'spaces-replace-v1.0',
+                tenantId: route.tenantId,
+                jurisdiction: route.jurisdiction.toUpperCase(),
+                sector: route.sector,
+                rootCaDid: spacesRegistry.getRootCaDid() || undefined,
+                content: replaced,
+              },
+              response: {
+                status: '200',
+                outcome: buildOperationOutcome([
+                  {
+                    severity: 'information',
+                    code: 'informational',
+                    diagnostics: 'Spaces replaced.',
+                  },
+                ]),
+              },
+            },
+          ],
+        };
+        sendDidcommJson(res, 200, buildDidcommMessage(req, body, {
+          route,
+          thid: submission.thid,
+          type: DIDCOMM_BUNDLE_TYPE,
+        }));
         return;
       }
 
@@ -779,6 +1204,48 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         }
 
         const outcome = await credentialRevokeResponseManager.poll(route, req, requestUrl);
+        if (outcome.type === 'error') {
+          sendError(req, res, outcome.statusCode, outcome.message, route);
+          return;
+        }
+        if (outcome.type === 'pending') {
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        sendDidcommJson(res, 200, outcome.payload);
+        return;
+      }
+
+      const parsedCredentialSearch = parseCredentialSearchRoute(requestUrl.pathname);
+      if (parsedCredentialSearch) {
+        if (!parsedCredentialSearch.ok) {
+          sendError(req, res, parsedCredentialSearch.statusCode, parsedCredentialSearch.message);
+          return;
+        }
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', parsedCredentialSearch.context);
+          return;
+        }
+
+        const route = parsedCredentialSearch.context;
+        if (route.action === '_search') {
+          const outcome = await credentialSearchRequestManager.submit(route, req);
+          if (outcome.type === 'error') {
+            sendError(req, res, outcome.statusCode, outcome.message, route);
+            return;
+          }
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+
+        const outcome = await credentialSearchResponseManager.poll(route, req, requestUrl);
         if (outcome.type === 'error') {
           sendError(req, res, outcome.statusCode, outcome.message, route);
           return;

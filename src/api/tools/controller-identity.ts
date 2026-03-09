@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { multibase58MultihashSha3_256 } from './multihash.ts';
 
 type ControllerMemberDescriptor = {
   did: string;
@@ -12,9 +12,6 @@ type ControllerMemberDescriptor = {
 };
 
 const DID_WEB_PREFIX = 'did:web:';
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-const MULTIHASH_SHA3_256_CODE = 0x16;
-const MULTIHASH_SHA3_256_SIZE = 0x20;
 
 function normalizeRole(raw: string | undefined): string {
   const value = (raw || '').trim();
@@ -32,7 +29,9 @@ function normalizeCsvToken(raw: string | undefined): string {
 
 function resolveControllerSector(raw: string | undefined): string {
   const normalized = normalizeCsvToken(raw).toLowerCase();
-  return normalized || 'controller';
+  const sanitized = normalized.replace(/[^a-z0-9._-]/g, '');
+  if (!sanitized || sanitized === 'controller' || sanitized === 'administration') return 'management';
+  return sanitized;
 }
 
 function resolveControllerMemberType(raw: string | undefined): string {
@@ -71,40 +70,12 @@ function toDidWebDidJsonPath(did: string): string | null {
   return `/${pathSegments.join('/')}/did.json`;
 }
 
-function base58btcEncode(input: Buffer<ArrayBufferLike>): string {
-  if (!input.length) return '';
-  const digits: number[] = [0];
-  for (const byte of input) {
-    let carry = byte;
-    for (let index = 0; index < digits.length; index += 1) {
-      const value = digits[index] * 256 + carry;
-      digits[index] = value % 58;
-      carry = Math.floor(value / 58);
-    }
-    while (carry > 0) {
-      digits.push(carry % 58);
-      carry = Math.floor(carry / 58);
-    }
-  }
-  let output = '';
-  for (const byte of input) {
-    if (byte === 0) output += BASE58_ALPHABET[0];
-    else break;
-  }
-  for (let index = digits.length - 1; index >= 0; index -= 1) {
-    output += BASE58_ALPHABET[digits[index]];
-  }
-  return output;
-}
-
 export function deriveControllerEmailHashFromEmail(email: string): string {
   const normalized = normalizeEmailForControllerId(email);
   if (!normalized) {
     throw new Error('Cannot derive controller email hash from empty email.');
   }
-  const digest = createHash('sha3-256').update(normalized, 'utf8').digest();
-  const multihash = Buffer.concat([Buffer.from([MULTIHASH_SHA3_256_CODE, MULTIHASH_SHA3_256_SIZE]), digest]);
-  return `z${base58btcEncode(multihash)}`;
+  return multibase58MultihashSha3_256(normalized);
 }
 
 export function resolveConfiguredControllerEmailHash(): string {

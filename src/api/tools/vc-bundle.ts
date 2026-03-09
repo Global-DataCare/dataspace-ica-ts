@@ -59,15 +59,55 @@ function parseOrganizationTaxId(subjectDn: Record<string, string>): string | und
   return firstDefined(subjectDn.ORGANIZATIONIDENTIFIER, subjectDn['OID.2.5.4.97']);
 }
 
-function resolveControllerBootstrapMetadata():
-  | {
-    kid?: string;
-    email?: string;
-    alg?: string;
-    did?: string;
-    role?: string;
-    idHash?: string;
+type ControllerBootstrapMetadata = {
+  kid?: string;
+  email?: string;
+  alg?: string;
+  did?: string;
+  role?: string;
+  idHash?: string;
+  publicKeyJwk?: Record<string, unknown>;
+};
+
+const ANNEX_ORGANIZATION_ADDITIONAL_TYPE = 'organization.additionalType';
+const ANNEX_ORGANIZATION_DID = 'organization.did';
+const ANNEX_ORGANIZATION_SAME_AS = 'organization.sameAs';
+const ANNEX_ORGANIZATION_ALTERNATE_NAME = 'organization.alternateName';
+const ANNEX_ORGANIZATION_REGISTRATION_NUMBER = 'organization.registrationNumber';
+const ANNEX_LEGAL_REPRESENTATIVE_EMAIL = 'legalRepresentative.email';
+const ANNEX_CONTROLLER_EMAIL = 'controller.email';
+const ANNEX_CONTROLLER_KID = 'controller.kid';
+const ANNEX_CONTROLLER_ALG = 'controller.alg';
+const ANNEX_CONTROLLER_PUBLIC_KEY_JWK = 'controller.publicKeyJwk';
+
+function getAnnexField(result: VerifyResult, name: string): string | undefined {
+  const value = result.annexFormFields?.[name];
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || undefined;
+}
+
+function getAnnexOrganizationDid(result: VerifyResult): string | undefined {
+  const sameAs = getAnnexField(result, ANNEX_ORGANIZATION_SAME_AS);
+  const did = getAnnexField(result, ANNEX_ORGANIZATION_DID);
+  const candidate = firstDefined(sameAs, did);
+  if (!candidate) return undefined;
+  return candidate.startsWith('did:web:') ? candidate : undefined;
+}
+
+function parseAnnexPublicKeyJwk(result: VerifyResult): Record<string, unknown> | undefined {
+  const raw = getAnnexField(result, ANNEX_CONTROLLER_PUBLIC_KEY_JWK);
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
   }
+}
+
+function resolveControllerBootstrapMetadata():
+  | ControllerBootstrapMetadata
   | undefined {
   const kid = (process.env.ICA_SELF_CONTROLLER_KID || '').trim();
   const email = (process.env.ICA_SELF_CONTROLLER_EMAIL || '').trim();
@@ -198,13 +238,7 @@ function buildOidc4IdaEvidence(
   result: VerifyResult,
   serialNumber: string,
   verifierOrganization: string,
-  controllerBootstrap?:
-    | {
-      kid?: string;
-      email?: string;
-      alg?: string;
-    }
-    | undefined,
+  controllerBootstrap?: ControllerBootstrapMetadata | undefined,
 ): EvidenceObjectDLT[] {
   const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
   const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
@@ -304,6 +338,10 @@ function buildOidc4IdaEvidence(
     const details = documentEvidence.document_details as unknown as Record<string, unknown>;
     details.controller = controllerBootstrap;
   }
+  if (result.annexFormFields && Object.keys(result.annexFormFields).length) {
+    const details = documentEvidence.document_details as unknown as Record<string, unknown>;
+    details.annexFormFields = result.annexFormFields;
+  }
 
   return [
     signatureEvidence,
@@ -314,14 +352,29 @@ function buildOidc4IdaEvidence(
 export function buildVerificationVcBundle(route: VerifyRouteContext, result: VerifyResult): VerifyBundleResponse {
   const subjectDn = parseDistinguishedName(result.signerSubject);
   const issuerDid = resolveIcaIssuerDid();
-  const controllerBootstrap = resolveControllerBootstrapMetadata();
+  const controllerBootstrap = resolveControllerBootstrapMetadata() || {};
+  const annexControllerEmail = getAnnexField(result, ANNEX_CONTROLLER_EMAIL);
+  const annexControllerKid = getAnnexField(result, ANNEX_CONTROLLER_KID);
+  const annexControllerAlg = getAnnexField(result, ANNEX_CONTROLLER_ALG);
+  const annexControllerPublicKeyJwk = parseAnnexPublicKeyJwk(result);
+  if (annexControllerEmail) controllerBootstrap.email = annexControllerEmail;
+  if (annexControllerKid) controllerBootstrap.kid = annexControllerKid;
+  if (annexControllerAlg) controllerBootstrap.alg = annexControllerAlg;
+  if (annexControllerPublicKeyJwk) controllerBootstrap.publicKeyJwk = annexControllerPublicKeyJwk;
+
   const controllerMemberDescriptor = resolveControllerMemberDescriptor(issuerDid);
-  if (controllerBootstrap && controllerMemberDescriptor) {
+  if (controllerMemberDescriptor) {
     controllerBootstrap.did = controllerMemberDescriptor.did;
     controllerBootstrap.role = controllerMemberDescriptor.role;
     controllerBootstrap.idHash = controllerMemberDescriptor.idHash;
   }
+  const hasControllerBootstrap = Object.keys(controllerBootstrap).length > 0;
+
   const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU);
+  const organizationDid = getAnnexOrganizationDid(result);
+  const organizationAdditionalType = getAnnexField(result, ANNEX_ORGANIZATION_ADDITIONAL_TYPE);
+  const organizationAlternateName = getAnnexField(result, ANNEX_ORGANIZATION_ALTERNATE_NAME);
+  const organizationRegistrationNumber = getAnnexField(result, ANNEX_ORGANIZATION_REGISTRATION_NUMBER);
   const organizationTaxId = parseOrganizationTaxId(subjectDn);
   const representativeName =
     [subjectDn.GN || subjectDn.GIVENNAME, subjectDn.SN || subjectDn.SURNAME]
@@ -331,10 +384,11 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
     || 'Representative from certificate';
   const personIdentifier = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']);
   const personEmail = firstDefined(
+    getAnnexField(result, ANNEX_LEGAL_REPRESENTATIVE_EMAIL),
     subjectDn.EMAILADDRESS,
     subjectDn.EMAIL,
     subjectDn.E,
-    controllerBootstrap?.email,
+    controllerBootstrap.email,
   );
   const country = subjectDn.C || subjectDn.COUNTRYNAME || undefined;
   const serialNumber =
@@ -351,9 +405,9 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
   );
 
   const organizationSubject: Record<string, unknown> = {
-    id: organizationTaxId
+    id: organizationDid || (organizationTaxId
       ? `urn:organization:taxid:${organizationTaxId}`
-      : `urn:organization:certificate:${route.tenantId}`,
+      : `urn:organization:certificate:${route.tenantId}`),
     '@type': 'Organization',
   };
   if (orgLegalName) {
@@ -365,7 +419,19 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
   if (country) {
     organizationSubject.address = { '@type': 'PostalAddress', addressCountry: country };
   }
-  if (controllerBootstrap) {
+  if (organizationAdditionalType) {
+    organizationSubject.additionalType = organizationAdditionalType;
+  }
+  if (organizationDid) {
+    organizationSubject.sameAs = organizationDid;
+  }
+  if (organizationAlternateName) {
+    organizationSubject.alternateName = organizationAlternateName;
+  }
+  if (organizationRegistrationNumber) {
+    organizationSubject.registrationNumber = organizationRegistrationNumber;
+  }
+  if (hasControllerBootstrap) {
     organizationSubject.controller = controllerBootstrap;
   }
 
@@ -388,7 +454,20 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
   if (organizationTaxId) {
     organizationRef.taxID = organizationTaxId;
   }
-  if (controllerBootstrap) {
+  if (organizationAdditionalType) {
+    organizationRef.additionalType = organizationAdditionalType;
+  }
+  if (organizationDid) {
+    organizationRef.id = organizationDid;
+    organizationRef.sameAs = organizationDid;
+  }
+  if (organizationAlternateName) {
+    organizationRef.alternateName = organizationAlternateName;
+  }
+  if (organizationRegistrationNumber) {
+    organizationRef.registrationNumber = organizationRegistrationNumber;
+  }
+  if (hasControllerBootstrap) {
     organizationRef.controller = controllerBootstrap;
   }
 

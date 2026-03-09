@@ -12,7 +12,7 @@ node ./bin/ica-cli.js controller:bootstrap \
   --email it-director@example.org \
   --jurisdiction ES \
   --role-isco 1120 \
-  --sector controller \
+  --sector management \
   --alg ES384 \
   --scrypt 17:8:1:48 \
   --salt ica-controller-salt-v1 \

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 const OPERATION_OUTCOME_SCHEMA = {
   type: 'object',
   required: ['resourceType', 'issue'],
@@ -95,6 +97,11 @@ const VERIFY_RESULT_SCHEMA = {
     notes: {
       type: 'array',
       items: { type: 'string' },
+    },
+    annexFormFields: {
+      type: 'object',
+      additionalProperties: { type: 'string' },
+      description: 'Optional extracted Terms annex form fields (AcroForm) from the signed PDF.',
     },
     revocationDebug: REVOCATION_DEBUG_SCHEMA,
     auditDocument: {
@@ -226,6 +233,210 @@ const DIDCOMM_ERROR_RESPONSE_SCHEMA = {
     type: { type: 'string', enum: ['application/bundle-api+json'] },
     body: ERROR_BUNDLE_BODY_SCHEMA,
   },
+} as const;
+
+const DCAT_CATALOG_REQUEST_SCHEMA = {
+  type: 'object',
+  properties: {
+    filters: {
+      type: 'object',
+      properties: {
+        sector: { type: 'string' },
+        jurisdiction: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+} as const;
+
+const DCAT_DATASET_SCHEMA = {
+  type: 'object',
+  required: [
+    '@id',
+    '@type',
+    'dcterms:title',
+    'dcterms:identifier',
+    'dcterms:publisher',
+    'dcat:distribution',
+    'odrl:hasPolicy',
+  ],
+  properties: {
+    '@id': { type: 'string' },
+    '@type': { type: 'string', enum: ['dcat:Dataset'] },
+    'dcterms:title': { type: 'string' },
+    'dcterms:identifier': { type: 'string' },
+    'dcterms:publisher': {
+      type: 'object',
+      required: ['@id'],
+      properties: {
+        '@id': { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    'dcat:theme': { type: 'string' },
+    'dcterms:spatial': { type: 'string' },
+    'dcat:distribution': {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['@type', 'dcat:accessURL'],
+        properties: {
+          '@type': { type: 'string', enum: ['dcat:Distribution'] },
+          'dcat:accessURL': { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+    },
+    'odrl:hasPolicy': {
+      type: 'object',
+      required: ['@type'],
+      properties: {
+        '@type': { type: 'string', enum: ['odrl:Set'] },
+      },
+      additionalProperties: true,
+    },
+  },
+  additionalProperties: false,
+} as const;
+
+const DCAT_CATALOG_SCHEMA = {
+  type: 'object',
+  required: ['@context', '@id', '@type', 'dcat:dataset'],
+  properties: {
+    '@context': {
+      type: 'object',
+      required: ['dcat', 'dcterms', 'odrl'],
+      properties: {
+        dcat: { type: 'string' },
+        dcterms: { type: 'string' },
+        odrl: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    '@id': { type: 'string' },
+    '@type': { type: 'string', enum: ['dcat:Catalog'] },
+    'dcat:dataset': {
+      type: 'array',
+      items: DCAT_DATASET_SCHEMA,
+    },
+  },
+  additionalProperties: false,
+} as const;
+
+const DCAT_CATALOG_REQUEST_EXAMPLE = {
+  filters: {
+    sector: 'onehealth',
+    jurisdiction: 'ES',
+  },
+} as const;
+
+const DCAT_DATASET_EXAMPLE = {
+  '@id': 'https://ica.example.org/ica/cds-ES/v1/onehealth/dcat3/catalog/datasets/z3MpnvTtN9h7K4N5XGtrPJxRQJ4mknpXhD2A9N4rb1n3Q',
+  '@type': 'dcat:Dataset',
+  'dcterms:title': 'Clinica Veterinaria Norte dataset',
+  'dcterms:identifier': 'z3MpnvTtN9h7K4N5XGtrPJxRQJ4mknpXhD2A9N4rb1n3Q',
+  'dcterms:publisher': {
+    '@id': 'did:web:member.example.org',
+  },
+  'dcat:theme': 'onehealth',
+  'dcterms:spatial': 'ES',
+  'dcat:distribution': [
+    {
+      '@type': 'dcat:Distribution',
+      'dcat:accessURL':
+        'https://member.example.org/.well-known/did.json',
+    },
+  ],
+  'odrl:hasPolicy': {
+    '@type': 'odrl:Set',
+  },
+} as const;
+
+const DCAT_CATALOG_EXAMPLE = {
+  '@context': {
+    dcat: 'https://www.w3.org/ns/dcat#',
+    dcterms: 'http://purl.org/dc/terms/',
+    odrl: 'http://www.w3.org/ns/odrl/2/',
+  },
+  '@id': 'https://ica.example.org/ica/cds-ES/v1/onehealth/dcat3/catalog',
+  '@type': 'dcat:Catalog',
+  'dcat:dataset': [DCAT_DATASET_EXAMPLE],
+} as const;
+
+const DDO_DATASET_ENTRY_SCHEMA = {
+  type: 'object',
+  required: ['id', 'type', 'datasetId', 'title', 'participantDid', 'accessUrl'],
+  properties: {
+    id: { type: 'string' },
+    type: { type: 'string', enum: ['OrganizationDataOffering'] },
+    datasetId: { type: 'string' },
+    title: { type: 'string' },
+    participantDid: { type: 'string' },
+    accessUrl: { type: 'string' },
+    sector: { type: 'string' },
+    jurisdiction: { type: 'string' },
+  },
+} as const;
+
+const DDO_CATALOG_SCHEMA = {
+  type: 'object',
+  required: ['profile', 'id', 'type', 'catalogUrl', 'generatedAt', 'datasetCount', 'datasetList'],
+  properties: {
+    profile: { type: 'string', enum: ['urn:ica:ddo:catalog:v1'] },
+    id: { type: 'string' },
+    type: { type: 'string', enum: ['DataCatalogDDO'] },
+    catalogUrl: { type: 'string' },
+    generatedAt: { type: 'string' },
+    datasetCount: { type: 'integer' },
+    datasetList: {
+      type: 'array',
+      items: DDO_DATASET_ENTRY_SCHEMA,
+    },
+  },
+} as const;
+
+const DDO_CATALOG_REQUEST_SCHEMA = {
+  type: 'object',
+  properties: {
+    filters: {
+      type: 'object',
+      properties: {
+        sector: { type: 'string' },
+        jurisdiction: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+} as const;
+
+const DDO_CATALOG_REQUEST_EXAMPLE = {
+  filters: {
+    sector: 'onehealth',
+    jurisdiction: 'ES',
+  },
+} as const;
+
+const DDO_CATALOG_EXAMPLE = {
+  profile: 'urn:ica:ddo:catalog:v1',
+  id: 'https://ica.example.org/ica/cds-ES/v1/onehealth/dcat3/catalog/ddo',
+  type: 'DataCatalogDDO',
+  catalogUrl: 'https://ica.example.org/ica/cds-ES/v1/onehealth/dcat3/catalog',
+  generatedAt: '2026-03-09T10:12:45.000Z',
+  datasetCount: 1,
+  datasetList: [
+    {
+      id: 'https://ica.example.org/ica/cds-ES/v1/onehealth/dcat3/catalog/ddo/datasets/z3MpnvTtN9h7K4N5XGtrPJxRQJ4mknpXhD2A9N4rb1n3Q',
+      type: 'OrganizationDataOffering',
+      datasetId: 'z3MpnvTtN9h7K4N5XGtrPJxRQJ4mknpXhD2A9N4rb1n3Q',
+      title: 'Clinica Veterinaria Norte dataset',
+      participantDid: 'did:web:member.example.org',
+      accessUrl: 'https://member.example.org/.well-known/did.json',
+      sector: 'onehealth',
+      jurisdiction: 'ES',
+    },
+  ],
 } as const;
 
 const ACTIVATE_KEY_SCHEMA = {
@@ -545,7 +756,7 @@ const ADD_EVIDENCE_DATA_ITEM_SCHEMA = {
 const ADD_EVIDENCE_REQUEST_BODY_SCHEMA = {
   type: 'object',
   description:
-    'Canonical form: body.data[] (batch, one or many).',
+    'Canonical form: body.data[] (batch, one or many). Also supports DIDComm attachments with vc+jwt payload for issuer-list based evidence ingestion.',
   properties: {
     issuedCredentialRecordId: { type: 'string' },
     operatorDid: { type: 'string' },
@@ -556,7 +767,37 @@ const ADD_EVIDENCE_REQUEST_BODY_SCHEMA = {
       items: ADD_EVIDENCE_DATA_ITEM_SCHEMA,
     },
   },
-  required: ['data'],
+} as const;
+
+const VC_JWT_DIDCOMM_ATTACHMENT_SCHEMA = {
+  type: 'object',
+  required: ['id', 'media_type', 'data'],
+  properties: {
+    id: { type: 'string' },
+    format: { type: 'string', enum: ['vc+jwt'] },
+    media_type: { type: 'string', enum: ['application/vc+jwt'] },
+    filename: { type: 'string' },
+    data: {
+      type: 'object',
+      properties: {
+        json: {
+          type: 'object',
+          properties: {
+            format: { type: 'string', enum: ['vc+jwt'] },
+            jwt: { type: 'string' },
+          },
+          required: ['jwt'],
+        },
+        jwt: { type: 'string' },
+        base64: { type: 'string' },
+      },
+      anyOf: [
+        { required: ['json'] },
+        { required: ['jwt'] },
+        { required: ['base64'] },
+      ],
+    },
+  },
 } as const;
 
 const ADD_EVIDENCE_DIDCOMM_REQUEST_SCHEMA = {
@@ -567,6 +808,10 @@ const ADD_EVIDENCE_DIDCOMM_REQUEST_SCHEMA = {
     thid: { type: 'string' },
     type: { type: 'string' },
     body: ADD_EVIDENCE_REQUEST_BODY_SCHEMA,
+    attachments: {
+      type: 'array',
+      items: VC_JWT_DIDCOMM_ATTACHMENT_SCHEMA,
+    },
   },
 } as const;
 
@@ -951,6 +1196,103 @@ const CREDENTIAL_REVOKE_DIDCOMM_REQUEST_SCHEMA = {
     thid: { type: 'string' },
     type: { type: 'string' },
     body: CREDENTIAL_REVOKE_REQUEST_BODY_SCHEMA,
+  },
+} as const;
+
+const CREDENTIAL_SEARCH_REQUEST_BODY_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', description: 'Generic identifier filter (mapped by credentialType hint).' },
+    text: { type: 'string', description: 'Free-text search (e.g., legal name/address fragment).' },
+    email: { type: 'string' },
+    taxId: { type: 'string' },
+    taxIdHash: {
+      type: 'string',
+      description: 'multibase58(multihash(SHA3-256(taxId)))',
+    },
+    legalName: { type: 'string' },
+    subjectId: { type: 'string' },
+    issuerId: { type: 'string' },
+    credentialId: { type: 'string' },
+    thid: { type: 'string' },
+    jti: { type: 'string' },
+  },
+  anyOf: [
+    { required: ['id'] },
+    { required: ['text'] },
+    { required: ['email'] },
+    { required: ['taxId'] },
+    { required: ['taxIdHash'] },
+    { required: ['legalName'] },
+    { required: ['subjectId'] },
+    { required: ['issuerId'] },
+    { required: ['credentialId'] },
+  ],
+} as const;
+
+const SPACES_TARGET_SCHEMA = {
+  type: 'object',
+  description:
+    'Spaces target descriptor. Use "@type" (JSON-LD) or "resourceType" (plain JSON). '
+    + 'Field "type" is not supported for target entries; this does not affect DIDComm/FHIR Bundle body.type.',
+  properties: {
+    '@type': {
+      type: 'string',
+      example: 'RuntimePlatform',
+      description: 'JSON-LD type (preferred when the payload is JSON-LD). Allowed: RuntimePlatform or SoftwareApplication.',
+    },
+    resourceType: {
+      type: 'string',
+      example: 'RuntimePlatform',
+      description: 'Non JSON-LD type alias. Allowed: RuntimePlatform or SoftwareApplication.',
+    },
+    name: { type: 'string', example: 'Pontus-X' },
+    did: { type: 'string', example: 'did:web:pontusx.example.org' },
+    id: { type: 'string', example: 'did:web:pontusx.example.org', description: 'Alias of did.' },
+    identifier: { type: 'string', example: 'did:web:pontusx.example.org', description: 'Alias of did (RuntimePlatform style).' },
+    endpointUrl: { type: 'string', example: 'https://adapter.example.org/dummy-sync' },
+    url: { type: 'string', example: 'https://adapter.example.org/dummy-sync', description: 'Alias of endpointUrl (RuntimePlatform style).' },
+    apiKey: { type: 'string', writeOnly: true, description: 'Write-only inline API key (never returned by _list/_replace responses).' },
+    license: { type: 'string', writeOnly: true, description: 'Alias of apiKey (RuntimePlatform style). Write-only.' },
+    resource: { type: 'object', additionalProperties: true },
+  },
+  anyOf: [
+    { required: ['did'] },
+    { required: ['id'] },
+    { required: ['identifier'] },
+  ],
+  additionalProperties: true,
+} as const;
+
+const SPACES_LIST_DIDCOMM_REQUEST_SCHEMA = {
+  type: 'object',
+  required: ['type', 'body'],
+  properties: {
+    jti: { type: 'string' },
+    thid: { type: 'string' },
+    type: { type: 'string' },
+    body: { type: 'object', additionalProperties: true },
+  },
+} as const;
+
+const SPACES_REPLACE_DIDCOMM_REQUEST_SCHEMA = {
+  type: 'object',
+  required: ['type', 'body'],
+  properties: {
+    jti: { type: 'string' },
+    thid: { type: 'string' },
+    type: { type: 'string' },
+    body: {
+      type: 'object',
+      required: ['data'],
+      properties: {
+        data: {
+          type: 'array',
+          minItems: 1,
+          items: SPACES_TARGET_SCHEMA,
+        },
+      },
+    },
   },
 } as const;
 
@@ -1641,16 +1983,38 @@ const CREDENTIAL_REVOKE_RESPONSE_SUCCESS_EXAMPLE = {
   },
 } as const;
 
-export function buildIcaVerifyOpenApiSpec() {
+function resolveOpenApiInfoVersion(): string {
+  const fromEnv = (process.env.npm_package_version || '').trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const fromPackage = typeof parsed.version === 'string' ? parsed.version.trim() : '';
+    if (fromPackage) return fromPackage;
+  } catch {
+    // Fallback used when package metadata cannot be resolved.
+  }
+  return '0.0.0';
+}
+
+const OPENAPI_INFO_VERSION = resolveOpenApiInfoVersion();
+
+export function buildIcaVerifyOpenApiSpec(
+  options: {
+    serverUrl?: string;
+  } = {},
+) {
+  const configuredServerUrl = (process.env.ICA_OPENAPI_SERVER_URL || options.serverUrl || '').trim();
+  const serverUrl = configuredServerUrl || 'http://localhost:3310';
   return {
     openapi: '3.1.0',
     info: {
       title: 'DataSpace ICA Verification API',
-      version: '1.0.0',
+      version: OPENAPI_INFO_VERSION,
       description:
-        'Asynchronous API for verifying FNMT-signed PDF terms, persisting network evidence/credentials, upserting ICA delegation policies (ODRL), checking credential status, revoking credentials, and activating ICA cryptographic keys before production issuance. Current deployment is monotenant and uses alternateName "ica".',
+        'Asynchronous API for verifying FNMT-signed PDF terms, persisting network evidence/credentials, upserting ICA delegation policies (ODRL), checking credential status, revoking credentials, and activating ICA cryptographic keys before production issuance, plus synchronous DCAT v3 catalog discovery. Current deployment is monotenant and uses alternateName "ica".',
     },
-    servers: [{ url: 'http://localhost:3310' }],
+    servers: [{ url: serverUrl }],
     tags: [
       {
         name: 'discovery',
@@ -1679,7 +2043,16 @@ export function buildIcaVerifyOpenApiSpec() {
       {
         name: 'network/credentials',
         description:
-          'Credential lifecycle over network records: issue, status and revoke with async polling (_issue, _status, _revoke + *_response).',
+          'Credential lifecycle over network records: issue, status, revoke and search with async polling (_issue, _status, _revoke, _search + *_response).',
+      },
+      {
+        name: 'network/spaces',
+        description:
+          'Sector-scoped spaces targets for metadata sync adapters (list/replace).',
+      },
+      {
+        name: 'catalog/dcat3',
+        description: 'DCAT v3 synchronous catalog discovery for ICA member organizations.',
       },
     ],
     paths: {
@@ -1693,6 +2066,34 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/did+ld+json': {
                   schema: { type: 'object', additionalProperties: true },
+                  examples: {
+                    icaDid: {
+                      summary: 'ICA DID document with protocol endpoints',
+                      value: {
+                        '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
+                        id: 'did:web:localhost%3A3310',
+                        controller:
+                          'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:1120:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
+                        service: [
+                          {
+                            id: 'did:web:localhost%3A3310#verify-terms',
+                            type: 'DataSpaceIcaVerifyService',
+                            serviceEndpoint: '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify',
+                          },
+                          {
+                            id: 'did:web:localhost%3A3310#dsp-catalog-service',
+                            type: 'CatalogService',
+                            serviceEndpoint: '/ica/cds-{jurisdiction}/v1/onehealth/dcat3/catalog/request',
+                          },
+                          {
+                            id: 'did:web:localhost%3A3310#dsp-data-service',
+                            type: 'DataService',
+                            serviceEndpoint: 'https://localhost:3310/.well-known/dspace-version',
+                          },
+                        ],
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -1709,6 +2110,49 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/did+ld+json': {
                   schema: { type: 'object', additionalProperties: true },
+                  examples: {
+                    icaDidAlias: {
+                      summary: 'Same response as /.well-known/did.json',
+                      value: {
+                        id: 'did:web:localhost%3A3310',
+                        service: [
+                          {
+                            id: 'did:web:localhost%3A3310#verify-terms',
+                            type: 'DataSpaceIcaVerifyService',
+                            serviceEndpoint: '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify',
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/.well-known/dspace-version': {
+        get: {
+          tags: ['discovery'],
+          summary: 'Get data space protocol version document',
+          responses: {
+            '200': {
+              description: 'Version and discovery links.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: true,
+                  },
+                  examples: {
+                    versionDoc: {
+                      value: {
+                        version: '1',
+                        did: '/.well-known/did.json',
+                        openapi: '/openapi.json',
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -1732,13 +2176,15 @@ export function buildIcaVerifyOpenApiSpec() {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'health-care' },
+              schema: { type: 'string', example: 'management' },
+              description: 'Controller/member namespace (for ICA controller use `management`).',
             },
             {
               name: 'membertype',
               in: 'path',
               required: true,
               schema: { type: 'string', example: 'controller' },
+              description: 'Membership section (e.g. `controller`, `delegate`, `organization`).',
             },
             {
               name: 'role',
@@ -1761,11 +2207,280 @@ export function buildIcaVerifyOpenApiSpec() {
               content: {
                 'application/did+ld+json': {
                   schema: { type: 'object', additionalProperties: true },
+                  examples: {
+                    controllerDid: {
+                      summary: 'Controller DID document',
+                      value: {
+                        '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
+                        id: 'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:1120:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
+                        verificationMethod: [
+                          {
+                            id: 'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:1120:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g#ica-controller-es384-001',
+                            type: 'JsonWebKey2020',
+                            controller:
+                              'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:1120:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
+                          },
+                        ],
+                      },
+                    },
+                  },
                 },
               },
             },
             '404': {
               description: 'Controller DID document is not configured for the requested route.',
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request': {
+        post: {
+          tags: ['catalog/dcat3'],
+          summary: 'Request ICA DCAT v3 catalog',
+          description:
+            'Returns a `dcat:Catalog` with ICA member organization datasets. Optional JSON body supports filters (`sector`, `jurisdiction`). Response format is DCAT JSON-LD (not DIDComm envelope/body.data[]). The publisher DID is the organization real `did:web`; ICA internal membership aliases are not used as primary publisher.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+          ],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: DCAT_CATALOG_REQUEST_SCHEMA,
+                examples: {
+                  allMembers: {
+                    summary: 'Catalog without filters',
+                    value: {},
+                  },
+                  onehealthEs: {
+                    summary: 'Catalog filtered by onehealth sector/jurisdiction',
+                    value: DCAT_CATALOG_REQUEST_EXAMPLE,
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'DCAT v3 catalog.',
+              content: {
+                'application/ld+json': {
+                  schema: DCAT_CATALOG_SCHEMA,
+                  examples: {
+                    dcatCatalog: {
+                      summary: 'DCAT catalog response',
+                      value: DCAT_CATALOG_EXAMPLE,
+                    },
+                  },
+                },
+                'application/json': {
+                  schema: DCAT_CATALOG_SCHEMA,
+                  examples: {
+                    dcatCatalog: {
+                      summary: 'DCAT catalog response',
+                      value: DCAT_CATALOG_EXAMPLE,
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { error: { type: 'string' } } },
+                },
+              },
+            },
+            '415': {
+              description: 'Unsupported content type.',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { error: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}': {
+        get: {
+          tags: ['catalog/dcat3'],
+          summary: 'Read one dataset from ICA DCAT v3 catalog',
+          description:
+            'Returns one `dcat:Dataset` entry in DCAT JSON-LD (not DIDComm envelope/body.data[]). The returned `dcterms:publisher.@id` is the organization real `did:web`.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'zQmTaxIdMultihash' },
+              description: 'Dataset id: multibase58(multihash(SHA3-256(taxId))).',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'DCAT dataset.',
+              content: {
+                'application/ld+json': {
+                  schema: DCAT_DATASET_SCHEMA,
+                  examples: {
+                    dcatDataset: {
+                      summary: 'Single dataset from catalog',
+                      value: DCAT_DATASET_EXAMPLE,
+                    },
+                  },
+                },
+                'application/json': {
+                  schema: DCAT_DATASET_SCHEMA,
+                  examples: {
+                    dcatDataset: {
+                      summary: 'Single dataset from catalog',
+                      value: DCAT_DATASET_EXAMPLE,
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Dataset not found.',
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request': {
+        post: {
+          tags: ['catalog/dcat3'],
+          summary: 'Request ICA DDO catalog (parallel format)',
+          description:
+            'Returns an ICA DDO catalog profile (`urn:ica:ddo:catalog:v1`) in parallel to DCAT endpoints. This does not replace DCAT nor metadata sync formats.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+          ],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: DDO_CATALOG_REQUEST_SCHEMA,
+                examples: {
+                  bySectorAndJurisdiction: {
+                    summary: 'Filter by sector and jurisdiction',
+                    value: DDO_CATALOG_REQUEST_EXAMPLE,
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'DDO catalog profile.',
+              content: {
+                'application/json': {
+                  schema: DDO_CATALOG_SCHEMA,
+                  examples: {
+                    catalogDdo: {
+                      summary: 'ICA DDO catalog response',
+                      value: DDO_CATALOG_EXAMPLE,
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { error: { type: 'string' } } },
+                },
+              },
+            },
+            '415': {
+              description: 'Unsupported content type.',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { error: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/datasets/{id}': {
+        get: {
+          tags: ['catalog/dcat3'],
+          summary: 'Read one dataset from ICA DDO catalog (parallel format)',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'zQmTaxIdMultihash' },
+              description: 'Dataset id: multibase58(multihash(SHA3-256(taxId))).',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'DDO dataset profile entry.',
+              content: {
+                'application/json': {
+                  schema: DDO_DATASET_ENTRY_SCHEMA,
+                  examples: {
+                    datasetEntry: {
+                      summary: 'Single dataset DDO entry',
+                      value: DDO_CATALOG_EXAMPLE.datasetList[0],
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Dataset not found.',
             },
           },
         },
@@ -1908,7 +2623,7 @@ export function buildIcaVerifyOpenApiSpec() {
           tags: ['network/evidence'],
           summary: 'Add verified evidence record',
           description:
-            'Starts async persistence of evidence records (`address`, `official-registry`, `qualification`, etc.) using body.data[] batch and returns polling location. data[].resource supports direct OIDC4IDA evidence object or verified_claims wrapper with verification.evidence[] and optional claims.',
+            'Starts async persistence of evidence records (`address`, `official-registry`, `qualification`, etc.) and returns polling location. Canonical input is body.data[]; optionally accepts DIDComm `attachments[]` with vc+jwt entries that are verified against configured vc issuer list (DID/JWKS) before persistence.',
           parameters: [
             {
               name: 'jurisdiction',
@@ -2066,6 +2781,31 @@ export function buildIcaVerifyOpenApiSpec() {
                           },
                         ],
                       },
+                    },
+                  },
+                  addPontusXVcJwtAttachment: {
+                    summary: 'Add evidence from DIDComm vc+jwt attachment (Pontus-X style)',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
+                      body: {
+                        issuedCredentialRecordId: 'urn:uuid:issued-record-001',
+                        operatorDid: 'did:web:localhost%3A3310#employee-03',
+                      },
+                      attachments: [
+                        {
+                          id: 'pontusx-vc-001',
+                          format: 'vc+jwt',
+                          media_type: 'application/vc+jwt',
+                          data: {
+                            json: {
+                              format: 'vc+jwt',
+                              jwt: '<compact-vc-jwt-es256k>',
+                            },
+                          },
+                        },
+                      ],
                     },
                   },
                 },
@@ -2539,6 +3279,224 @@ export function buildIcaVerifyOpenApiSpec() {
             },
             '500': {
               description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search': {
+        post: {
+          tags: ['network/credentials'],
+          summary: 'Search credential records',
+          description:
+            'Starts async credential search from unit filters (FHIR-style POST _search with form parameters) and returns polling location.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+            {
+              name: 'credentialType',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'member-onboarding' },
+              description: 'Credential classifier used for scoped search.',
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/x-www-form-urlencoded': {
+                examples: {
+                  searchByTaxId: {
+                    summary: 'Search organization credentials by taxId',
+                    value: {
+                      taxId: 'VATES-A12345678',
+                      thid: 'thid-auto',
+                    },
+                  },
+                  searchRepresentativeByEmail: {
+                    summary: 'Search representative credential by email',
+                    value: {
+                      email: 'legal.rep@example.org',
+                      thid: 'thid-auto',
+                    },
+                  },
+                },
+                schema: CREDENTIAL_SEARCH_REQUEST_BODY_SCHEMA,
+              },
+              'application/didcomm-plain+json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: true,
+                },
+                description: 'Legacy compatibility mode (DIDComm body.data[]).',
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted. Poll _search-response endpoint using Location header.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Polling endpoint path ending in _search-response (thread id must be sent separately as query/body).',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/spaces/_list': {
+        post: {
+          tags: ['network/spaces'],
+          summary: 'List spaces targets',
+          description:
+            'Returns current sector-scoped spaces targets used by sync adapters. Includes configured ICA_ROOT_CA_DID in response resource. Sensitive fields (`apiKey`, `license`) are never returned.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: SPACES_LIST_DIDCOMM_REQUEST_SCHEMA,
+                examples: {
+                  listSpaces: {
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/network/spaces/list-request/v1',
+                      body: {},
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Spaces targets list.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/spaces/_replace': {
+        post: {
+          tags: ['network/spaces'],
+          summary: 'Replace spaces targets',
+          description:
+            'Replaces the full sector-scoped spaces targets list (`body.data[]`). Credentials (`apiKey`/`license`) are accepted as write-only input and never returned.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: SPACES_REPLACE_DIDCOMM_REQUEST_SCHEMA,
+                examples: {
+                  replaceSpaces: {
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/network/spaces/replace-request/v1',
+                      body: {
+                        data: [
+                          {
+                            resourceType: 'RuntimePlatform',
+                            name: 'Pontus-X',
+                            identifier: 'did:web:pontusx.example.org',
+                            url: 'https://adapter.example.org/dummy-sync',
+                            license: '<api-key>',
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Spaces targets replaced.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
               content: {
                 'application/didcomm-plain+json': {
                   schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
@@ -3218,6 +4176,87 @@ export function buildIcaVerifyOpenApiSpec() {
             },
             '404': {
               description: 'Credential revoke job not found.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search-response': {
+        post: {
+          tags: ['network/credentials'],
+          summary: 'Poll credential search result',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+            {
+              name: 'credentialType',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'member-onboarding' },
+            },
+            {
+              name: 'thid',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Credential search thread id. Can also be sent in body as thid or jti.',
+            },
+          ],
+          responses: {
+            '202': {
+              description: 'Still pending.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Same _search-response endpoint path; continue polling with same thid.',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '200': {
+              description: 'Credential search completed (success or handled failure payload).',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '400': {
+              description: 'Missing or invalid thread id.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '404': {
+              description: 'Credential search job not found.',
               content: {
                 'application/didcomm-plain+json': {
                   schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,

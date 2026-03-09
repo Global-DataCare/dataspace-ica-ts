@@ -41,27 +41,27 @@ npm install
 Run locally:
 
 ```bash
-cp .env.local.example .env.local
+cp env.example .env.deploy.dev
 npm run dev
 ```
 
 Self-signed ICA mode (no external CA required):
 
 ```bash
-echo 'ICA_SELF_SIGN_TEST=true' >> .env.local
-echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE=replace-with-strong-passphrase' >> .env.local
-echo 'ICA_VC_PRIVATE_KEY_SEED_CONFIG=17:8:1:48' >> .env.local
-echo 'ICA_VC_PRIVATE_KEY_SEED_SALT=ica-seed-salt-v1' >> .env.local
-echo 'ICA_VC_SEED_ALG=ES384' >> .env.local
+echo 'ICA_SELF_SIGN_TEST=true' >> .env.deploy.dev
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE=replace-with-strong-passphrase' >> .env.deploy.dev
+echo 'ICA_VC_PRIVATE_KEY_SEED_CONFIG=17:8:1:48' >> .env.deploy.dev
+echo 'ICA_VC_PRIVATE_KEY_SEED_SALT=ica-seed-salt-v1' >> .env.deploy.dev
+echo 'ICA_VC_SEED_ALG=ES384' >> .env.deploy.dev
 # Bootstrap controller metadata while CA credentials are still pending
-echo 'ICA_SELF_CONTROLLER_KID=ica-controller-es384-001' >> .env.local
-echo 'ICA_SELF_CONTROLLER_EMAIL=it-director@example.org' >> .env.local
-echo 'ICA_SELF_CONTROLLER_MEMBER_TYPE=controller' >> .env.local
-echo 'ICA_SELF_CONTROLLER_ROLE=1120' >> .env.local
-echo 'ICA_SELF_CONTROLLER_JURISDICTION=ES' >> .env.local
-echo 'ICA_SELF_CONTROLLER_SECTOR=controller' >> .env.local
+echo 'ICA_SELF_CONTROLLER_KID=ica-controller-es384-001' >> .env.deploy.dev
+echo 'ICA_SELF_CONTROLLER_EMAIL=it-director@example.org' >> .env.deploy.dev
+echo 'ICA_SELF_CONTROLLER_MEMBER_TYPE=controller' >> .env.deploy.dev
+echo 'ICA_SELF_CONTROLLER_ROLE=1120' >> .env.deploy.dev
+echo 'ICA_SELF_CONTROLLER_JURISDICTION=ES' >> .env.deploy.dev
+echo 'ICA_SELF_CONTROLLER_SECTOR=management' >> .env.deploy.dev
 # Optional: sign test-* proofs as valid JWS (default keeps invalid test proof for test routes)
-echo 'ICA_SELF_SIGN_TEST_VALID_PROOF=true' >> .env.local
+echo 'ICA_SELF_SIGN_TEST_VALID_PROOF=true' >> .env.deploy.dev
 npm run dev
 ```
 
@@ -78,7 +78,7 @@ node ./bin/ica-cli.js controller:bootstrap \
   --email it-director@example.org \
   --jurisdiction ES \
   --role-isco 1120 \
-  --sector controller \
+  --sector management \
   --alg ES384 \
   --scrypt 17:8:1:48 \
   --salt ica-controller-salt-v1 \
@@ -426,6 +426,9 @@ curl -sS -X POST \
 - direct OIDC4IDA evidence object, or
 - wrapper with `verified_claims.verification.evidence[]` plus optional `verified_claims.claims` (additional claims like registry/professional IDs).
 
+Also supported: DIDComm `attachments[]` with `application/vc+jwt` (Pontus-X style).  
+Those vc+jwt attachments are verified using `ICA_EVIDENCE_VC_ISSUERS_LIST` (trusted issuer DID/URL list that resolves DID document/JWKS, plus optional x509 chain checks) and ingested as normalized `electronic_record` evidence.
+
 ```bash
 curl -i -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/evidence/official-registry/_add" \
@@ -486,6 +489,36 @@ curl -i -X POST \
 ```bash
 curl -sS -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/evidence/official-registry/_add-response?thid=evidence-add-001" | jq .
+```
+
+VC+JWT attachment example (Pontus-X):
+
+```bash
+curl -i -X POST \
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/evidence/official-registry/_add" \
+  -H "Content-Type: application/didcomm-plain+json" \
+  -d '{
+    "jti":"msg-evidence-vcjwt-001",
+    "thid":"thid-evidence-vcjwt-001",
+    "type":"https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1",
+    "body":{
+      "issuedCredentialRecordId":"urn:uuid:issued-existing-002",
+      "operatorDid":"did:web:ica.example.com#delegate-1"
+    },
+    "attachments":[
+      {
+        "id":"pontusx-vc-001",
+        "format":"vc+jwt",
+        "media_type":"application/vc+jwt",
+        "data":{
+          "json":{
+            "format":"vc+jwt",
+            "jwt":"<compact-vc-jwt-es256k>"
+          }
+        }
+      }
+    ]
+  }'
 ```
 
 ### 5) Upsert ICA delegation policy (`_upsert`)
@@ -699,6 +732,86 @@ curl -sS -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/credentials/member-onboarding/_revoke-response?thid=credential-revoke-001" | jq .
 ```
 
+### 9) Search credentials (`_search`)
+
+`_search` is unitary (single query), FHIR-style: `POST` with `application/x-www-form-urlencoded`.
+
+Supported params:
+- `id` (generic, mapped by `credentialType` hint)
+- `text` (free text over legal name/address)
+- `email`
+- `taxId`, `taxIdHash`, `legalName`, `subjectId`, `issuerId`, `credentialId`
+- `thid` (or `jti`) for async polling thread
+
+```bash
+curl -i -X POST \
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/credentials/organization-taxid/_search" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "id=VATES-A12345678" \
+  --data-urlencode "thid=credential-search-001"
+```
+
+```bash
+curl -sS -X POST \
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/credentials/organization-taxid/_search-response?thid=credential-search-001" | jq .
+```
+
+### 10) Dummy dataspace sync (logs aunque falle)
+
+Puedes forzar llamadas a un endpoint dummy para ver trazas de actualización de metadatos (`credential/evidence/catalog`) por espacio de datos:
+
+```bash
+export ICA_SPACES_TARGETS_JSON='{"targets":[{"resourceType":"RuntimePlatform","name":"Pontus-X","identifier":"did:web:pontusx.example.org","url":"https://adapter.example.org/dummy-sync","license":"replace-me-api-key"}]}'
+```
+
+Con `ICA_SPACES_STRICT=false` (default), el flujo principal no falla si el dummy endpoint devuelve error; se registran logs `spaces-sync` con el motivo.
+
+Guia detallada para integracion Pontus-X (payloads salientes, registro de targets y publicacion de catalogo):  
+[`docs/pontusx-integration.md`](./docs/pontusx-integration.md)
+Nota: los eventos de sync usan `@type: "DataspacePublicationMetadata"` como formato de intercambio ICA/Pontus-X, no un DDO estandar.
+
+### 11) Gestionar lista sectorial de espacios de datos (`spaces`)
+
+Listar configuración actual:
+
+```bash
+curl -sS -X POST \
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/spaces/_list" \
+  -H "Content-Type: application/didcomm-plain+json" \
+  -d '{"jti":"req-auto","thid":"thid-auto","type":"https://globaldatacare.es/didcomm/ica/network/spaces/list-request/v1","body":{}}' | jq .
+```
+
+Reemplazar lista completa (`body.data[]`):
+
+```bash
+curl -sS -X POST \
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/spaces/_replace" \
+  -H "Content-Type: application/didcomm-plain+json" \
+  -d '{
+    "jti":"req-auto",
+    "thid":"thid-auto",
+    "type":"https://globaldatacare.es/didcomm/ica/network/spaces/replace-request/v1",
+    "body":{
+      "data":[
+        {
+          "resourceType":"RuntimePlatform",
+          "name":"Pontus-X",
+          "identifier":"did:web:pontusx.example.org",
+          "url":"https://adapter.example.org/dummy-sync",
+          "license":"replace-me-api-key"
+        }
+      ]
+    }
+  }' | jq .
+```
+
+Notas de seguridad:
+- `apiKey` y `license` son solo de entrada (write-only).
+- `_list` y `_replace` no devuelven nunca secretos ni referencias de secreto.
+- `content[]` en respuestas usa `identifier` (DID) y `url` (endpoint) como forma pública (alineado con schema.org).
+- En `targets`: usar `@type` (JSON-LD) o `resourceType` (JSON plano). No usar `type`.
+- Esta restriccion aplica solo a `body.data[]` de `spaces`; `body.type` del envelope/Bundle (`batch-response`) sigue siendo valido.
+
 ## Polling Behavior
 
 - Repeat `POST` on the corresponding `.../_*-response` endpoint with the same `thid`.
@@ -720,7 +833,7 @@ Basic DIDComm fields used by this API:
 |---|---|---|
 | `jti` | request/response | Message identifier. If `thid` is missing, request parsing can fallback to `jti` as thread id source. |
 | `thid` | request/response | Thread identifier for async flow. Required in polling (`_*-response`) via query/body; if absent in early errors it can be `""`. |
-| `type` | request/response | Semantic message type. Responses use `application/bundle-api+json`; requests use endpoint-specific DIDComm types. |
+| `type` | request/response | Semantic message type. Responses use `application/bundle-api+json`; DIDComm requests use endpoint-specific message types. |
 | `body` | request/response | Main business payload. In responses it is always a `Bundle` with `data[]`, `total`, and `issues`. |
 | `iss` | response | Issuer DID of ICA service (`did:web:...`) used to build response envelope. |
 | `aud` | response | Audience DID resolved by config/routing; in early errors it can be `""` if request context is incomplete. |
@@ -728,7 +841,7 @@ Basic DIDComm fields used by this API:
 
 Transport constraints:
 
-- `Content-Type` for API actions must be `application/didcomm-plain+json`.
+- `Content-Type` is usually `application/didcomm-plain+json` (exception: credential `_search` supports `application/x-www-form-urlencoded`).
 - `Content-Encoding` must be `identity`.
 - `application/didcomm-encrypted+json` is not accepted directly by these endpoints (decrypt before calling API).
 
@@ -797,6 +910,14 @@ Network evidence and credentials:
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_status-response`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_revoke`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_revoke-response`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search-response`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/spaces/_list`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/spaces/_replace`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request`
+- `GET /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request` (DDO profile in parallel)
+- `GET /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/datasets/{id}` (DDO profile in parallel)
 
 Route constraints:
 
@@ -806,15 +927,25 @@ Route constraints:
 - `resourceType` (prod): `yyyyddmmhhmm` (12 digits)
 - `resourceType` (test): `test-yyyyddmmhhmm` (requires `ICA_ENABLE_TEST_TERMS_PREFIX=true`)
 - `evidenceType`: free classifier for `_add` (e.g., `address`, `official-registry`, `qualification`)
+- `_add` supports vc+jwt DIDComm attachments (`application/vc+jwt`) verified against `ICA_EVIDENCE_VC_ISSUERS_LIST` (DID/URL issuer trust list)
 - delegation policy path is fixed to `network/policies/delegations`; policy scope lives in `body.data[].resource.permission[]`
-- `credentialType`: free classifier for `_issue`, `_status`, `_revoke` (e.g., `member-onboarding`)
+- `credentialType`: free classifier for `_issue`, `_status`, `_revoke`, `_search` (e.g., `member-onboarding`)
+- recommended organization credentialType classifiers: `organization-taxid`, `organization-license`, `organization-legalname`, `organization-representative`, `organization-delegation`
+- `dcat3` dataset `{id}`: `multibase58(multihash(SHA3-256(taxId)))`
+- DCAT publisher must be a real organization `did:web` (ICA internal membership DID aliases are excluded from catalog publication).
+- Every stored credential/evidence keeps `originDataspaceDid` + `dataspacePublications[]` metadata for multi-space sync tracking.
 
 ## npm Scripts
 
 - `npm run dev`: normal start (no watch)
+- `npm run api:local`: start using `.env.local` (manual/local-only overrides)
 - `npm run api:dev`: watch mode (`./src`)
-- `npm run api:start`: normal start alias
+- `npm run api:start`: normal start alias (`.env.deploy.dev`)
+- `npm run api:start:deploy:demo`: start with `.env.deploy.demo`
+- `npm run api:start:deploy:dev`: start with `.env.deploy.dev`
+- `npm run api:start:deploy:prod`: start with `.env.deploy.prod`
 - `npm run api:example:activate`: generates deterministic DIDComm payload for `_activate`
+- `npm run create:terms:pdf -- --text-file <terms.md|terms.txt> --out <annex.pdf> [--values-json <values.json>]`: generate Terms annex PDF with predefined fields (Markdown supported)
 - `npm run test`: API behavior tests
 - `npm run typecheck`: strict TypeScript checks
 
@@ -825,6 +956,7 @@ Test suite is split by concern (to avoid a single unmaintainable mega-file):
 - `test/api.vc-bundle.test.ts`: VC bundle assembly/evidence mapping output
 - `test/api.delegation-policy.test.ts`: ODRL delegation policy `_upsert` parsing, validation and polling flow
 - `test/api.lifecycle-collections.test.ts`: verify polling, issue/status/revoke/add lifecycle and collections persistence
+- `test/api.credentials-search.test.ts`: credential `_search` request/response flow
 
 ## VC Debug Output (manual)
 
@@ -837,16 +969,32 @@ Generate/update export of `body.data[].resource` from a stored verification resp
 cd /Users/fernando/GITS/gdc-workspace/dataspace-ica-cli && node -e "import fs from 'node:fs/promises'; (async()=>{ const source='/Users/fernando/GITS/gdc-workspace/response_1772857305295.json'; const raw=await fs.readFile(source,'utf8'); const didcomm=JSON.parse(raw); const dataEntries=Array.isArray(didcomm.body?.data)?didcomm.body.data:[]; const resources=dataEntries.map((e)=>({ type:e?.type, resource:e?.resource })).filter((e)=>e.resource); const out={ generatedAt:new Date().toISOString(), source, resources }; const target='/Users/fernando/GITS/gdc-workspace/dataspace-ica-cli/test-output-vc-resources.json'; await fs.writeFile(target, JSON.stringify(out,null,2)); console.log(target); })();"
 ```
 
-## Docker and GKE
+## Docker, GKE and Cloud Run URL behavior
 
 Deployment artifacts are under:
 
 - `Dockerfile`
 - `.dockerignore`
+- `docker_build_local.sh`
+- `docker_run.sh`
+- `cloud_deploy.sh`
 - `deploy/k8s/configmap.yaml`
 - `deploy/k8s/secret.example.yaml`
 - `deploy/k8s/deployment.yaml`
 - `deploy/k8s/service.yaml`
+
+Recommended quick flow (same local image for deploy):
+
+```bash
+./docker_build_local.sh
+./docker_run.sh local
+./cloud_deploy.sh staging
+```
+
+Important:
+- `./cloud_deploy.sh` in this repo deploys to **GKE**.
+- GKE gives internal service (`ClusterIP`) or public IP (`LoadBalancer`), not `*.run.app`.
+- `*.run.app` URLs are from **Cloud Run** deployments.
 
 Step-by-step guide:
 
@@ -863,12 +1011,18 @@ Server and DID:
 - `ICA_DIDCOMM_AUDIENCE_DID` (optional)
 - `ICA_DID_DOCUMENT_JSON` (optional)
 - `ICA_DID_SERVICE_ENDPOINT` (optional)
+- `ICA_DCAT_SERVICE_ENDPOINT` (optional explicit DCAT catalog request endpoint in DID service)
+- `ICA_DSP_DATA_SERVICE_ENDPOINT` (optional explicit DID `DataService` endpoint; default `https://<did:web-authority>/.well-known/dspace-version`)
+- `ICA_DCP_ISSUER_SERVICE_ENDPOINT` (optional explicit DID `IssuerService` endpoint; published only when configured)
+- `ICA_DID_PROTOCOL_SERVICE_ENDPOINT` (backward-compatible alias of `ICA_DSP_DATA_SERVICE_ENDPOINT`)
+- `ICA_DCAT_JURISDICTION` (optional fallback for deriving DCAT endpoint path)
+- `ICA_DCAT_SECTOR` (optional fallback for deriving DCAT endpoint path; default `onehealth`)
 - `ICA_SELF_CONTROLLER_KID` (bootstrap controller `kid` when CA credentials are not yet available)
 - `ICA_SELF_CONTROLLER_EMAIL` (bootstrap controller email for T&C metadata fallback)
 - `ICA_SELF_CONTROLLER_MEMBER_TYPE` (default `controller`; e.g. `organization`, `controller`, `delegate`)
 - `ICA_SELF_CONTROLLER_ROLE` (default `1120`; used in controller/member DID path)
 - `ICA_SELF_CONTROLLER_JURISDICTION` (required for derived controller/member DID)
-- `ICA_SELF_CONTROLLER_SECTOR` (optional; defaults to `controller` for derived controller/member DID)
+- `ICA_SELF_CONTROLLER_SECTOR` (optional; defaults to `management` for derived controller/member DID; legacy `controller`/`administration` values are normalized to `management`)
 - `ICA_SELF_CONTROLLER_EMAIL_HASH` (optional precomputed member email hash; format `multibase58(multihash(SHA3-256(id)))`; if omitted derives from email)
 - `ICA_SELF_CONTROLLER_DID` (optional explicit controller DID override)
 - `ICA_SELF_CONTROLLER_PUBLIC_KEY_JWK` (optional controller public key for DID publication)
@@ -878,6 +1032,18 @@ Server and DID:
 - `DISABLE_CONTROLLER_CA_CREDENTIAL_VALIDATION` (default `false`; keep `false` in production)
 - `ICA_CONTROLLER_CA_TRUST_ANCHOR_PINS_SHA256` (optional CSV trust anchors pinning for controller x509 chains)
 - `ICA_CONTROLLER_CA_ALLOWED_ISSUER_SUBSTRINGS` (optional CSV issuer allowlist for controller x509 chains)
+- `ICA_EVIDENCE_VC_ISSUERS_LIST` (trusted issuer list for vc+jwt attachments; JSON/CSV with `did:web` or URL entries)
+- `ICA_EVIDENCE_VC_ALLOWED_ALGS` (optional global CSV alg allowlist; default `ES256K`)
+- `ICA_EVIDENCE_VC_ISSUERS_CACHE_TTL_SECONDS` (optional DID/JWKS cache TTL; default `300`)
+- `ICA_EVIDENCE_VC_ISSUERS_REQUIRE_X509_CHAIN` (optional strict mode; default `false`)
+- `ICA_EVIDENCE_VC_ISSUERS_TRUST_ANCHOR_PINS_SHA256` (optional CSV trust-anchor pins for issuer x509 chains)
+- `ICA_EVIDENCE_VC_ISSUERS_ALLOWED_ISSUER_SUBSTRINGS` (optional CSV issuer substring filters for issuer x509 chains)
+- `ICA_ROOT_CA_DID` (did:web of root CA used as trust/governance reference in spaces responses)
+- `ICA_SPACES_TARGETS_JSON` (optional spaces adapter targets; accepts `did/endpointUrl/apiKey`, aliases `identifier/url/license`, and target typing via `@type` (JSON-LD) or `resourceType`)
+- `ICA_SPACES_TARGET_DIDS` + `ICA_SPACES_DEFAULT_ENDPOINT` (CSV fallback for dummy adapter routing)
+- `ICA_SPACES_DEFAULT_API_KEY` (optional auth for adapters; header fixed to `x-api-key`)
+- `ICA_SPACES_STRICT` (default `false`; when `true` sync errors fail the job)
+- `ICA_SPACES_TIMEOUT_MS` (default `8000`)
 
 Controller x509 identity check for `_activate`:
 - If `ICA_SELF_CONTROLLER_EMAIL` is set, certificate must include that email (subject/SAN).
@@ -887,7 +1053,6 @@ VC signing:
 
 - `ICA_VC_SIGNING_PRIVATE_KEY_PEM` (optional)
 - `ICA_VC_SIGNING_ALG` (`ES384` | `ES256K` | `RS256` | `PS256` | `EdDSA`)
-- `ICA_VC_SIGNING_KEY_ID` (optional override; if omitted, kid is auto-derived)
 - `ICA_VC_SIGNING_PREFERRED_ALG`
 - `ICA_VC_SIGNING_REQUIRED_FOR_PROD`
 - `ICA_SELF_SIGN_TEST` (self-sign bootstrap for local key)
@@ -920,7 +1085,7 @@ Verification collections persistence:
 
 - `ICA_COLLECTIONS_PROVIDER` (`mem` | `firestore`, default `mem`)
 - `ICA_COLLECTIONS_REQUIRED`
-- `ICA_COLLECTIONS_FIRESTORE_COLLECTION_PREFIX`
+- `ICA_COLLECTIONS_PREFIX`
 - `ICA_COLLECTIONS_ISSUED_COLLECTION`
 - `ICA_COLLECTIONS_EVIDENCE_COLLECTION`
 - `ICA_COLLECTIONS_FIRESTORE_PROJECT_ID`
@@ -965,15 +1130,34 @@ FNMT trust material priority:
 
 - Verify you are running the latest process.
 - Check `GET /openapi.json` and `GET /api-docs`.
-## TODO: Terms & Conditions annex form
+## Terms Annex PDF (implemented)
 
-- Capture `organization.additionalType`/`sector` (animal-care | health-care | research | etc.) so the credential can flag the registered activity.
-- Record `organization.sameAs` (or `organization.alternateName`) with the public domain/subdomain or node operator URL where the `did.web` metadata will live.
-- Include `organization.alternateName` for the internal path when the DID is hosted under `/ica` or another namespaced segment.
-- Expose `legalRepresentative.email` and a `controller.email` field (controller can differ from the representative when delegation occurs).
-- Capture `controller.kid`, `controller.alg`, and controller public key reference (`publicKeyJwk` or equivalent) for communications keys used in DID control.
-- If a health/veterinary registration is required, capture the official `registrationNumber` (e.g., `organization.registrationNumber` or `organization["sectorRegistrationNumber"]`).
-- Persist the `did.web` values (organization + legal rep) in the credential as `sameAs` once the form is signed.
-- Document that `credentialSubject.id` defaults to the certificate-derived URN (`urn:organization:taxid:<VAT>` / `urn:person:identifier:<serialNumber>`) until the annex provides a concrete DID.
+Generate a Terms & Conditions annex PDF from plain text plus predefined form fields:
 
-The annex form becomes the authoritative evidence for these fields and is signed together with the template PDF so the API can include them inside the Organization or LegalRepresentative VC.
+```bash
+npm run create:terms:pdf -- \
+  --text-file ./docs/examples/terms-annex.es.md \
+  --out ./artifacts/terms-annex.pdf \
+  --values-json ./docs/examples/terms-annex-values.example.json
+```
+
+Predefined annex field names:
+
+- `organization.additionalType`
+- `organization.did`
+- `organization.sameAs`
+- `organization.alternateName`
+- `organization.registrationNumber`
+- `legalRepresentative.email`
+- `controller.email`
+- `controller.kid`
+- `controller.alg`
+- `controller.publicKeyJwk`
+
+During `_verify`, signed PDF form values are extracted and incorporated into evidence/VC output:
+
+- Included as `annexFormFields` inside evidence `document_details`.
+- Mapped into organization/person credential subjects when present.
+- If `organization.did`/`organization.sameAs` is a real `did:web`, it is used in VC subject mapping.
+
+Extended guide: [docs/terms-annex-form.md](./docs/terms-annex-form.md)

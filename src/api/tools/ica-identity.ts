@@ -88,6 +88,72 @@ function resolveDidFromConfiguredDocument(): string | null {
   return id || null;
 }
 
+function resolveTenantIdForApiPaths(): string {
+  return (process.env.ICA_LOCAL_TENANT_ID || 'ica').trim() || 'ica';
+}
+
+function resolveApiBasePathTemplate(): string {
+  return `/${resolveTenantIdForApiPaths()}/cds-{jurisdiction}/v1/{sector}`;
+}
+
+function resolveVerifyServiceEndpoint(): string {
+  const explicit = (process.env.ICA_DID_SERVICE_ENDPOINT || '').trim();
+  if (explicit) return explicit;
+  return `${resolveApiBasePathTemplate()}/terms/pdf/{resourceType}/_verify`;
+}
+
+function resolveDcatCatalogServiceEndpoint(): string {
+  const explicit = (process.env.ICA_DCAT_SERVICE_ENDPOINT || process.env.ICA_DCAT_CATALOG_SERVICE_ENDPOINT || '').trim();
+  if (explicit) return explicit;
+
+  const tenantId = resolveTenantIdForApiPaths();
+  const jurisdiction = (process.env.ICA_DCAT_JURISDICTION || process.env.ICA_SELF_CONTROLLER_JURISDICTION || '')
+    .trim()
+    .toUpperCase();
+  const sector = (process.env.ICA_DCAT_SECTOR || 'onehealth').trim().toLowerCase();
+  const jurisdictionToken = jurisdiction || '{jurisdiction}';
+  return `/${tenantId}/cds-${jurisdictionToken}/v1/${sector}/dcat3/catalog/request`;
+}
+
+function resolveDidWebAuthority(did: string): string {
+  const normalized = did.trim();
+  if (!normalized.startsWith('did:web:')) return '';
+  const suffix = normalized.slice('did:web:'.length);
+  const [rawAuthority] = suffix.split(':');
+  if (!rawAuthority) return '';
+  try {
+    return decodeURIComponent(rawAuthority).trim();
+  } catch {
+    return rawAuthority.trim();
+  }
+}
+
+function resolveDataServiceEndpoint(issuerDid: string): string {
+  const explicit = (process.env.ICA_DSP_DATA_SERVICE_ENDPOINT || process.env.ICA_DID_PROTOCOL_SERVICE_ENDPOINT || '').trim();
+  if (explicit) return explicit;
+  const authority = resolveDidWebAuthority(issuerDid);
+  if (!authority) return '/.well-known/dspace-version';
+  return `https://${authority}/.well-known/dspace-version`;
+}
+
+function resolveIssuerServiceEndpoint(issuerDid: string): string {
+  const explicit = (process.env.ICA_DCP_ISSUER_SERVICE_ENDPOINT || '').trim();
+  if (!explicit) return '';
+  return explicit;
+}
+
+function appendDidService(document: JsonObject, service: JsonObject): void {
+  const services = Array.isArray(document.service)
+    ? [...(document.service as JsonObject[])]
+    : [];
+  const serviceId = String(service.id || '').trim();
+  if (!serviceId) return;
+  if (!services.some((entry) => String(entry.id || '').trim() === serviceId)) {
+    services.push(service);
+  }
+  document.service = services;
+}
+
 function parseSupportedSigningAlgorithm(raw: string | undefined): SupportedSigningAlgorithm | undefined {
   const normalized = (raw || '').trim().toUpperCase();
   if (normalized === 'ES384') return 'ES384';
@@ -474,7 +540,8 @@ function mergeSigningMethods(document: JsonObject, issuerDid: string): void {
 export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
   const configuredDocument = tryParseJson(process.env.ICA_DID_DOCUMENT_JSON);
   const issuerDid = resolveIcaIssuerDid(req);
-  const serviceEndpoint = (process.env.ICA_DID_SERVICE_ENDPOINT || '').trim();
+  const serviceEndpoint = resolveVerifyServiceEndpoint();
+  const dcatCatalogServiceEndpoint = resolveDcatCatalogServiceEndpoint();
 
   const document: JsonObject = configuredDocument || {
     '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
@@ -491,18 +558,33 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
     }
   }
 
-  if (serviceEndpoint) {
-    const services = Array.isArray(document.service)
-      ? [...(document.service as JsonObject[])]
-      : [];
-    if (!services.some((entry) => String(entry.id || '') === `${issuerDid}#verify`)) {
-      services.push({
-        id: `${issuerDid}#verify`,
-        type: 'DataSpaceIcaVerifyService',
-        serviceEndpoint,
-      });
-    }
-    document.service = services;
+  appendDidService(document, {
+    id: `${issuerDid}#verify-terms`,
+    type: 'DataSpaceIcaVerifyService',
+    serviceEndpoint,
+  });
+
+  if (dcatCatalogServiceEndpoint) {
+    appendDidService(document, {
+      id: `${issuerDid}#dsp-catalog-service`,
+      type: 'CatalogService',
+      serviceEndpoint: dcatCatalogServiceEndpoint,
+    });
+  }
+
+  appendDidService(document, {
+    id: `${issuerDid}#dsp-data-service`,
+    type: 'DataService',
+    serviceEndpoint: resolveDataServiceEndpoint(issuerDid),
+  });
+
+  const issuerServiceEndpoint = resolveIssuerServiceEndpoint(issuerDid);
+  if (issuerServiceEndpoint) {
+    appendDidService(document, {
+      id: `${issuerDid}#dcp-issuer-service`,
+      type: 'IssuerService',
+      serviceEndpoint: issuerServiceEndpoint,
+    });
   }
 
   return document;

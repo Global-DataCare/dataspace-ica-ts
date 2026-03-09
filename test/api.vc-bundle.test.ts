@@ -222,6 +222,59 @@ test('buildVerificationVcBundle uses external audit attachment when available', 
   assert.equal(documentEvidence.check_details?.[1]?.txn?.startsWith('audit:filesystem:'), true);
 });
 
+test('buildVerificationVcBundle maps annex form fields into credential subjects and evidence details', () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const bundle = buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('annex-fields'),
+    signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+    annexFormFields: {
+      'organization.did': 'did:web:member.example.org',
+      'organization.additionalType': 'onehealth',
+      'organization.alternateName': 'did:web:ica.example.org:ica:cds-ES:v1:onehealth:organization:dataprovider:zAlias',
+      'organization.registrationNumber': 'ES-SAN-REG-0001',
+      'legalRepresentative.email': 'rep@example.org',
+      'controller.email': 'it-director@example.org',
+      'controller.kid': 'controller-es384-20260309',
+      'controller.alg': 'ES384',
+      'controller.publicKeyJwk': '{"kty":"EC","crv":"P-384","x":"abc","y":"def"}',
+    },
+  });
+
+  const organizationResource = bundle.data[0].resource as Record<string, any>;
+  const personResource = bundle.data[1].resource as Record<string, any>;
+  const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+  const personSubject = personResource.credentialSubject as Record<string, any>;
+  const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
+  const documentEvidence = organizationEvidence[1] as Record<string, any>;
+
+  assert.equal(organizationSubject.id, 'did:web:member.example.org');
+  assert.equal(organizationSubject.sameAs, 'did:web:member.example.org');
+  assert.equal(organizationSubject.additionalType, 'onehealth');
+  assert.equal(
+    organizationSubject.alternateName,
+    'did:web:ica.example.org:ica:cds-ES:v1:onehealth:organization:dataprovider:zAlias',
+  );
+  assert.equal(organizationSubject.registrationNumber, 'ES-SAN-REG-0001');
+  assert.equal(personSubject.email, 'rep@example.org');
+  assert.equal(organizationSubject.controller?.email, 'it-director@example.org');
+  assert.equal(organizationSubject.controller?.kid, 'controller-es384-20260309');
+  assert.equal(organizationSubject.controller?.alg, 'ES384');
+  assert.deepEqual(organizationSubject.controller?.publicKeyJwk, {
+    kty: 'EC',
+    crv: 'P-384',
+    x: 'abc',
+    y: 'def',
+  });
+  assert.equal(
+    documentEvidence.document_details?.annexFormFields?.['organization.did'],
+    'did:web:member.example.org',
+  );
+});
+
 test('buildVerificationVcBundle omits intermediate crl_check_all verify_error when fallback succeeds', () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);

@@ -10,6 +10,10 @@ export type DelegationPolicyAction = '_upsert' | '_upsert-response';
 export type IssueCredentialAction = '_issue' | '_issue-response';
 export type CredentialStatusAction = '_status' | '_status-response';
 export type CredentialRevokeAction = '_revoke' | '_revoke-response';
+export type CredentialSearchAction = '_search' | '_search-response';
+export type SpacesAction = '_list' | '_replace';
+export type DcatCatalogAction = 'request' | 'dataset';
+export type DcatCatalogDdoAction = 'ddo-request' | 'ddo-dataset';
 
 export type VerifyJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 export type ActivateJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
@@ -124,10 +128,69 @@ export interface CredentialRevokeRouteContext {
   action: CredentialRevokeAction;
 }
 
+export interface CredentialSearchRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'network';
+  format: 'credentials';
+  credentialType: string;
+  action: CredentialSearchAction;
+}
+
+export interface SpacesRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'network';
+  format: 'spaces';
+  action: SpacesAction;
+}
+
+export interface DcatCatalogRequestRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'dcat3';
+  format: 'catalog';
+  action: 'request';
+}
+
+export interface DcatCatalogDatasetRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'dcat3';
+  format: 'catalog';
+  action: 'dataset';
+  datasetId: string;
+}
+
+export interface DcatCatalogDdoRequestRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'dcat3';
+  format: 'catalog-ddo';
+  action: 'ddo-request';
+}
+
+export interface DcatCatalogDdoDatasetRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'dcat3';
+  format: 'catalog-ddo';
+  action: 'ddo-dataset';
+  datasetId: string;
+}
+
 export interface VerifySubmission {
   thid: string;
   pdfBytes: Buffer<ArrayBufferLike>;
   contentType: string;
+  annexFormFields?: Record<string, string>;
+  annexExtractionWarnings?: string[];
 }
 
 export type SupportedSigningAlgorithm = 'ES384' | 'ES256K' | 'RS256' | 'PS256' | 'EdDSA';
@@ -170,6 +233,12 @@ export interface AddEvidenceInput {
   evidence: Record<string, unknown>;
   issuedCredentialRecordId?: string;
   operatorDid?: string;
+  source?: 'body' | 'didcomm-vc+jwt';
+  attachmentId?: string;
+  vcJwtIssuer?: string;
+  vcJwtKid?: string;
+  vcJwtAlg?: SupportedSigningAlgorithm;
+  vcJwtCredentialId?: string;
 }
 
 export interface DelegationPolicySubmission {
@@ -201,6 +270,27 @@ export interface CredentialRevokeSubmission {
   items: CredentialRevokeInput[];
 }
 
+export interface CredentialSearchSubmission {
+  thid: string;
+  queries: CredentialSearchInput[];
+}
+
+export interface SpacesListSubmission {
+  thid: string;
+}
+
+export interface SpacesTargetInput {
+  name?: string;
+  did: string;
+  endpointUrl?: string;
+  apiKey?: string;
+}
+
+export interface SpacesReplaceSubmission {
+  thid: string;
+  targets: SpacesTargetInput[];
+}
+
 export interface CredentialLookupInput {
   issuedCredentialRecordId?: string;
   credentialId?: string;
@@ -211,6 +301,18 @@ export interface CredentialLookupInput {
 export interface CredentialRevokeInput extends CredentialLookupInput {
   reason?: string;
   revokedBy?: string;
+}
+
+export interface CredentialSearchInput {
+  id?: string;
+  text?: string;
+  email?: string;
+  taxId?: string;
+  taxIdHash?: string;
+  legalName?: string;
+  subjectId?: string;
+  issuerId?: string;
+  credentialId?: string;
 }
 
 export interface VerifyHashes {
@@ -253,6 +355,7 @@ export interface VerifyResult {
   signerIssuer: string;
   hashes: VerifyHashes;
   notes: string[];
+  annexFormFields?: Record<string, string>;
   revocationDebug?: RevocationDebugInfo;
   auditDocument?: AuditDocumentReference;
 }
@@ -304,6 +407,12 @@ export interface AddEvidenceResultItem {
   linkedToCredential: boolean;
   storedAt: string;
   operatorDid?: string;
+  source?: 'body' | 'didcomm-vc+jwt';
+  attachmentId?: string;
+  vcJwtIssuer?: string;
+  vcJwtKid?: string;
+  vcJwtAlg?: SupportedSigningAlgorithm;
+  vcJwtCredentialId?: string;
 }
 
 export interface DelegationPolicyUpsertResult {
@@ -399,6 +508,34 @@ export interface CredentialRevokeJob {
   createdAt: number;
   updatedAt: number;
   result?: CredentialRevokeResult;
+  error?: string;
+}
+
+export interface CredentialSearchResult {
+  matchedCount: number;
+  items: CredentialSearchResultItem[];
+}
+
+export interface CredentialSearchResultItem {
+  issuedCredentialRecordId: string;
+  credentialId: string;
+  credentialType: string;
+  subjectId: string;
+  issuerId: string;
+  legalName?: string;
+  taxId?: string;
+  taxIdHash?: string;
+  organizationDid?: string;
+  credential: Record<string, unknown>;
+}
+
+export interface CredentialSearchJob {
+  thid: string;
+  route: CredentialSearchRouteContext;
+  status: EntityJobStatus;
+  createdAt: number;
+  updatedAt: number;
+  result?: CredentialSearchResult;
   error?: string;
 }
 

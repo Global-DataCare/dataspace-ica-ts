@@ -92,7 +92,7 @@ test('buildIcaDidDocument links controller did:web member and exposes controller
   process.env.ICA_SELF_CONTROLLER_MEMBER_TYPE = 'controller';
   process.env.ICA_SELF_CONTROLLER_ROLE = '1120';
   process.env.ICA_SELF_CONTROLLER_JURISDICTION = 'ES';
-  process.env.ICA_SELF_CONTROLLER_SECTOR = 'controller';
+  process.env.ICA_SELF_CONTROLLER_SECTOR = 'management';
   delete process.env.ICA_SELF_CONTROLLER_DID;
   resetActiveSigningKeysStateForTests();
 
@@ -110,7 +110,7 @@ test('buildIcaDidDocument links controller did:web member and exposes controller
     const controllerDid = didDocument.controller as string;
     assert.match(
       controllerDid,
-      /^did:web:ica\.example\.com:ica:cds-ES:v1:controller:controller:1120:z/,
+      /^did:web:ica\.example\.com:ica:cds-ES:v1:management:controller:1120:z/,
     );
 
     const verificationMethods = Array.isArray(didDocument.verificationMethod)
@@ -122,7 +122,7 @@ test('buildIcaDidDocument links controller did:web member and exposes controller
     );
 
     const controllerPath = resolveControllerDidDocumentPath();
-    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/controller/controller/1120/')), true);
+    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/controller/1120/')), true);
     assert.equal(controllerPath?.endsWith('/did.json'), true);
 
     const controllerDidDocument = buildControllerDidDocument();
@@ -148,7 +148,7 @@ test('buildIcaDidDocument links controller did:web member and exposes controller
   }
 });
 
-test('controller member did defaults sector to controller when ICA_SELF_CONTROLLER_SECTOR is not set', () => {
+test('controller member did defaults sector to management when ICA_SELF_CONTROLLER_SECTOR is not set', () => {
   const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
   const previousControllerEmail = process.env.ICA_SELF_CONTROLLER_EMAIL;
   const previousControllerMemberType = process.env.ICA_SELF_CONTROLLER_MEMBER_TYPE;
@@ -165,7 +165,7 @@ test('controller member did defaults sector to controller when ICA_SELF_CONTROLL
 
   try {
     const controllerPath = resolveControllerDidDocumentPath();
-    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/controller/controller/1120/')), true);
+    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/controller/1120/')), true);
   } finally {
     if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
     else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
@@ -199,7 +199,7 @@ test('controller member did uses ICA_SELF_CONTROLLER_MEMBER_TYPE when configured
 
   try {
     const controllerPath = resolveControllerDidDocumentPath();
-    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/controller/delegate/1120/')), true);
+    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/delegate/1120/')), true);
   } finally {
     if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
     else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
@@ -213,6 +213,31 @@ test('controller member did uses ICA_SELF_CONTROLLER_MEMBER_TYPE when configured
     else process.env.ICA_SELF_CONTROLLER_JURISDICTION = previousControllerJurisdiction;
     if (previousControllerSector === undefined) delete process.env.ICA_SELF_CONTROLLER_SECTOR;
     else process.env.ICA_SELF_CONTROLLER_SECTOR = previousControllerSector;
+  }
+});
+
+test('buildIcaDidDocument publishes DCAT catalog service when configured', () => {
+  const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
+  const previousDcatServiceEndpoint = process.env.ICA_DCAT_SERVICE_ENDPOINT;
+
+  process.env.ICA_DIDCOMM_ISSUER_DID = 'did:web:ica.example.com';
+  process.env.ICA_DCAT_SERVICE_ENDPOINT = '/ica/cds-ES/v1/onehealth/dcat3/catalog/request';
+
+  try {
+    const didDocument = buildIcaDidDocument();
+    const services = Array.isArray(didDocument.service)
+      ? didDocument.service as Array<Record<string, unknown>>
+      : [];
+    const dcatService = services.find((entry) =>
+      String(entry.id || '') === 'did:web:ica.example.com#dsp-catalog-service');
+    assert.ok(dcatService);
+    assert.equal(dcatService?.type, 'CatalogService');
+    assert.equal(dcatService?.serviceEndpoint, '/ica/cds-ES/v1/onehealth/dcat3/catalog/request');
+  } finally {
+    if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
+    else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
+    if (previousDcatServiceEndpoint === undefined) delete process.env.ICA_DCAT_SERVICE_ENDPOINT;
+    else process.env.ICA_DCAT_SERVICE_ENDPOINT = previousDcatServiceEndpoint;
   }
 });
 

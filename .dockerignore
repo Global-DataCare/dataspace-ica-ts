@@ -4,7 +4,7 @@ npm-debug.log
 .git
 .gitignore
 .DS_Store
-.env.local
+.env.*
 coverage
 dist
 build

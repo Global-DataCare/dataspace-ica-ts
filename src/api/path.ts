@@ -8,8 +8,16 @@ import type {
   DelegationPolicyRouteContext,
   CredentialRevokeAction,
   CredentialRevokeRouteContext,
+  CredentialSearchAction,
+  CredentialSearchRouteContext,
   CredentialStatusAction,
   CredentialStatusRouteContext,
+  SpacesAction,
+  SpacesRouteContext,
+  DcatCatalogDatasetRouteContext,
+  DcatCatalogDdoDatasetRouteContext,
+  DcatCatalogDdoRequestRouteContext,
+  DcatCatalogRequestRouteContext,
   IssueCredentialAction,
   IssueCredentialRouteContext,
   RotateAction,
@@ -32,6 +40,18 @@ const NETWORK_CREDENTIAL_STATUS_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/credentials\/(?<credentialType>[^/]+)\/(?<action>_status(?:-response)?)$/i;
 const NETWORK_CREDENTIAL_REVOKE_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/credentials\/(?<credentialType>[^/]+)\/(?<action>_revoke(?:-response)?)$/i;
+const NETWORK_CREDENTIAL_SEARCH_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/credentials\/(?<credentialType>[^/]+)\/(?<action>_search(?:-response)?)$/i;
+const NETWORK_SPACES_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/spaces\/(?<action>_(?:list|replace))$/i;
+const DCAT_CATALOG_REQUEST_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/dcat3\/catalog\/request$/i;
+const DCAT_CATALOG_DATASET_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/dcat3\/catalog\/datasets\/(?<datasetId>[^/]+)$/i;
+const DCAT_CATALOG_DDO_REQUEST_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/dcat3\/catalog\/ddo\/request$/i;
+const DCAT_CATALOG_DDO_DATASET_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/dcat3\/catalog\/ddo\/datasets\/(?<datasetId>[^/]+)$/i;
 
 const ONEHEALTH_SECTOR_PREFIXES = ['animal', 'health'] as const;
 const ALLOWED_SECTOR_ERROR =
@@ -73,6 +93,14 @@ function asCredentialStatusAction(raw: string): CredentialStatusAction {
 
 function asCredentialRevokeAction(raw: string): CredentialRevokeAction {
   return raw.toLowerCase() === '_revoke-response' ? '_revoke-response' : '_revoke';
+}
+
+function asCredentialSearchAction(raw: string): CredentialSearchAction {
+  return raw.toLowerCase() === '_search-response' ? '_search-response' : '_search';
+}
+
+function asSpacesAction(raw: string): SpacesAction {
+  return raw.toLowerCase() === '_replace' ? '_replace' : '_list';
 }
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -647,4 +675,255 @@ export function parseCredentialRevokeRoute(pathname: string): ParsedCredentialRe
 
 export function buildCredentialRevokeResponseLocation(context: CredentialRevokeRouteContext): string {
   return `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/network/credentials/${context.credentialType}/_revoke-response`;
+}
+
+export type ParsedCredentialSearchRoute =
+  | { ok: true; context: CredentialSearchRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseCredentialSearchRoute(pathname: string): ParsedCredentialSearchRoute | null {
+  const match = NETWORK_CREDENTIAL_SEARCH_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+
+  const tenantId = match.groups.tenantId.trim();
+  const jurisdiction = match.groups.jurisdiction.trim();
+  const sector = match.groups.sector.trim().toLowerCase() as AllowedSector;
+  const credentialType = match.groups.credentialType.trim();
+  const action = asCredentialSearchAction(match.groups.action.trim());
+
+  if (!tenantId) {
+    return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
+  }
+  const localTenantId = configuredLocalTenantId();
+  if (localTenantId && tenantId.toLowerCase() !== localTenantId.toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
+    };
+  }
+  if (!jurisdiction) {
+    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
+  }
+  if (!isAllowedSector(sector)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: ALLOWED_SECTOR_ERROR,
+    };
+  }
+  if (!credentialType) {
+    return { ok: false, statusCode: 400, message: 'credentialType is required in path.' };
+  }
+
+  return {
+    ok: true,
+    context: {
+      tenantId,
+      jurisdiction,
+      sector,
+      section: 'network',
+      format: 'credentials',
+      credentialType,
+      action,
+    },
+  };
+}
+
+export function buildCredentialSearchResponseLocation(context: CredentialSearchRouteContext): string {
+  return `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/network/credentials/${context.credentialType}/_search-response`;
+}
+
+export type ParsedSpacesRoute =
+  | { ok: true; context: SpacesRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseSpacesRoute(pathname: string): ParsedSpacesRoute | null {
+  const match = NETWORK_SPACES_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+
+  const tenantId = match.groups.tenantId.trim();
+  const jurisdiction = match.groups.jurisdiction.trim();
+  const sector = match.groups.sector.trim().toLowerCase() as AllowedSector;
+  const action = asSpacesAction(match.groups.action.trim());
+
+  if (!tenantId) {
+    return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
+  }
+  const localTenantId = configuredLocalTenantId();
+  if (localTenantId && tenantId.toLowerCase() !== localTenantId.toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
+    };
+  }
+  if (!jurisdiction) {
+    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
+  }
+  if (!isAllowedSector(sector)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: ALLOWED_SECTOR_ERROR,
+    };
+  }
+
+  return {
+    ok: true,
+    context: {
+      tenantId,
+      jurisdiction,
+      sector,
+      section: 'network',
+      format: 'spaces',
+      action,
+    },
+  };
+}
+
+type ParsedDcatRouteBase =
+  | {
+    ok: true;
+    route: {
+      tenantId: string;
+      jurisdiction: string;
+      sector: AllowedSector;
+    };
+  }
+  | { ok: false; statusCode: number; message: string };
+
+function parseDcatRouteBase(groups: Record<string, string>): ParsedDcatRouteBase {
+  const tenantId = groups.tenantId.trim();
+  const jurisdiction = groups.jurisdiction.trim();
+  const sector = groups.sector.trim().toLowerCase() as AllowedSector;
+
+  if (!tenantId) {
+    return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
+  }
+  const localTenantId = configuredLocalTenantId();
+  if (localTenantId && tenantId.toLowerCase() !== localTenantId.toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
+    };
+  }
+  if (!jurisdiction) {
+    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
+  }
+  if (!isAllowedSector(sector)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: ALLOWED_SECTOR_ERROR,
+    };
+  }
+
+  return {
+    ok: true,
+    route: {
+      tenantId,
+      jurisdiction,
+      sector,
+    },
+  };
+}
+
+export type ParsedDcatCatalogRequestRoute =
+  | { ok: true; context: DcatCatalogRequestRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseDcatCatalogRequestRoute(pathname: string): ParsedDcatCatalogRequestRoute | null {
+  const match = DCAT_CATALOG_REQUEST_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+  const parsed = parseDcatRouteBase(match.groups as Record<string, string>);
+  if (!parsed.ok) return parsed;
+  return {
+    ok: true,
+    context: {
+      tenantId: parsed.route.tenantId,
+      jurisdiction: parsed.route.jurisdiction,
+      sector: parsed.route.sector,
+      section: 'dcat3',
+      format: 'catalog',
+      action: 'request',
+    },
+  };
+}
+
+export type ParsedDcatCatalogDatasetRoute =
+  | { ok: true; context: DcatCatalogDatasetRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseDcatCatalogDatasetRoute(pathname: string): ParsedDcatCatalogDatasetRoute | null {
+  const match = DCAT_CATALOG_DATASET_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+  const parsed = parseDcatRouteBase(match.groups as Record<string, string>);
+  if (!parsed.ok) return parsed;
+  const datasetId = match.groups.datasetId.trim();
+  if (!datasetId) {
+    return { ok: false, statusCode: 400, message: 'dataset id is required in path.' };
+  }
+  return {
+    ok: true,
+    context: {
+      tenantId: parsed.route.tenantId,
+      jurisdiction: parsed.route.jurisdiction,
+      sector: parsed.route.sector,
+      section: 'dcat3',
+      format: 'catalog',
+      action: 'dataset',
+      datasetId,
+    },
+  };
+}
+
+export type ParsedDcatCatalogDdoRequestRoute =
+  | { ok: true; context: DcatCatalogDdoRequestRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseDcatCatalogDdoRequestRoute(pathname: string): ParsedDcatCatalogDdoRequestRoute | null {
+  const match = DCAT_CATALOG_DDO_REQUEST_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+  const parsed = parseDcatRouteBase(match.groups as Record<string, string>);
+  if (!parsed.ok) return parsed;
+  return {
+    ok: true,
+    context: {
+      tenantId: parsed.route.tenantId,
+      jurisdiction: parsed.route.jurisdiction,
+      sector: parsed.route.sector,
+      section: 'dcat3',
+      format: 'catalog-ddo',
+      action: 'ddo-request',
+    },
+  };
+}
+
+export type ParsedDcatCatalogDdoDatasetRoute =
+  | { ok: true; context: DcatCatalogDdoDatasetRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseDcatCatalogDdoDatasetRoute(pathname: string): ParsedDcatCatalogDdoDatasetRoute | null {
+  const match = DCAT_CATALOG_DDO_DATASET_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+  const parsed = parseDcatRouteBase(match.groups as Record<string, string>);
+  if (!parsed.ok) return parsed;
+  const datasetId = match.groups.datasetId.trim();
+  if (!datasetId) {
+    return { ok: false, statusCode: 400, message: 'dataset id is required in path.' };
+  }
+  return {
+    ok: true,
+    context: {
+      tenantId: parsed.route.tenantId,
+      jurisdiction: parsed.route.jurisdiction,
+      sector: parsed.route.sector,
+      section: 'dcat3',
+      format: 'catalog-ddo',
+      action: 'ddo-dataset',
+      datasetId,
+    },
+  };
 }

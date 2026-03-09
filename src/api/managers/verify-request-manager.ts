@@ -47,7 +47,17 @@ export class VerifyRequestManager {
         try {
           const verificationResult = await this.verifier.verify(route, submission);
           const enrichedResult = await this.auditStorage.persistVerifiedPdf(route, submission, verificationResult);
-          this.jobStore.markSucceeded(submission.thid, enrichedResult);
+          const mergedNotes = [
+            ...(Array.isArray(enrichedResult.notes) ? enrichedResult.notes : []),
+            ...((submission.annexExtractionWarnings || []).filter(Boolean)),
+          ];
+          this.jobStore.markSucceeded(submission.thid, {
+            ...enrichedResult,
+            notes: mergedNotes,
+            ...(submission.annexFormFields && Object.keys(submission.annexFormFields).length
+              ? { annexFormFields: submission.annexFormFields }
+              : {}),
+          });
         } catch (error: unknown) {
           const message = (error as Error)?.message || String(error);
           const errorDetails = extractVerificationErrorDetails(error);

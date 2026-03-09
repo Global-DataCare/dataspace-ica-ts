@@ -10,6 +10,7 @@ import type {
   JsonObject,
 } from '../tools/verification-collections-storage.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
+import { DataspaceSyncService } from '../tools/dataspace-sync.ts';
 
 export type IssueCredentialSubmitOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -68,13 +69,16 @@ function collectEvidenceEntries(
 export class IssueCredentialRequestManager {
   private readonly jobStore: InMemoryEntityJobStore<IssueCredentialRouteContext, IssueCredentialResult>;
   private readonly collectionsService: VerificationCollectionsService;
+  private readonly dataspaceSyncService: DataspaceSyncService;
 
   constructor(
     jobStore: InMemoryEntityJobStore<IssueCredentialRouteContext, IssueCredentialResult>,
     collectionsService: VerificationCollectionsService = new VerificationCollectionsService(),
+    dataspaceSyncService: DataspaceSyncService = new DataspaceSyncService(),
   ) {
     this.jobStore = jobStore;
     this.collectionsService = collectionsService;
+    this.dataspaceSyncService = dataspaceSyncService;
   }
 
   async submit(route: IssueCredentialRouteContext, req: IncomingMessage): Promise<IssueCredentialSubmitOutcome> {
@@ -86,12 +90,18 @@ export class IssueCredentialRequestManager {
         this.jobStore.markRunning(submission.thid);
         try {
           const nowIso = new Date().toISOString();
+          const scope = {
+            tenantId: route.tenantId,
+            jurisdiction: route.jurisdiction.toUpperCase(),
+            sector: route.sector,
+          };
           const issuedRecords: IssuedCredentialRecord[] = [];
           const evidenceRecords: EvidenceRecord[] = [];
           const resultItems = submission.items.map((item) => {
             const issuedCredentialRecordId = `urn:uuid:${randomUUID()}`;
             const credential = { ...item.credential } as JsonObject;
             const credentialId = asNonEmptyString(credential.id) || `urn:uuid:${randomUUID()}`;
+            const issuerId = resolveIssuerId(credential);
             issuedRecords.push({
               id: issuedCredentialRecordId,
               tenantId: route.tenantId,
@@ -102,8 +112,10 @@ export class IssueCredentialRequestManager {
               credentialType: route.credentialType,
               credentialId,
               subjectId: resolveCredentialSubjectId(credential),
-              issuerId: resolveIssuerId(credential),
+              issuerId,
               credential,
+              originDataspaceDid: issuerId || undefined,
+              dataspacePublications: this.dataspaceSyncService.buildInitialPublications(issuerId || undefined, scope),
               createdAt: nowIso,
               updatedAt: nowIso,
             });
@@ -119,6 +131,8 @@ export class IssueCredentialRequestManager {
               thid: submission.thid,
               evidenceType: asNonEmptyString(evidenceEntry.type) || 'unknown',
               evidence: evidenceEntry,
+              originDataspaceDid: issuerId || undefined,
+              dataspacePublications: this.dataspaceSyncService.buildInitialPublications(issuerId || undefined, scope),
               createdAt: nowIso,
               updatedAt: nowIso,
             }));
@@ -135,6 +149,14 @@ export class IssueCredentialRequestManager {
 
           await this.collectionsService.storeIssuedCredentials(issuedRecords);
           await this.collectionsService.storeEvidenceRecords(evidenceRecords);
+          const syncedIssued = await Promise.all(
+            issuedRecords.map((record) => this.dataspaceSyncService.syncIssuedCredentialRecord(record, { event: 'issued', status: 'active' })),
+          );
+          const syncedEvidence = await Promise.all(
+            evidenceRecords.map((record) => this.dataspaceSyncService.syncEvidenceRecord(record, { event: 'added', status: 'active' })),
+          );
+          await this.collectionsService.storeIssuedCredentials(syncedIssued);
+          await this.collectionsService.storeEvidenceRecords(syncedEvidence);
           this.jobStore.markSucceeded(submission.thid, {
             storedCount: resultItems.length,
             items: resultItems,

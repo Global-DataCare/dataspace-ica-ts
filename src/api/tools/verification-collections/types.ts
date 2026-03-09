@@ -2,6 +2,18 @@ export type JsonObject = Record<string, unknown>;
 
 export type VerificationCollectionsProvider = 'mem' | 'firestore';
 
+export type DataspacePublicationStatus = 'origin' | 'pending' | 'synced' | 'failed';
+
+export type DataspacePublication = {
+  did: string;
+  status: DataspacePublicationStatus;
+  endpointUrl?: string;
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  txId?: string;
+  message?: string;
+};
+
 export type IssuedCredentialRecord = {
   id: string;
   tenantId: string;
@@ -14,6 +26,9 @@ export type IssuedCredentialRecord = {
   subjectId: string;
   issuerId: string;
   credential: JsonObject;
+  originDataspaceDid?: string;
+  dataspacePublications?: DataspacePublication[];
+  contentHashSha3_384?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -28,6 +43,9 @@ export type EvidenceRecord = {
   thid: string;
   evidenceType: string;
   evidence: JsonObject;
+  originDataspaceDid?: string;
+  dataspacePublications?: DataspacePublication[];
+  contentHashSha3_384?: string;
   createdAt: string;
   updatedAt: string;
 };

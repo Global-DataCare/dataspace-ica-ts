@@ -2,3 +2,10 @@ node_modules/
 requests/
 *.srl
 data/
+npm-debug.log
+.npmrc
+.DS_Store
+.env*
+coverage
+tmp
+*.tgz

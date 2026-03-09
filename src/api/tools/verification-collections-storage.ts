@@ -4,6 +4,7 @@ import {
   createVerificationCollectionsAdapter,
   resetVerificationCollectionsMemAdapterStateForTests,
 } from './verification-collections/adapters.ts';
+import { DataspaceSyncService } from './dataspace-sync.ts';
 import type {
   EvidenceRecord,
   IssuedCredentialRecord,
@@ -76,7 +77,7 @@ function buildCollectionName(prefix: string, leaf: string): string {
 
 export function loadVerificationCollectionsConfigFromEnv(): VerificationCollectionsConfig {
   const provider = parseProvider(process.env.ICA_COLLECTIONS_PROVIDER, 'mem');
-  const prefix = (process.env.ICA_COLLECTIONS_FIRESTORE_COLLECTION_PREFIX || 'ica').trim();
+  const prefix = (process.env.ICA_COLLECTIONS_PREFIX || 'ica').trim();
   const issuedLeaf = (process.env.ICA_COLLECTIONS_ISSUED_COLLECTION || 'issued_credentials').trim();
   const evidenceLeaf = (process.env.ICA_COLLECTIONS_EVIDENCE_COLLECTION || 'evidence_records').trim();
   return {
@@ -125,6 +126,7 @@ function extractCredentialRecords(
       subjectId,
       issuerId,
       credential: resource,
+      originDataspaceDid: issuerId || undefined,
       createdAt: nowIso,
       updatedAt: nowIso,
     });
@@ -143,6 +145,7 @@ function extractCredentialRecords(
         thid,
         evidenceType: asNonEmptyString(evidenceObject.type) || 'unknown',
         evidence: evidenceObject,
+        originDataspaceDid: issuerId || undefined,
         createdAt: nowIso,
         updatedAt: nowIso,
       });
@@ -155,10 +158,15 @@ function extractCredentialRecords(
 export class VerificationCollectionsService {
   private readonly config: VerificationCollectionsConfig;
   private readonly adapter: VerificationCollectionsAdapter;
+  private readonly dataspaceSyncService: DataspaceSyncService;
 
-  constructor(config: VerificationCollectionsConfig = loadVerificationCollectionsConfigFromEnv()) {
+  constructor(
+    config: VerificationCollectionsConfig = loadVerificationCollectionsConfigFromEnv(),
+    dataspaceSyncService: DataspaceSyncService = new DataspaceSyncService(),
+  ) {
     this.config = config;
     this.adapter = createVerificationCollectionsAdapter(config);
+    this.dataspaceSyncService = dataspaceSyncService;
   }
 
   async persistFromVerificationBundle(
@@ -171,12 +179,43 @@ export class VerificationCollectionsService {
     if (!extracted.issued.length && !extracted.evidence.length) {
       return;
     }
+    const scope = {
+      tenantId: route.tenantId,
+      jurisdiction: route.jurisdiction.toUpperCase(),
+      sector: route.sector,
+    };
+    extracted.issued = extracted.issued.map((record) => ({
+      ...record,
+      dataspacePublications: this.dataspaceSyncService.buildInitialPublications(record.originDataspaceDid, scope),
+    }));
+    extracted.evidence = extracted.evidence.map((record) => ({
+      ...record,
+      dataspacePublications: this.dataspaceSyncService.buildInitialPublications(record.originDataspaceDid, scope),
+    }));
 
     await this.persistRecords(
       extracted.issued,
       extracted.evidence,
       'Verification collections persistence failed',
     );
+
+    try {
+      const syncedIssued = await Promise.all(
+        extracted.issued.map((record) =>
+          this.dataspaceSyncService.syncIssuedCredentialRecord(record, { event: 'issued', status: 'active' })),
+      );
+      const syncedEvidence = await Promise.all(
+        extracted.evidence.map((record) =>
+          this.dataspaceSyncService.syncEvidenceRecord(record, { event: 'added', status: 'active' })),
+      );
+      await this.persistRecords(syncedIssued, syncedEvidence, 'Dataspace sync persistence failed');
+    } catch (error: unknown) {
+      const message = `Dataspace sync failed after verification persistence: ${(error as Error)?.message || String(error)}`;
+      if (this.config.required) {
+        throw new Error(message);
+      }
+      console.error(message);
+    }
   }
 
   async storeIssuedCredentials(records: IssuedCredentialRecord[]): Promise<void> {
@@ -249,6 +288,12 @@ export class VerificationCollectionsService {
 
 export function createVerificationCollectionsServiceFromEnv(): VerificationCollectionsService {
   return new VerificationCollectionsService(loadVerificationCollectionsConfigFromEnv());
+}
+
+export function createVerificationCollectionsServiceFromEnvWithSync(
+  dataspaceSyncService: DataspaceSyncService,
+): VerificationCollectionsService {
+  return new VerificationCollectionsService(loadVerificationCollectionsConfigFromEnv(), dataspaceSyncService);
 }
 
 export function resetVerificationCollectionsMemStateForTests(): void {

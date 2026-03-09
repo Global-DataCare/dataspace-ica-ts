@@ -5,6 +5,7 @@ import { buildCredentialRevokeResponseLocation } from '../path.ts';
 import type { CredentialRevokeResult, CredentialRevokeRouteContext } from '../types.ts';
 import type { JsonObject } from '../tools/verification-collections-storage.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
+import { DataspaceSyncService } from '../tools/dataspace-sync.ts';
 
 export type CredentialRevokeSubmitOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -29,13 +30,16 @@ function asNonEmptyString(value: unknown): string {
 export class CredentialRevokeRequestManager {
   private readonly jobStore: InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>;
   private readonly collectionsService: VerificationCollectionsService;
+  private readonly dataspaceSyncService: DataspaceSyncService;
 
   constructor(
     jobStore: InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>,
     collectionsService: VerificationCollectionsService = new VerificationCollectionsService(),
+    dataspaceSyncService: DataspaceSyncService = new DataspaceSyncService(),
   ) {
     this.jobStore = jobStore;
     this.collectionsService = collectionsService;
+    this.dataspaceSyncService = dataspaceSyncService;
   }
 
   async submit(route: CredentialRevokeRouteContext, req: IncomingMessage): Promise<CredentialRevokeSubmitOutcome> {
@@ -83,7 +87,11 @@ export class CredentialRevokeRequestManager {
               },
               updatedAt: nowIso,
             };
-            await this.collectionsService.upsertIssuedCredential(updatedRecord);
+            const syncedRecord = await this.dataspaceSyncService.syncIssuedCredentialRecord(updatedRecord, {
+              event: 'revoked',
+              status: 'revoked',
+            });
+            await this.collectionsService.upsertIssuedCredential(syncedRecord);
             resultItems.push({
               status: 'revoked' as const,
               revokedAt: nowIso,

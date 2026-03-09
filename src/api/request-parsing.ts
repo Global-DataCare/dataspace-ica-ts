@@ -13,6 +13,11 @@ import type {
   DelegationPolicyInput,
   DelegationPolicySubmission,
   CredentialLookupInput,
+  CredentialSearchInput,
+  CredentialSearchSubmission,
+  SpacesListSubmission,
+  SpacesReplaceSubmission,
+  SpacesTargetInput,
   CredentialRevokeInput,
   CredentialStatusSubmission,
   IssueCredentialInput,
@@ -28,6 +33,8 @@ import {
 import { assertValidDelegationPolicyResource } from './tools/odrl-delegation-policy-validation.ts';
 import { assertSchemaOrgCredential } from './tools/schemaorg-credential-validation.ts';
 import { computeControllerAuthorizationPayloadBase64Url } from './tools/controller-authorization-payload.ts';
+import { extractVerifiedVcJwtAttachmentEvidence } from './tools/vc-jwt-evidence.ts';
+import { extractTermsAnnexFormFieldsFromPdf } from './tools/terms-annex-form.ts';
 
 type ParsedThreadPayload = {
   thid?: string;
@@ -263,7 +270,14 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
-  return { thid, pdfBytes, contentType };
+  const annex = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
+  return {
+    thid,
+    pdfBytes,
+    contentType,
+    ...(Object.keys(annex.fields).length ? { annexFormFields: annex.fields } : {}),
+    ...(annex.warnings.length ? { annexExtractionWarnings: annex.warnings } : {}),
+  };
 }
 
 function parseSupportedSigningAlgorithm(raw: string): SupportedSigningAlgorithm | undefined {
@@ -448,7 +462,7 @@ export async function parseActivateSigningKeySubmission(
 
 async function parseDidcommPlainObject(
   req: IncomingMessage,
-  action: '_add' | '_issue' | '_status' | '_revoke' | '_rotate' | '_upsert',
+  action: '_add' | '_issue' | '_status' | '_revoke' | '_rotate' | '_upsert' | '_search' | '_list' | '_replace',
 ): Promise<{ parsed: ParsedObject; parsedBody: ParsedObject }> {
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
@@ -559,6 +573,7 @@ function parseAddEvidenceInput(
     evidence: { ...rawEvidence },
     ...(issuedCredentialRecordId ? { issuedCredentialRecordId } : {}),
     ...(operatorDid ? { operatorDid } : {}),
+    source: 'body',
   };
 }
 
@@ -576,32 +591,51 @@ export async function parseAddEvidenceSubmission(req: IncomingMessage): Promise<
     : Array.isArray(parsed.data)
       ? parsed.data
       : [];
-
-  const evidences = rawBatchEntries.length
+  const rawEvidence = asObject(parsedBody.evidence) || asObject(parsed.evidence);
+  const evidencesFromBody = rawBatchEntries.length
     ? rawBatchEntries.map((entry, index) => parseAddEvidenceInput(entry, fallback, `body.data[${index}]`))
-    : (() => {
-      const rawEvidence = asObject(parsedBody.evidence) || asObject(parsed.evidence);
-      if (!rawEvidence) {
-        throw new Error('Evidence payload requires body.evidence object or body.data[].resource/body.data[].evidence entries.');
-      }
-      if (asObject(rawEvidence.verified_claims)) {
-        assertValidOidc4idaVerifiedClaimsResource(rawEvidence, 'body.evidence');
-      } else {
-        assertValidOidc4idaEvidenceObject(rawEvidence, 'body.evidence');
-      }
-      const issuedCredentialRecordId =
-        asNonEmptyString(parsedBody.issuedCredentialRecordId || parsed.issuedCredentialRecordId) || undefined;
-      const operatorDid =
-        asNonEmptyString(
-          parsedBody.operatorDid || parsed.operatorDid || parsedBody.performedBy || parsed.performedBy,
-        )
-        || undefined;
-      return [{
-        evidence: { ...rawEvidence },
-        ...(issuedCredentialRecordId ? { issuedCredentialRecordId } : {}),
-        ...(operatorDid ? { operatorDid } : {}),
-      }];
-    })();
+    : rawEvidence
+      ? (() => {
+        if (asObject(rawEvidence.verified_claims)) {
+          assertValidOidc4idaVerifiedClaimsResource(rawEvidence, 'body.evidence');
+        } else {
+          assertValidOidc4idaEvidenceObject(rawEvidence, 'body.evidence');
+        }
+        const issuedCredentialRecordId =
+          asNonEmptyString(parsedBody.issuedCredentialRecordId || parsed.issuedCredentialRecordId) || undefined;
+        const operatorDid =
+          asNonEmptyString(
+            parsedBody.operatorDid || parsed.operatorDid || parsedBody.performedBy || parsed.performedBy,
+          )
+          || undefined;
+        return [{
+          evidence: { ...rawEvidence },
+          ...(issuedCredentialRecordId ? { issuedCredentialRecordId } : {}),
+          ...(operatorDid ? { operatorDid } : {}),
+          source: 'body' as const,
+        }];
+      })()
+      : [];
+
+  const fallbackIssuedCredentialRecordId =
+    asNonEmptyString(parsedBody.issuedCredentialRecordId || parsed.issuedCredentialRecordId) || undefined;
+  const fallbackOperatorDid =
+    asNonEmptyString(
+      parsedBody.operatorDid || parsed.operatorDid || parsedBody.performedBy || parsed.performedBy,
+    )
+    || undefined;
+  const rawAttachments = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+  const evidencesFromAttachments = await extractVerifiedVcJwtAttachmentEvidence(rawAttachments, {
+    issuedCredentialRecordId: fallbackIssuedCredentialRecordId,
+    operatorDid: fallbackOperatorDid,
+  });
+
+  const evidences = [...evidencesFromBody, ...evidencesFromAttachments];
+  if (!evidences.length) {
+    throw new Error(
+      'Evidence payload requires body.evidence, body.data[].resource/body.data[].evidence, or DIDComm attachments with application/vc+jwt.',
+    );
+  }
 
   return {
     thid,
@@ -832,6 +866,283 @@ export async function parseCredentialRevokeSubmission(req: IncomingMessage): Pro
   return {
     thid,
     items,
+  };
+}
+
+function parseCredentialSearchInput(
+  rawEntry: unknown,
+  fallback: ParsedObject,
+  indexLabel: string,
+): CredentialSearchInput {
+  const entry = asObject(rawEntry) || {};
+  const resource = asObject(entry.resource) || {};
+  const id = asNonEmptyString(entry.id || resource.id || fallback.id) || undefined;
+  const text = asNonEmptyString(entry.text || resource.text || fallback.text) || undefined;
+  const email = asNonEmptyString(entry.email || resource.email || fallback.email) || undefined;
+  const taxId = asNonEmptyString(entry.taxId || entry.taxID || resource.taxId || resource.taxID || fallback.taxId) || undefined;
+  const taxIdHash = asNonEmptyString(entry.taxIdHash || resource.taxIdHash || fallback.taxIdHash) || undefined;
+  const legalName = asNonEmptyString(entry.legalName || resource.legalName || fallback.legalName) || undefined;
+  const subjectId = asNonEmptyString(entry.subjectId || resource.subjectId || fallback.subjectId) || undefined;
+  const issuerId = asNonEmptyString(entry.issuerId || resource.issuerId || fallback.issuerId) || undefined;
+  const credentialId = asNonEmptyString(entry.credentialId || resource.credentialId || fallback.credentialId) || undefined;
+
+  if (!id && !text && !email && !taxId && !taxIdHash && !legalName && !subjectId && !issuerId && !credentialId) {
+    throw new Error(
+      `Credential search requires at least one filter at ${indexLabel}: id, text, email, taxId, taxIdHash, legalName, subjectId, issuerId, or credentialId.`,
+    );
+  }
+
+  return {
+    id,
+    text,
+    email,
+    taxId,
+    taxIdHash,
+    legalName,
+    subjectId,
+    issuerId,
+    credentialId,
+  };
+}
+
+function resolveSearchIdMappingHint(credentialType: string): 'taxId' | 'credentialId' | 'subjectId' | 'generic' {
+  const normalized = credentialType.trim().toLowerCase();
+  if (normalized.includes('taxid')) return 'taxId';
+  if (normalized.includes('license')) return 'credentialId';
+  if (normalized.includes('representative') || normalized.includes('delegation')) return 'subjectId';
+  return 'generic';
+}
+
+function parseSearchInputFromParams(
+  params: URLSearchParams,
+  credentialType: string,
+): CredentialSearchInput {
+  const hint = resolveSearchIdMappingHint(credentialType);
+  const id = (params.get('id') || '').trim();
+  const text = (params.get('text') || '').trim();
+  const email = (params.get('email') || '').trim();
+  const taxId = (params.get('taxId') || params.get('taxID') || '').trim();
+  const taxIdHash = (params.get('taxIdHash') || '').trim();
+  const legalName = (params.get('legalName') || params.get('name') || '').trim();
+  const subjectId = (params.get('subjectId') || '').trim();
+  const issuerId = (params.get('issuerId') || '').trim();
+  const credentialId = (params.get('credentialId') || '').trim();
+
+  const mappedTaxId = taxId || (hint === 'taxId' ? id : '');
+  const mappedCredentialId = credentialId || (hint === 'credentialId' ? id : '');
+  const mappedSubjectId = subjectId || (hint === 'subjectId' ? id : '');
+  const mappedId = hint === 'generic' ? id : '';
+
+  if (!mappedId && !text && !email && !mappedTaxId && !taxIdHash && !legalName && !mappedSubjectId && !issuerId && !mappedCredentialId) {
+    throw new Error(
+      'Credential search requires at least one filter: id, text, email, taxId, taxIdHash, legalName, subjectId, issuerId, or credentialId.',
+    );
+  }
+
+  return {
+    ...(mappedId ? { id: mappedId } : {}),
+    ...(text ? { text } : {}),
+    ...(email ? { email } : {}),
+    ...(mappedTaxId ? { taxId: mappedTaxId } : {}),
+    ...(taxIdHash ? { taxIdHash } : {}),
+    ...(legalName ? { legalName } : {}),
+    ...(mappedSubjectId ? { subjectId: mappedSubjectId } : {}),
+    ...(issuerId ? { issuerId } : {}),
+    ...(mappedCredentialId ? { credentialId: mappedCredentialId } : {}),
+  };
+}
+
+function parseRequestUrlSearchParams(req: IncomingMessage): URLSearchParams {
+  const host = normalizeHeader(req.headers.host) || 'localhost';
+  const requestUrl = new URL(req.url || '/', `http://${host}`);
+  return requestUrl.searchParams;
+}
+
+export async function parseCredentialSearchSubmission(
+  req: IncomingMessage,
+  credentialType: string,
+): Promise<CredentialSearchSubmission> {
+  const contentTypeHeader = normalizeHeader(req.headers['content-type']);
+  const contentType = normalizeContentType(contentTypeHeader);
+  const contentEncodingHeader = normalizeHeader(req.headers['content-encoding']).trim().toLowerCase();
+  if (contentEncodingHeader && contentEncodingHeader !== 'identity') {
+    throw new Error(
+      `Unsupported Content-Encoding for _search: ${contentEncodingHeader} (expected identity)`,
+    );
+  }
+
+  if (contentType === 'application/didcomm-plain+json') {
+    const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_search');
+    const fallback: ParsedObject = { ...parsed, ...parsedBody };
+    const rawBatchEntries = Array.isArray(parsedBody.data)
+      ? parsedBody.data
+      : Array.isArray(parsed.data)
+        ? parsed.data
+        : [];
+    const queries = rawBatchEntries.length
+      ? rawBatchEntries.map((entry, index) => parseCredentialSearchInput(entry, fallback, `body.data[${index}]`))
+      : [parseCredentialSearchInput(parsedBody, fallback, 'body')];
+    const thid = extractThid({
+      thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+      jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+    });
+    return {
+      thid,
+      queries,
+    };
+  }
+
+  if (contentType && contentType !== 'application/x-www-form-urlencoded' && contentType !== 'application/json') {
+    throw new Error(
+      `Unsupported Content-Type for _search: ${contentTypeHeader || '(missing)'} (expected application/x-www-form-urlencoded, application/json or application/didcomm-plain+json)`,
+    );
+  }
+
+  const urlParams = parseRequestUrlSearchParams(req);
+  const bodyBuffer = await readIncomingBuffer(req);
+  if (contentType === 'application/x-www-form-urlencoded') {
+    const bodyParams = new URLSearchParams(bodyBuffer.toString('utf8'));
+    const merged = new URLSearchParams(urlParams);
+    bodyParams.forEach((value, key) => merged.set(key, value));
+    const query = parseSearchInputFromParams(merged, credentialType);
+    const thid = extractThid({
+      thid: merged.get('thid') || undefined,
+      jti: merged.get('jti') || undefined,
+    });
+    return {
+      thid,
+      queries: [query],
+    };
+  }
+
+  if (contentType === 'application/json') {
+    let bodyJson: ParsedObject = {};
+    if (bodyBuffer.length) {
+      try {
+        const parsed = JSON.parse(bodyBuffer.toString('utf8')) as unknown;
+        bodyJson = asObject(parsed) || {};
+      } catch (error: unknown) {
+        throw new Error(`Invalid JSON body: ${(error as Error).message}`);
+      }
+    }
+    const merged = new URLSearchParams(urlParams);
+    Object.entries(bodyJson).forEach(([key, value]) => {
+      if (typeof value === 'string') merged.set(key, value);
+    });
+    const query = parseSearchInputFromParams(merged, credentialType);
+    const thid = extractThid({
+      thid: asNonEmptyString(bodyJson.thid || merged.get('thid') || ''),
+      jti: asNonEmptyString(bodyJson.jti || merged.get('jti') || ''),
+    });
+    return {
+      thid,
+      queries: [query],
+    };
+  }
+
+  const query = parseSearchInputFromParams(urlParams, credentialType);
+  const thid = extractThid({
+    thid: urlParams.get('thid') || undefined,
+    jti: urlParams.get('jti') || undefined,
+  });
+  return {
+    thid,
+    queries: [query],
+  };
+}
+
+export async function parseSpacesListSubmission(
+  req: IncomingMessage,
+): Promise<SpacesListSubmission> {
+  const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_list');
+  const thid = extractThid({
+    thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+  });
+  return { thid };
+}
+
+const SPACES_TARGET_ALLOWED_TYPES = new Set(['runtimeplatform', 'softwareapplication']);
+
+function normalizeTypeToken(raw: string): string {
+  const value = raw.trim().toLowerCase();
+  if (!value) return '';
+  if (!value.includes(':')) return value;
+  const parts = value.split(':').filter(Boolean);
+  return parts.length ? parts[parts.length - 1]! : value;
+}
+
+function validateSpacesTargetType(resource: ParsedObject, indexLabel: string): void {
+  const jsonLdType = asNonEmptyString(resource['@type']);
+  const resourceType = asNonEmptyString(resource.resourceType);
+  const legacyType = asNonEmptyString(resource.type);
+
+  if (legacyType && !jsonLdType && !resourceType) {
+    throw new Error(
+      `Spaces target ${indexLabel} uses unsupported field "type"; use "@type" or "resourceType". `
+      + `This rule applies only to spaces target entries (body.data[]), not to body.type in DIDComm/FHIR Bundle envelopes.`,
+    );
+  }
+
+  if (jsonLdType && resourceType) {
+    const left = normalizeTypeToken(jsonLdType);
+    const right = normalizeTypeToken(resourceType);
+    if (left && right && left !== right) {
+      throw new Error(`Spaces target ${indexLabel} has mismatched "@type" and "resourceType".`);
+    }
+  }
+
+  const declaredType = jsonLdType || resourceType;
+  if (!declaredType) return;
+
+  if (!SPACES_TARGET_ALLOWED_TYPES.has(normalizeTypeToken(declaredType))) {
+    throw new Error(`Spaces target ${indexLabel} must use RuntimePlatform or SoftwareApplication in "@type"/"resourceType".`);
+  }
+}
+
+function parseSpacesTarget(
+  rawEntry: unknown,
+  indexLabel: string,
+): SpacesTargetInput {
+  const entry = asObject(rawEntry) || {};
+  const resource = asObject(entry.resource) || entry;
+  validateSpacesTargetType(resource, indexLabel);
+  const did = asNonEmptyString(resource.did || resource.id || resource.identifier);
+  if (!did) {
+    throw new Error(`Spaces target requires ${indexLabel}.did.`);
+  }
+  const name = asNonEmptyString(resource.name) || undefined;
+  const endpointUrl = asNonEmptyString(resource.endpointUrl || resource.endpoint || resource.url) || undefined;
+  const apiKey = asNonEmptyString(resource.apiKey || resource.license) || undefined;
+  return {
+    ...(name ? { name } : {}),
+    did,
+    ...(endpointUrl ? { endpointUrl } : {}),
+    ...(apiKey ? { apiKey } : {}),
+  };
+}
+
+export async function parseSpacesReplaceSubmission(
+  req: IncomingMessage,
+): Promise<SpacesReplaceSubmission> {
+  const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_replace');
+  const rawBatchEntries = Array.isArray(parsedBody.data)
+    ? parsedBody.data
+    : Array.isArray(parsed.data)
+      ? parsed.data
+      : [];
+  if (!rawBatchEntries.length) {
+    throw new Error('Spaces replace payload requires body.data[] with at least one target.');
+  }
+  const targets = rawBatchEntries.map((entry, index) =>
+    parseSpacesTarget(entry, `body.data[${index}]`));
+  const thid = extractThid({
+    thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+  });
+  return {
+    thid,
+    targets,
   };
 }
 

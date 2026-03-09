@@ -149,6 +149,46 @@ function buildNonDetachedActivateProofJws(input: {
   return `${protectedEncoded}.${payloadEncoded}.${signature.toString('base64url')}`;
 }
 
+function buildCompactVcJwt(input: {
+  privateKeyPem: string;
+  kid: string;
+  issuer: string;
+  subject: string;
+  jwtId: string;
+}): string {
+  const header = {
+    alg: 'ES256K',
+    typ: 'vc+jwt',
+    kid: input.kid,
+  };
+  const payload = {
+    iss: input.issuer,
+    sub: input.subject,
+    jti: input.jwtId,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 600,
+    vc: {
+      '@context': ['https://www.w3.org/ns/credentials/v2'],
+      type: ['VerifiableCredential', 'OrganizationCredential'],
+      id: input.jwtId,
+      credentialSubject: {
+        id: input.subject,
+      },
+    },
+  };
+  const protectedEncoded = base64UrlEncodeJson(header);
+  const payloadEncoded = base64UrlEncodeJson(payload);
+  const signingInput = `${protectedEncoded}.${payloadEncoded}`;
+  const signer = createSign('sha256');
+  signer.update(signingInput);
+  signer.end();
+  const signature = signer.sign({
+    key: input.privateKeyPem,
+    dsaEncoding: 'ieee-p1363',
+  });
+  return `${protectedEncoded}.${payloadEncoded}.${signature.toString('base64url')}`;
+}
+
 const CONTROLLER_CA_TEST_PRIVATE_KEY_PEM = `-----BEGIN PRIVATE KEY-----
 MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDDe//4WRdJpBh0HUfhn
 RC3KNHZXZ3tI5iFP2tQgix+x1FuIDGb9jbAFL4y9Okx7NiGhZANiAAS67JrcZoTf
@@ -367,6 +407,11 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.equal(openApi.tags.some((tag) => tag.name === 'terms/pdf'), true);
   assert.equal(openApi.tags.some((tag) => tag.name === 'network/evidence'), true);
   assert.equal(openApi.tags.some((tag) => tag.name === 'network/policies'), true);
+  assert.equal(openApi.tags.some((tag) => tag.name === 'catalog/dcat3'), true);
+  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request']);
+  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}']);
+  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request']);
+  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/datasets/{id}']);
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate'],
   );
@@ -402,6 +447,18 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   );
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_revoke-response'],
+  );
+  assert.ok(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search'],
+  );
+  assert.ok(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search-response'],
+  );
+  assert.ok(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/spaces/_list'],
+  );
+  assert.ok(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/spaces/_replace'],
   );
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_rotate'],
@@ -446,9 +503,9 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
       ?.schema as any;
   assert.ok(addDidcommExamples?.addOfficialRegistryEvidence);
   assert.ok(addDidcommExamples?.addOfficialRegistryEvidenceBatch);
+  assert.ok(addDidcommExamples?.addPontusXVcJwtAttachment);
   assert.ok(addDidcommSchema?.properties?.body?.properties?.data);
-  assert.equal(Array.isArray(addDidcommSchema?.properties?.body?.required), true);
-  assert.equal(addDidcommSchema?.properties?.body?.required?.includes('data'), true);
+  assert.equal(Array.isArray(addDidcommSchema?.properties?.attachments?.items?.properties?.data?.anyOf), true);
   assert.ok(addDidcommExamples?.addOfficialRegistryEvidence?.value?.body?.data?.[0]?.resource?.verified_claims);
   const addResourceSchemaOneOf =
     addDidcommSchema?.properties?.body?.properties?.data?.items?.properties?.resource?.oneOf;
@@ -910,6 +967,149 @@ test('AddEvidence managers persist evidence records using mem collections adapte
   if (pollOutcome.type === 'succeeded') {
     const payloadBody = (pollOutcome.payload as any)?.body;
     assert.equal(payloadBody?.data?.[0]?.resource?.content?.length, 2);
+  }
+});
+
+test('AddEvidence managers accept Pontus-X vc+jwt DIDComm attachment evidence', async () => {
+  const parsed = parseAddEvidenceRoute('/acme/cds-ES/v1/animal-care/network/evidence/official-registry/_add');
+  assert.ok(parsed);
+  assert.equal(parsed?.ok, true);
+  if (!parsed || !parsed.ok) return;
+
+  resetVerificationCollectionsMemStateForTests();
+  const collectionsService = new VerificationCollectionsService({
+    provider: 'mem',
+    required: true,
+    firestoreCollectionPrefix: 'ica',
+    issuedCredentialsCollection: 'issued_credentials',
+    evidenceCollection: 'evidence_records',
+  });
+
+  const previousIssuersList = process.env.ICA_EVIDENCE_VC_ISSUERS_LIST;
+  const previousAllowedAlgs = process.env.ICA_EVIDENCE_VC_ALLOWED_ALGS;
+  const previousFetch = globalThis.fetch;
+
+  const es256k = generateKeyPairSync('ec', { namedCurve: 'secp256k1' });
+  const privateKeyPem = es256k.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const publicJwk = es256k.publicKey.export({ format: 'jwk' }) as Record<string, unknown>;
+  const kid = 'pontusx-deltadao-es256k-001';
+  process.env.ICA_EVIDENCE_VC_ISSUERS_LIST = JSON.stringify({
+    issuers: [
+      {
+        did: 'did:web:id.delta-dao.com',
+      },
+    ],
+  });
+  process.env.ICA_EVIDENCE_VC_ALLOWED_ALGS = 'ES256K';
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+    if (url === 'https://id.delta-dao.com/.well-known/did.json') {
+      return new Response(JSON.stringify({
+        '@context': ['https://www.w3.org/ns/did/v1'],
+        id: 'did:web:id.delta-dao.com',
+        verificationMethod: [
+          {
+            id: 'did:web:id.delta-dao.com#pontusx-deltadao-es256k-001',
+            type: 'JsonWebKey2020',
+            controller: 'did:web:id.delta-dao.com',
+            publicKeyJwk: { ...publicJwk, kid },
+          },
+        ],
+        assertionMethod: ['did:web:id.delta-dao.com#pontusx-deltadao-es256k-001'],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return previousFetch(input, init);
+  }) as typeof fetch;
+
+  const jwt = buildCompactVcJwt({
+    privateKeyPem,
+    kid,
+    issuer: 'did:web:id.delta-dao.com',
+    subject: 'did:web:member.example.org',
+    jwtId: 'urn:uuid:pontusx-vc-001',
+  });
+
+  try {
+    const store = new InMemoryEntityJobStore<AddEvidenceRouteContext, AddEvidenceResult>(60);
+    const requestManager = new AddEvidenceRequestManager(store, collectionsService);
+    const responseManager = new AddEvidenceResponseManager(store);
+
+    const payload = Buffer.from(JSON.stringify({
+      jti: 'msg-evidence-vcjwt-001',
+      thid: 'thid-evidence-vcjwt-001',
+      type: 'https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1',
+      body: {
+        issuedCredentialRecordId: 'urn:uuid:issued-existing-002',
+        operatorDid: 'did:web:ica.example.com#delegate-1',
+      },
+      attachments: [
+        {
+          id: 'pontusx-vc-attachment-001',
+          format: 'vc+jwt',
+          media_type: 'application/vc+jwt',
+          data: {
+            json: {
+              format: 'vc+jwt',
+              jwt,
+            },
+          },
+        },
+      ],
+    }));
+
+    const req = Readable.from([payload]) as unknown as IncomingMessage;
+    (req as any).method = 'POST';
+    (req as any).url = '/acme/cds-ES/v1/animal-care/network/evidence/official-registry/_add';
+    (req as any).headers = {
+      host: 'localhost:3310',
+      'content-type': 'application/didcomm-plain+json',
+      'content-length': String(payload.length),
+    };
+
+    const submitOutcome = await requestManager.submit(parsed.context, req);
+    assert.equal(submitOutcome.type, 'accepted');
+    if (submitOutcome.type !== 'accepted') return;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const pollReq = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
+    const pollUrl = new URL(
+      'http://localhost/acme/cds-ES/v1/animal-care/network/evidence/official-registry/_add-response?thid=thid-evidence-vcjwt-001',
+    );
+    const pollOutcome = await responseManager.poll(parsed.context, pollReq, pollUrl);
+    assert.equal(pollOutcome.type, 'succeeded');
+
+    const evidence = (await collectionsService.listEvidenceRecords())
+      .filter((item) => item.thid === 'thid-evidence-vcjwt-001');
+    assert.equal(evidence.length, 1);
+    const record = evidence[0]?.evidence as Record<string, any>;
+    assert.equal(record?.type, 'electronic_record');
+    assert.equal(record?.record?.type, 'vc+jwt');
+    assert.equal(record?.record?.issuer, 'did:web:id.delta-dao.com');
+    assert.equal(record?.record?.alg, 'ES256K');
+    assert.equal(record?.record?.credentialId, 'urn:uuid:pontusx-vc-001');
+    assert.equal(Array.isArray(record?.attachments), true);
+
+    if (pollOutcome.type === 'succeeded') {
+      const payloadBody = (pollOutcome.payload as any)?.body;
+      const first = payloadBody?.data?.[0]?.resource?.content?.[0];
+      assert.equal(first?.source, 'didcomm-vc+jwt');
+      assert.equal(first?.attachmentId, 'pontusx-vc-attachment-001');
+      assert.equal(first?.vcJwtIssuer, 'did:web:id.delta-dao.com');
+      assert.equal(first?.vcJwtAlg, 'ES256K');
+    }
+  } finally {
+    if (previousIssuersList === undefined) delete process.env.ICA_EVIDENCE_VC_ISSUERS_LIST;
+    else process.env.ICA_EVIDENCE_VC_ISSUERS_LIST = previousIssuersList;
+    if (previousAllowedAlgs === undefined) delete process.env.ICA_EVIDENCE_VC_ALLOWED_ALGS;
+    else process.env.ICA_EVIDENCE_VC_ALLOWED_ALGS = previousAllowedAlgs;
+    globalThis.fetch = previousFetch;
   }
 });
 

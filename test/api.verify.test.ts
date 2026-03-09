@@ -13,9 +13,14 @@ import {
   buildCredentialStatusResponseLocation,
   buildIssueCredentialResponseLocation,
   buildVerifyResponseLocation,
+  parseDcatCatalogDdoDatasetRoute,
+  parseDcatCatalogDdoRequestRoute,
+  parseDcatCatalogDatasetRoute,
+  parseDcatCatalogRequestRoute,
   parseAddEvidenceRoute,
   parseDelegationPolicyRoute,
   parseCredentialRevokeRoute,
+  parseSpacesRoute,
   parseCredentialStatusRoute,
   parseIssueCredentialRoute,
   parseVerifyRoute,
@@ -25,6 +30,7 @@ import { buildIcaVerifyOpenApiSpec } from '../src/api/openapi.ts';
 import { computePdfLogicalFingerprint, resolveTemplateResourceVersion } from '../src/api/fnmt-pdf-verifier.ts';
 import { AuditDocumentStorageService } from '../src/api/tools/audit-document-storage.ts';
 import { buildDidcommMessage } from '../src/api/tools/didcomm-message.ts';
+import { parseSpacesReplaceSubmission } from '../src/api/request-parsing.ts';
 import type {
   VerifyResult,
   VerifySubmission,
@@ -190,6 +196,128 @@ test('parseCredentialRevokeRoute accepts valid _revoke route', () => {
   assert.equal(
     buildCredentialRevokeResponseLocation(parsed.context),
     '/ica/cds-ES/v1/animal-care/network/credentials/member-onboarding/_revoke-response',
+  );
+});
+
+test('parseDcatCatalogRequestRoute accepts valid catalog request route', () => {
+  const parsed = parseDcatCatalogRequestRoute('/ica/cds-ES/v1/animal-care/dcat3/catalog/request');
+  assert.ok(parsed);
+  assert.equal(parsed?.ok, true);
+  if (!parsed || !parsed.ok) return;
+  assert.equal(parsed.context.tenantId, 'ica');
+  assert.equal(parsed.context.jurisdiction, 'ES');
+  assert.equal(parsed.context.sector, 'animal-care');
+  assert.equal(parsed.context.action, 'request');
+});
+
+test('parseDcatCatalogDatasetRoute accepts valid dataset route', () => {
+  const parsed = parseDcatCatalogDatasetRoute('/ica/cds-ES/v1/animal-care/dcat3/catalog/datasets/zQmTaxIdHash');
+  assert.ok(parsed);
+  assert.equal(parsed?.ok, true);
+  if (!parsed || !parsed.ok) return;
+  assert.equal(parsed.context.tenantId, 'ica');
+  assert.equal(parsed.context.datasetId, 'zQmTaxIdHash');
+  assert.equal(parsed.context.action, 'dataset');
+});
+
+test('parseDcatCatalogDdoRequestRoute accepts valid DDO catalog request route', () => {
+  const parsed = parseDcatCatalogDdoRequestRoute('/ica/cds-ES/v1/animal-care/dcat3/catalog/ddo/request');
+  assert.ok(parsed);
+  assert.equal(parsed?.ok, true);
+  if (!parsed || !parsed.ok) return;
+  assert.equal(parsed.context.tenantId, 'ica');
+  assert.equal(parsed.context.jurisdiction, 'ES');
+  assert.equal(parsed.context.sector, 'animal-care');
+  assert.equal(parsed.context.action, 'ddo-request');
+});
+
+test('parseDcatCatalogDdoDatasetRoute accepts valid DDO dataset route', () => {
+  const parsed = parseDcatCatalogDdoDatasetRoute('/ica/cds-ES/v1/animal-care/dcat3/catalog/ddo/datasets/zQmTaxIdHash');
+  assert.ok(parsed);
+  assert.equal(parsed?.ok, true);
+  if (!parsed || !parsed.ok) return;
+  assert.equal(parsed.context.tenantId, 'ica');
+  assert.equal(parsed.context.datasetId, 'zQmTaxIdHash');
+  assert.equal(parsed.context.action, 'ddo-dataset');
+});
+
+test('parseSpacesRoute accepts valid _list and _replace routes', () => {
+  const parsedList = parseSpacesRoute('/ica/cds-ES/v1/animal-care/network/spaces/_list');
+  assert.ok(parsedList);
+  assert.equal(parsedList?.ok, true);
+  if (!parsedList || !parsedList.ok) return;
+  assert.equal(parsedList.context.action, '_list');
+
+  const parsedReplace = parseSpacesRoute('/ica/cds-ES/v1/animal-care/network/spaces/_replace');
+  assert.ok(parsedReplace);
+  assert.equal(parsedReplace?.ok, true);
+  if (!parsedReplace || !parsedReplace.ok) return;
+  assert.equal(parsedReplace.context.action, '_replace');
+});
+
+test('parseSpacesReplaceSubmission accepts @type and resourceType for RuntimePlatform targets', async () => {
+  const payload = Buffer.from(JSON.stringify({
+    type: 'https://globaldatacare.es/didcomm/ica/network/spaces/replace-request/v1',
+    thid: 'spaces-replace-001',
+    body: {
+      data: [
+        {
+          '@type': 'RuntimePlatform',
+          identifier: 'did:web:pontusx.example.org',
+          url: 'https://adapter.example.org/metadata',
+          license: 'secret-a',
+        },
+        {
+          resourceType: 'SoftwareApplication',
+          did: 'did:web:another-space.example',
+          endpointUrl: 'https://another.example/metadata',
+          apiKey: 'secret-b',
+        },
+      ],
+    },
+  }));
+  const req = Readable.from([payload]) as unknown as IncomingMessage;
+  (req as any).method = 'POST';
+  (req as any).url = '/ica/cds-ES/v1/animal-care/network/spaces/_replace';
+  (req as any).headers = {
+    host: 'localhost:3310',
+    'content-type': 'application/didcomm-plain+json',
+    'content-length': String(payload.length),
+  };
+
+  const parsed = await parseSpacesReplaceSubmission(req);
+  assert.equal(parsed.thid, 'spaces-replace-001');
+  assert.equal(parsed.targets.length, 2);
+  assert.equal(parsed.targets[0]?.did, 'did:web:pontusx.example.org');
+  assert.equal(parsed.targets[1]?.did, 'did:web:another-space.example');
+});
+
+test('parseSpacesReplaceSubmission rejects legacy target type field', async () => {
+  const payload = Buffer.from(JSON.stringify({
+    type: 'https://globaldatacare.es/didcomm/ica/network/spaces/replace-request/v1',
+    thid: 'spaces-replace-legacy-001',
+    body: {
+      data: [
+        {
+          type: 'RuntimePlatform',
+          did: 'did:web:pontusx.example.org',
+          endpointUrl: 'https://adapter.example.org/metadata',
+        },
+      ],
+    },
+  }));
+  const req = Readable.from([payload]) as unknown as IncomingMessage;
+  (req as any).method = 'POST';
+  (req as any).url = '/ica/cds-ES/v1/animal-care/network/spaces/_replace';
+  (req as any).headers = {
+    host: 'localhost:3310',
+    'content-type': 'application/didcomm-plain+json',
+    'content-length': String(payload.length),
+  };
+
+  await assert.rejects(
+    async () => parseSpacesReplaceSubmission(req),
+    /unsupported field "type"/i,
   );
 });
 

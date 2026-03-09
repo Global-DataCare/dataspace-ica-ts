@@ -29,7 +29,7 @@ data:
   # Provider: mem|firestore
   ICA_COLLECTIONS_PROVIDER: "mem"
   ICA_COLLECTIONS_REQUIRED: "true"
-  ICA_COLLECTIONS_FIRESTORE_COLLECTION_PREFIX: "ica"
+  ICA_COLLECTIONS_PREFIX: "ica"
   ICA_COLLECTIONS_ISSUED_COLLECTION: "issued_credentials"
   ICA_COLLECTIONS_EVIDENCE_COLLECTION: "evidence_records"
   # Optional when provider=firestore

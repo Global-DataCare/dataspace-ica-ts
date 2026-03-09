@@ -14,6 +14,11 @@ spec:
       labels:
         app: dataspace-ica-api
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: api
           image: europe-southwest1-docker.pkg.dev/PROJECT_ID/REPOSITORY_ID/dataspace-ica:latest
@@ -53,8 +58,6 @@ spec:
           volumeMounts:
             - name: audit-storage
               mountPath: /app/data
-      securityContext:
-        runAsNonRoot: true
       volumes:
         - name: audit-storage
           emptyDir: {}
