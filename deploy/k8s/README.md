@@ -20,19 +20,24 @@ Build once locally, reuse that exact image for deploy (only env vars change):
 curl -sS http://localhost:3310/ | jq .
 ```
 
-Deploy the same `dataspace-ica:local` image to GKE:
+Deploy the same locally built `dataspace-ica:<package-version>` image to GKE:
 
 ```bash
 # uses .env.deploy.staging and pushes local image without rebuilding
 ./cloud_deploy.sh staging
 ```
 
+`cloud_deploy.sh` always triggers a deployment restart so updated runtime secrets/env are applied even when image tag stays the same.
+
 `cloud_deploy.sh` expects these variables inside `.env.deploy.<env>`:
 - `FIRESTORE_PROJECT_ID`
 - `DEPLOY_REGION`
 - `DEPLOY_SERVICE_NAME`
 - `ARTIFACT_REGISTRY_NAME`
-- optional: `IMAGE_TAG`, `K8S_NAMESPACE`, `K8S_CONTEXT`, `LOCAL_IMAGE`
+- optional: `IMAGE_TAG`, `K8S_NAMESPACE`, `K8S_CONTEXT`, `LOCAL_IMAGE`, `K8S_LOADBALANCER_IP`
+
+Recommended:
+- Set `IMAGE_TAG` explicitly (for example `0.4.0`) to keep deploys aligned with the package version.
 
 Important:
 - `cloud_deploy.sh` does not create the GCP project, billing link, bucket, or cluster for you.
@@ -121,6 +126,20 @@ gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --role="roles/storage.objectAdmin"
 ```
 
+Cross-project note:
+- If GKE cluster runs in project A and bucket is in project B, grant bucket IAM in project B to the runtime identity from project A.
+- For default GKE node identity:
+
+```bash
+CLUSTER_PROJECT=globaldatacare-test
+PROJECT_NUMBER=$(gcloud projects describe "$CLUSTER_PROJECT" --format='value(projectNumber)')
+NODE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+gcloud storage buckets add-iam-policy-binding "gs://globaldatacare-ica-dev" \
+  --member="serviceAccount:${NODE_SA}" \
+  --role="roles/storage.objectAdmin"
+```
+
 ### 8) Minimal IAM roles for deploy operator
 
 The account running `cloud_deploy.sh` typically needs:
@@ -178,7 +197,7 @@ Adjust location to your policy/latency needs.
 If you prefer manual commands:
 
 ```bash
-docker build -t dataspace-ica:local .
+docker build -t dataspace-ica:0.4.0 .
 kubectl apply -f deploy/k8s/configmap.yaml
 kubectl apply -f deploy/k8s/service.yaml
 kubectl apply -f deploy/k8s/deployment.yaml
@@ -200,12 +219,11 @@ curl -sS http://localhost:3310/ | jq .
 
 ## Public URL in cloud (LoadBalancer)
 
-By default, `deploy/k8s/service.yaml` uses `ClusterIP` (internal-only), so there is no public URL.
+By default, `deploy/k8s/service.yaml` uses `LoadBalancer`, so GKE allocates a public external IP.
 
-To expose it with a public IP:
+To check assigned public IP:
 
 ```bash
-kubectl -n dataspace-ica patch svc dataspace-ica-api -p '{"spec":{"type":"LoadBalancer"}}'
 kubectl -n dataspace-ica get svc dataspace-ica-api -w
 ```
 
@@ -222,6 +240,95 @@ For stable production hostname/TLS, use Ingress + DNS and set:
 - `ICA_EXTERNAL_DOMAIN`
 - optional `ICA_OPENAPI_SERVER_URL`
 - optional DID service endpoint overrides (`ICA_DID_SERVICE_ENDPOINT`, `ICA_DCAT_SERVICE_ENDPOINT`, `ICA_DSP_DATA_SERVICE_ENDPOINT`, `ICA_DCP_ISSUER_SERVICE_ENDPOINT`)
+
+### Post-deploy quick checks
+
+Use this checklist after every deploy:
+
+```bash
+NAMESPACE=dataspace-ica
+
+# Runtime status
+kubectl -n "$NAMESPACE" get pods -o wide
+kubectl -n "$NAMESPACE" get svc dataspace-ica-api -o wide
+
+# Public IP (empty when still pending)
+EXTERNAL_IP="$(kubectl -n "$NAMESPACE" get svc dataspace-ica-api -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+echo "$EXTERNAL_IP"
+
+# Deployed image in the running Deployment
+kubectl -n "$NAMESPACE" get deployment dataspace-ica-api -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+
+# API and discovery checks
+curl -sS "http://$EXTERNAL_IP/" | jq .
+curl -sS "http://$EXTERNAL_IP/openapi.json" | jq '.info.version, .servers'
+curl -sS "http://$EXTERNAL_IP/.well-known/did.json" | jq '.id'
+```
+
+### Check deployed version (quick command)
+
+```bash
+NAMESPACE=dataspace-ica
+DEPLOYMENT=dataspace-ica-api
+SERVICE=dataspace-ica-api
+
+echo "Image in deployment:"
+kubectl -n "$NAMESPACE" get deployment "$DEPLOYMENT" \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+
+EXTERNAL_IP="$(kubectl -n "$NAMESPACE" get svc "$SERVICE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+echo "Public IP: $EXTERNAL_IP"
+curl -sS "http://$EXTERNAL_IP/openapi.json" | jq '.info.version,.servers'
+```
+
+Notes:
+- `CLUSTER-IP` (service internal IP) is not public.
+- `EXTERNAL-IP` is the public service entrypoint.
+- Pod IPs (`10.x.x.x`) are private and can change on restarts.
+
+### Static public IP (recommended)
+
+Reserve a regional static IP in the same region as your GKE service:
+
+```bash
+PROJECT_ID=globaldatacare-ica-dev
+REGION=europe-southwest1
+IP_NAME=dataspace-ica-lb-ip
+
+gcloud compute addresses create "$IP_NAME" \
+  --region "$REGION" \
+  --project "$PROJECT_ID"
+
+gcloud compute addresses describe "$IP_NAME" \
+  --region "$REGION" \
+  --project "$PROJECT_ID" \
+  --format='value(address)'
+```
+
+Set that value in `.env.deploy.<env>`:
+
+```env
+K8S_LOADBALANCER_IP=<RESERVED_IP>
+```
+
+Then deploy:
+
+```bash
+./cloud_deploy.sh staging
+```
+
+The deploy script patches `Service.spec.loadBalancerIP` automatically when `K8S_LOADBALANCER_IP` is set.
+
+Important:
+- The static IP must belong to the **cluster project** (the project of your current `kubectl` GKE context), not necessarily the image/artifact project.
+- The static IP must be in the same region as the LoadBalancer service.
+- If `EXTERNAL-IP` stays `<pending>`, run:
+
+```bash
+kubectl -n dataspace-ica describe svc dataspace-ica-api
+```
+
+Check events for messages like "requested IP is not reserved" or project/region mismatch.
 
 ## Optional: deploy same image to Cloud Run (`*.run.app`)
 
@@ -252,6 +359,50 @@ Notes:
 - For DID/OpenAPI host consistency, set `ICA_EXTERNAL_DOMAIN` (or `ICA_OPENAPI_SERVER_URL`) to your final domain.
 
 ## Troubleshooting
+
+### Warning: active project does not match ADC quota project
+
+Symptom during deploy:
+- `WARNING: Your active project does not match the quota project in your local Application Default Credentials file.`
+
+Fix:
+
+```bash
+PROJECT_ID=globaldatacare-ica-dev
+gcloud config set project "$PROJECT_ID"
+gcloud auth application-default set-quota-project "$PROJECT_ID"
+```
+
+### Error: `GOOGLE_APPLICATION_CREDENTIALS` file does not exist in pod
+
+Symptom in API response/logs:
+- `The file at ./gcp-service-account.json does not exist ... /app/gcp-service-account.json`
+
+Cause:
+- `GOOGLE_APPLICATION_CREDENTIALS` was set from local env file into Kubernetes runtime secret.
+- In GKE, that local file path is not present inside the container unless explicitly mounted.
+
+Fix (recommended for GKE):
+- Remove/comment `GOOGLE_APPLICATION_CREDENTIALS` from `.env.deploy.<env>`.
+- Redeploy so pod uses workload/node identity ADC instead of local file path.
+
+```bash
+./cloud_deploy.sh staging --yes
+kubectl -n dataspace-ica rollout status deployment/dataspace-ica-api --timeout=300s
+```
+
+If you still get permission errors after removing it, grant IAM to the runtime identity used by the cluster (typically default compute SA) on the target project/resources:
+- Firestore: `roles/datastore.user` (project with Firestore DB)
+- GCS bucket (audit): `roles/storage.objectAdmin` on `gs://<bucket>`
+
+### Warning: Docker config contains credHelpers entry
+
+Symptom:
+- `Your config file .../.docker/config.json contains credential helper entries ...`
+
+Meaning:
+- Informational. `gcloud auth configure-docker` is registering/confirming the Artifact Registry credential helper.
+- This is expected and not a deploy error.
 
 ### ImagePullBackOff (403 Forbidden) pulling from Artifact Registry in another project
 

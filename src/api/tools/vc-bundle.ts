@@ -15,9 +15,7 @@ import type {
   VerifyResult,
   VerifyRouteContext,
 } from '../types.ts';
-import { listActiveSigningKeys } from './active-signing-keys.ts';
 import { attachProofToCredential, resolveIcaIssuerDid } from './ica-identity.ts';
-import { resolveControllerMemberDescriptor } from './controller-identity.ts';
 
 function normalizeDnKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, '');
@@ -59,69 +57,37 @@ function parseOrganizationTaxId(subjectDn: Record<string, string>): string | und
   return firstDefined(subjectDn.ORGANIZATIONIDENTIFIER, subjectDn['OID.2.5.4.97']);
 }
 
-type ControllerBootstrapMetadata = {
-  kid?: string;
-  email?: string;
-  alg?: string;
-  did?: string;
-  role?: string;
-  idHash?: string;
-  publicKeyJwk?: Record<string, unknown>;
-};
-
 const ANNEX_ORGANIZATION_ADDITIONAL_TYPE = 'organization.additionalType';
-const ANNEX_ORGANIZATION_DID = 'organization.did';
 const ANNEX_ORGANIZATION_SAME_AS = 'organization.sameAs';
+const ANNEX_ORGANIZATION_URL = 'organization.url';
 const ANNEX_ORGANIZATION_ALTERNATE_NAME = 'organization.alternateName';
 const ANNEX_ORGANIZATION_REGISTRATION_NUMBER = 'organization.registrationNumber';
-const ANNEX_LEGAL_REPRESENTATIVE_EMAIL = 'legalRepresentative.email';
-const ANNEX_CONTROLLER_EMAIL = 'controller.email';
-const ANNEX_CONTROLLER_KID = 'controller.kid';
-const ANNEX_CONTROLLER_ALG = 'controller.alg';
-const ANNEX_CONTROLLER_PUBLIC_KEY_JWK = 'controller.publicKeyJwk';
+const ANNEX_ORGANIZATION_EMAIL = 'organization.email';
+const ANNEX_PERSON_EMAIL = 'person.email';
+const ANNEX_PERSON_ALTERNATE_NAME = 'person.alternateName';
+const ANNEX_PERSON_ADDITIONAL_TYPE = 'person.additionalType';
 
 function getAnnexField(result: VerifyResult, name: string): string | undefined {
-  const value = result.annexFormFields?.[name];
+  const directValue = result.annexFormFields?.[name];
+  const value = directValue !== undefined
+    ? directValue
+    : Object.entries(result.annexFormFields || {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || undefined;
 }
 
 function getAnnexOrganizationDid(result: VerifyResult): string | undefined {
-  const sameAs = getAnnexField(result, ANNEX_ORGANIZATION_SAME_AS);
-  const did = getAnnexField(result, ANNEX_ORGANIZATION_DID);
-  const candidate = firstDefined(sameAs, did);
+  const candidate = getAnnexField(result, ANNEX_ORGANIZATION_SAME_AS);
   if (!candidate) return undefined;
   return candidate.startsWith('did:web:') ? candidate : undefined;
 }
 
-function parseAnnexPublicKeyJwk(result: VerifyResult): Record<string, unknown> | undefined {
-  const raw = getAnnexField(result, ANNEX_CONTROLLER_PUBLIC_KEY_JWK);
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveControllerBootstrapMetadata():
-  | ControllerBootstrapMetadata
-  | undefined {
-  const kid = (process.env.ICA_SELF_CONTROLLER_KID || '').trim();
-  const email = (process.env.ICA_SELF_CONTROLLER_EMAIL || '').trim();
-  if (!kid && !email) return undefined;
-
-  const activatedEntry = kid
-    ? listActiveSigningKeys().find((entry) => entry.kid === kid)
-    : undefined;
-
-  return {
-    ...(kid ? { kid } : {}),
-    ...(email ? { email } : {}),
-    ...(activatedEntry?.alg ? { alg: activatedEntry.alg } : {}),
-  };
+function normalizeOrganizationUrl(value: string | undefined): string | undefined {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return undefined;
+  return trimmed
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/g, '');
 }
 
 function determineAssuranceLevel(result: VerifyResult): 'low' | 'medium' | 'high' {
@@ -238,7 +204,6 @@ function buildOidc4IdaEvidence(
   result: VerifyResult,
   serialNumber: string,
   verifierOrganization: string,
-  controllerBootstrap?: ControllerBootstrapMetadata | undefined,
 ): EvidenceObjectDLT[] {
   const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
   const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
@@ -334,10 +299,6 @@ function buildOidc4IdaEvidence(
       },
     },
   };
-  if (controllerBootstrap) {
-    const details = documentEvidence.document_details as unknown as Record<string, unknown>;
-    details.controller = controllerBootstrap;
-  }
   if (result.annexFormFields && Object.keys(result.annexFormFields).length) {
     const details = documentEvidence.document_details as unknown as Record<string, unknown>;
     details.annexFormFields = result.annexFormFields;
@@ -349,32 +310,21 @@ function buildOidc4IdaEvidence(
   ];
 }
 
-export function buildVerificationVcBundle(route: VerifyRouteContext, result: VerifyResult): VerifyBundleResponse {
+export function buildVerificationVcBundle(
+  route: VerifyRouteContext,
+  result: VerifyResult,
+  issuerDidInput?: string,
+): VerifyBundleResponse {
   const subjectDn = parseDistinguishedName(result.signerSubject);
-  const issuerDid = resolveIcaIssuerDid();
-  const controllerBootstrap = resolveControllerBootstrapMetadata() || {};
-  const annexControllerEmail = getAnnexField(result, ANNEX_CONTROLLER_EMAIL);
-  const annexControllerKid = getAnnexField(result, ANNEX_CONTROLLER_KID);
-  const annexControllerAlg = getAnnexField(result, ANNEX_CONTROLLER_ALG);
-  const annexControllerPublicKeyJwk = parseAnnexPublicKeyJwk(result);
-  if (annexControllerEmail) controllerBootstrap.email = annexControllerEmail;
-  if (annexControllerKid) controllerBootstrap.kid = annexControllerKid;
-  if (annexControllerAlg) controllerBootstrap.alg = annexControllerAlg;
-  if (annexControllerPublicKeyJwk) controllerBootstrap.publicKeyJwk = annexControllerPublicKeyJwk;
-
-  const controllerMemberDescriptor = resolveControllerMemberDescriptor(issuerDid);
-  if (controllerMemberDescriptor) {
-    controllerBootstrap.did = controllerMemberDescriptor.did;
-    controllerBootstrap.role = controllerMemberDescriptor.role;
-    controllerBootstrap.idHash = controllerMemberDescriptor.idHash;
-  }
-  const hasControllerBootstrap = Object.keys(controllerBootstrap).length > 0;
+  const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
 
   const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU);
   const organizationDid = getAnnexOrganizationDid(result);
   const organizationAdditionalType = getAnnexField(result, ANNEX_ORGANIZATION_ADDITIONAL_TYPE);
   const organizationAlternateName = getAnnexField(result, ANNEX_ORGANIZATION_ALTERNATE_NAME);
   const organizationRegistrationNumber = getAnnexField(result, ANNEX_ORGANIZATION_REGISTRATION_NUMBER);
+  const organizationUrl = normalizeOrganizationUrl(getAnnexField(result, ANNEX_ORGANIZATION_URL));
+  const organizationEmail = getAnnexField(result, ANNEX_ORGANIZATION_EMAIL);
   const organizationTaxId = parseOrganizationTaxId(subjectDn);
   const representativeName =
     [subjectDn.GN || subjectDn.GIVENNAME, subjectDn.SN || subjectDn.SURNAME]
@@ -384,12 +334,13 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
     || 'Representative from certificate';
   const personIdentifier = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']);
   const personEmail = firstDefined(
-    getAnnexField(result, ANNEX_LEGAL_REPRESENTATIVE_EMAIL),
+    getAnnexField(result, ANNEX_PERSON_EMAIL),
     subjectDn.EMAILADDRESS,
     subjectDn.EMAIL,
     subjectDn.E,
-    controllerBootstrap.email,
   );
+  const personAlternateName = getAnnexField(result, ANNEX_PERSON_ALTERNATE_NAME);
+  const personAdditionalType = getAnnexField(result, ANNEX_PERSON_ADDITIONAL_TYPE);
   const country = subjectDn.C || subjectDn.COUNTRYNAME || undefined;
   const serialNumber =
     result.signerCertificateSerialNumber
@@ -401,7 +352,6 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
     result,
     serialNumber,
     verifierOrganization,
-    controllerBootstrap,
   );
 
   const organizationSubject: Record<string, unknown> = {
@@ -431,8 +381,11 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
   if (organizationRegistrationNumber) {
     organizationSubject.registrationNumber = organizationRegistrationNumber;
   }
-  if (hasControllerBootstrap) {
-    organizationSubject.controller = controllerBootstrap;
+  if (organizationEmail) {
+    organizationSubject.email = organizationEmail;
+  }
+  if (organizationUrl) {
+    organizationSubject.url = organizationUrl;
   }
 
   const unsignedOrganizationVc: VerifiableCredentialV2 = {
@@ -453,22 +406,6 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
   }
   if (organizationTaxId) {
     organizationRef.taxID = organizationTaxId;
-  }
-  if (organizationAdditionalType) {
-    organizationRef.additionalType = organizationAdditionalType;
-  }
-  if (organizationDid) {
-    organizationRef.id = organizationDid;
-    organizationRef.sameAs = organizationDid;
-  }
-  if (organizationAlternateName) {
-    organizationRef.alternateName = organizationAlternateName;
-  }
-  if (organizationRegistrationNumber) {
-    organizationRef.registrationNumber = organizationRegistrationNumber;
-  }
-  if (hasControllerBootstrap) {
-    organizationRef.controller = controllerBootstrap;
   }
 
   const personSubject: Record<string, unknown> = {
@@ -499,6 +436,12 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
   if (personEmail) {
     personSubject.email = personEmail;
   }
+  if (personAlternateName) {
+    personSubject.alternateName = personAlternateName;
+  }
+  if (personAdditionalType) {
+    personSubject.additionalType = personAdditionalType;
+  }
 
   const unsignedPersonVc: VerifiableCredentialV2 = {
     id: `urn:uuid:${randomUUID()}`,
@@ -510,8 +453,8 @@ export function buildVerificationVcBundle(route: VerifyRouteContext, result: Ver
     evidence,
   };
 
-  const organizationVc = attachProofToCredential(unsignedOrganizationVc, route);
-  const personVc = attachProofToCredential(unsignedPersonVc, route);
+  const organizationVc = attachProofToCredential(unsignedOrganizationVc, route, issuerDid);
+  const personVc = attachProofToCredential(unsignedPersonVc, route, issuerDid);
 
   const entryOutcome = buildOperationOutcome(
     result.ok ? 'information' : 'warning',

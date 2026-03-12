@@ -1363,17 +1363,18 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
           '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
           type: ['VerifiableCredential', 'OrganizationCredential'],
           issuer: 'did:web:localhost%3A3310',
-          validFrom: '2026-03-06T12:00:00.000Z',
+          validFrom: '2026-03-12T21:12:26.646Z',
           credentialSubject: {
-            id: 'urn:organization:taxid:VATES-A12345678',
+            id: 'urn:organization:taxid:VATES-B00000000',
             '@type': 'Organization',
-            legalName: 'Acme Health SL',
-            taxID: 'VATES-A12345678',
-            controller: {
-              kid: 'ica-controller-20260305',
-              email: 'it-director@example.org',
-              alg: 'ES384',
-            },
+            legalName: 'Example Data Provider SL',
+            taxID: 'VATES-B00000000',
+            sameAs: 'did:web:provider.example.org',
+            url: 'provider.example.org',
+            alternateName: 'example-provider',
+            additionalType:
+              'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
+            email: 'zOrgContactHash',
             address: {
               '@type': 'PostalAddress',
               addressCountry: 'ES',
@@ -1383,20 +1384,21 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
             {
               type: 'electronic_signature',
               signature_type: 'pades',
-              issuer: '/C=ES/O=FNMT-RCM/OU=AC REPRESENTACION',
-              serial_number: '1234567890',
-              created_at: '2026-03-06T12:00:00.000Z',
+              issuer: 'C=ES\nO=FNMT-RCM\nOU=CERES\nCN=AC Representación',
+              serial_number: '20A438B97CF06452688B9E2C7967662A',
+              created_at: '2026-03-12T21:12:26.646Z',
               attachments: [
                 {
                   content_type: 'application/json',
-                  content: 'eyJ2ZXJpZmljYXRpb25SZXN1bHQiOiJ2YWxpZCJ9',
+                  content:
+                    'data:application/json;base64,eyJwcm9maWxlIjoib2lkYzRpZGEtZXZpZGVuY2UtdjEiLCJ2ZXJpZmljYXRpb25SZXN1bHQiOiJ2YWxpZCIsIi4uLiI6InRydW5jYXRlZCJ9',
                 },
               ],
             },
             {
               type: 'document',
               method: 'eid',
-              time: '2026-03-06T12:00:00.000Z',
+              time: '2026-03-12T21:12:26.646Z',
               verifier: {
                 organization: 'did:web:localhost%3A3310',
               },
@@ -1404,30 +1406,25 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
                 {
                   check_method: 'vdig',
                   organization: 'did:web:localhost%3A3310',
-                  time: '2026-03-06T12:00:00.000Z',
+                  time: '2026-03-12T21:12:26.646Z',
                 },
                 {
                   check_method: 'vcrypt',
                   organization: 'did:web:localhost%3A3310',
-                  time: '2026-03-06T12:00:00.000Z',
+                  time: '2026-03-12T21:12:26.646Z',
                 },
               ],
               attachments: {
                 digest: {
                   alg: 'sha3-384',
-                  value: 'q80=',
+                  value: 'aafUF1Ne7Zrmg/y1f6jprx4f/n0OiOo9i4j5AXXN4ZotOFsahUHYdr+nZOnESHqH',
                 },
                 url: 'urn:uuid:audit-object-001',
               },
               document_details: {
                 type: 'terms-and-conditions',
-                document_number: '202603051133',
-                serial_number: '1234567890',
-                controller: {
-                  kid: 'ica-controller-20260305',
-                  email: 'it-director@example.org',
-                  alg: 'ES384',
-                },
+                document_number: 'contract',
+                serial_number: '20A438B97CF06452688B9E2C7967662A',
                 issuer: {
                   id: 'did:web:localhost%3A3310',
                   type: 'TrustServiceProvider',
@@ -1437,6 +1434,13 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
               },
             },
           ],
+          proof: {
+            type: 'JsonWebSignature2020',
+            created: '2026-03-12T21:12:57.534Z',
+            proofPurpose: 'assertionMethod',
+            verificationMethod: 'did:web:localhost%3A3310#verification-key-001',
+            jws: '<detached-jws-organization-truncated>',
+          },
         },
       },
       {
@@ -1459,39 +1463,48 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
           '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
           type: ['VerifiableCredential', 'PersonCredential', 'LegalRepresentativeCredential'],
           issuer: 'did:web:localhost%3A3310',
-          validFrom: '2026-03-06T12:00:00.000Z',
+          validFrom: '2026-03-12T21:12:26.646Z',
           credentialSubject: {
-            id: 'urn:person:certificate:99999999R',
+            id: 'urn:person:identifier:IDCES-99999999R',
             '@type': 'Person',
-            name: 'Juan Perez',
-            roleName: 'legal-representative',
+            name: 'Alex Example',
+            hasOccupation: {
+              '@type': 'Occupation',
+              name: 'LegalRepresentative',
+              identifier: 'urn:ilo:ilostat:isco-08:1120',
+            },
             memberOf: {
               '@type': 'Organization',
-              legalName: 'Acme Health SL',
-              taxID: 'VATES-A12345678',
+              legalName: 'Example Data Provider SL',
+              taxID: 'VATES-B00000000',
             },
-            identifier: '99999999R',
+            givenName: 'Alex',
+            familyName: 'Example',
+            identifier: 'IDCES-99999999R',
             nationality: 'ES',
-            email: 'it-director@example.org',
+            email: 'zControllerHash',
+            alternateName: 'controller-es384-001',
+            additionalType: 'ES384',
           },
           evidence: [
             {
               type: 'electronic_signature',
               signature_type: 'pades',
-              issuer: '/C=ES/O=FNMT-RCM/OU=AC REPRESENTACION',
-              serial_number: '1234567890',
-              created_at: '2026-03-06T12:00:00.000Z',
+              issuer: 'C=ES\nO=FNMT-RCM\nOU=CERES\nCN=AC Representación',
+              serial_number: '20A438B97CF06452688B9E2C7967662A',
+              created_at: '2026-03-12T21:12:26.646Z',
               attachments: [
                 {
                   content_type: 'application/json',
-                  content: 'eyJ2ZXJpZmljYXRpb25SZXN1bHQiOiJ2YWxpZCJ9',
+                  content:
+                    'data:application/json;base64,eyJwcm9maWxlIjoib2lkYzRpZGEtZXZpZGVuY2UtdjEiLCJ2ZXJpZmljYXRpb25SZXN1bHQiOiJ2YWxpZCIsIi4uLiI6InRydW5jYXRlZCJ9',
                 },
               ],
             },
             {
               type: 'document',
               method: 'eid',
-              time: '2026-03-06T12:00:00.000Z',
+              time: '2026-03-12T21:12:26.646Z',
               verifier: {
                 organization: 'did:web:localhost%3A3310',
               },
@@ -1499,30 +1512,25 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
                 {
                   check_method: 'vdig',
                   organization: 'did:web:localhost%3A3310',
-                  time: '2026-03-06T12:00:00.000Z',
+                  time: '2026-03-12T21:12:26.646Z',
                 },
                 {
                   check_method: 'vcrypt',
                   organization: 'did:web:localhost%3A3310',
-                  time: '2026-03-06T12:00:00.000Z',
+                  time: '2026-03-12T21:12:26.646Z',
                 },
               ],
               attachments: {
                 digest: {
                   alg: 'sha3-384',
-                  value: 'q80=',
+                  value: 'aafUF1Ne7Zrmg/y1f6jprx4f/n0OiOo9i4j5AXXN4ZotOFsahUHYdr+nZOnESHqH',
                 },
                 url: 'urn:uuid:audit-object-001',
               },
               document_details: {
                 type: 'terms-and-conditions',
-                document_number: '202603051133',
-                serial_number: '1234567890',
-                controller: {
-                  kid: 'ica-controller-20260305',
-                  email: 'it-director@example.org',
-                  alg: 'ES384',
-                },
+                document_number: 'contract',
+                serial_number: '20A438B97CF06452688B9E2C7967662A',
                 issuer: {
                   id: 'did:web:localhost%3A3310',
                   type: 'TrustServiceProvider',
@@ -1532,6 +1540,13 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
               },
             },
           ],
+          proof: {
+            type: 'JsonWebSignature2020',
+            created: '2026-03-12T21:12:57.535Z',
+            proofPurpose: 'assertionMethod',
+            verificationMethod: 'did:web:localhost%3A3310#verification-key-001',
+            jws: '<detached-jws-person-truncated>',
+          },
         },
       },
     ],
@@ -3529,9 +3544,9 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'resourceType',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:\\d{12}|test-\\d{12})$', example: '202630011200' },
+              schema: { type: 'string', pattern: '^(?:contract|\\d{12}|test-\\d{12})$', example: 'contract' },
               description:
-                'Document version token. Production: yyyyddmmhhmm. Testing: test-yyyyddmmhhmm (requires ICA_ENABLE_TEST_TERMS_PREFIX=true).',
+                'Use "contract" to skip template/content validation. Otherwise use a document version token: production yyyyddmmhhmm or testing test-yyyyddmmhhmm (requires ICA_ENABLE_TEST_TERMS_PREFIX=true).',
             },
           ],
           requestBody: {
@@ -4467,9 +4482,9 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'resourceType',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:\\d{12}|test-\\d{12})$', example: '202630011200' },
+              schema: { type: 'string', pattern: '^(?:contract|\\d{12}|test-\\d{12})$', example: 'contract' },
               description:
-                'Document version token. Production: yyyyddmmhhmm. Testing: test-yyyyddmmhhmm (requires ICA_ENABLE_TEST_TERMS_PREFIX=true).',
+                'Use "contract" to skip template/content validation. Otherwise use a document version token: production yyyyddmmhhmm or testing test-yyyyddmmhhmm (requires ICA_ENABLE_TEST_TERMS_PREFIX=true).',
             },
             {
               name: 'thid',

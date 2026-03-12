@@ -13,12 +13,13 @@ function isVerifiableCredential(value: unknown): value is VerifiableCredentialV2
 export function buildVcJwtAttachments(
   route: VerifyRouteContext,
   body: VerifyBundleResponse,
+  issuerDidInput?: string,
 ): DidcommAttachment[] {
   const attachments: DidcommAttachment[] = [];
 
   body.data.forEach((entry, index) => {
     if (!isVerifiableCredential(entry.resource)) return;
-    const vcJwt = convertCredentialToVcJwt(entry.resource, route);
+    const vcJwt = convertCredentialToVcJwt(entry.resource, route, issuerDidInput);
     attachments.push({
       id: randomUUID(),
       format: 'vc+jwt',

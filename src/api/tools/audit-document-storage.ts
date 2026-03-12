@@ -34,11 +34,14 @@ interface AuditStorageAdapter {
 
 function parseAuditStorageMode(value: string | undefined, fallback: AuditStorageMode): AuditStorageMode {
   const normalized = (value || fallback).trim().toLowerCase();
+  if (normalized === 'mem') {
+    return 'none';
+  }
   if (normalized === 'none' || normalized === 'filesystem' || normalized === 'gcs') {
     return normalized;
   }
   throw new Error(
-    `Unsupported ICA_AUDIT_STORAGE_PROVIDER="${normalized}". Use "none", "filesystem" or "gcs".`,
+    `Unsupported STORAGE_PROVIDER="${normalized}". Use "mem", "filesystem" or "gcs".`,
   );
 }
 
@@ -177,7 +180,7 @@ function createAuditStorageAdapter(config: AuditDocumentStorageConfig): AuditSto
       return new FileSystemAuditStorageAdapter(config.filesystemDirectory);
     case 'gcs':
       if (!config.gcsBucketName) {
-        throw new Error('ICA_AUDIT_STORAGE_PROVIDER=gcs requires ICA_AUDIT_STORAGE_GCS_BUCKET.');
+        throw new Error('STORAGE_PROVIDER=gcs requires GCS_BUCKET_NAME.');
       }
       return new GcsAuditStorageAdapter(config.gcsBucketName);
     case 'none':
@@ -187,7 +190,7 @@ function createAuditStorageAdapter(config: AuditDocumentStorageConfig): AuditSto
 }
 
 export function loadAuditDocumentStorageConfigFromEnv(): AuditDocumentStorageConfig {
-  const mode = parseAuditStorageMode(process.env.ICA_AUDIT_STORAGE_PROVIDER, 'none');
+  const mode = parseAuditStorageMode(process.env.STORAGE_PROVIDER, 'none');
   const requiredByDefault = mode !== 'none';
   const required = parseBoolean(process.env.ICA_AUDIT_STORAGE_REQUIRED, requiredByDefault);
 
@@ -196,7 +199,7 @@ export function loadAuditDocumentStorageConfigFromEnv(): AuditDocumentStorageCon
     required,
     attachmentUrlPattern: (process.env.ICA_AUDIT_ATTACHMENT_URL_PATTERN || 'urn:uuid:{objectId}').trim(),
     filesystemDirectory: path.resolve(process.env.ICA_AUDIT_STORAGE_FS_DIR || path.join('data', 'audit-pdf')),
-    gcsBucketName: (process.env.ICA_AUDIT_STORAGE_GCS_BUCKET || '').trim() || undefined,
+    gcsBucketName: (process.env.GCS_BUCKET_NAME || '').trim() || undefined,
     gcsObjectPrefix: (process.env.ICA_AUDIT_STORAGE_GCS_PREFIX || 'ica-audit').trim(),
   };
 }

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import type { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
@@ -27,7 +29,13 @@ import {
 } from '../src/api/path.ts';
 import { VerifyRequestManager } from '../src/api/managers/verify-request-manager.ts';
 import { buildIcaVerifyOpenApiSpec } from '../src/api/openapi.ts';
-import { computePdfLogicalFingerprint, resolveTemplateResourceVersion } from '../src/api/fnmt-pdf-verifier.ts';
+import {
+  computePdfLogicalFingerprint,
+  FnmtPdfVerificationService,
+  parseVatIdFromSubjectDn,
+  resolveTemplateResourceVersion,
+  selectPrimaryCredentialSignature,
+} from '../src/api/fnmt-pdf-verifier.ts';
 import { AuditDocumentStorageService } from '../src/api/tools/audit-document-storage.ts';
 import { buildDidcommMessage } from '../src/api/tools/didcomm-message.ts';
 import { parseSpacesReplaceSubmission } from '../src/api/request-parsing.ts';
@@ -93,6 +101,66 @@ function buildMinimalPdf(contentStream: string, pageExtra = '', extraObjects = '
   );
 }
 
+const REAL_MULTISIGN_PDF_PATH = '/Users/fernando/GITS/gdc-workspace/TEST-A4-multisign-fnmt.pdf';
+
+function splitPemCertificates(rawPem: string): string[] {
+  return rawPem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
+}
+
+function extractSignerVatIdsFromRealPdf(pdfPath: string): string[] {
+  const pdfBytes = readFileSync(pdfPath);
+  const pdfAsLatin1 = pdfBytes.toString('latin1');
+  const byteRangeRegex = /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g;
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'ica-multisign-test-'));
+  const vatIds: string[] = [];
+
+  try {
+    let match: RegExpExecArray | null;
+    let signatureIndex = 0;
+    while ((match = byteRangeRegex.exec(pdfAsLatin1))) {
+      const start1 = Number.parseInt(match[1], 10);
+      const length1 = Number.parseInt(match[2], 10);
+      const start2 = Number.parseInt(match[3], 10);
+      const length2 = Number.parseInt(match[4], 10);
+      const signatureWindow = pdfBytes.subarray(start1 + length1, start2);
+      const lt = signatureWindow.indexOf(0x3c);
+      const gt = signatureWindow.lastIndexOf(0x3e);
+      let hex = signatureWindow.subarray(lt + 1, gt).toString('latin1').replace(/[^0-9a-fA-F]/g, '');
+      while (hex.endsWith('00')) {
+        hex = hex.slice(0, -2);
+      }
+
+      const signatureDerPath = path.join(tempDir, `signature-${signatureIndex}.der`);
+      const certsPath = path.join(tempDir, `signature-${signatureIndex}.pem`);
+      writeFileSync(signatureDerPath, Buffer.from(hex, 'hex'));
+      execFileSync('openssl', ['pkcs7', '-inform', 'DER', '-in', signatureDerPath, '-print_certs', '-out', certsPath]);
+
+      const certs = splitPemCertificates(readFileSync(certsPath, 'utf8'));
+      let signerVatId: string | undefined;
+      for (const [certIndex, certPem] of certs.entries()) {
+        const certPath = path.join(tempDir, `signature-${signatureIndex}-cert-${certIndex}.pem`);
+        writeFileSync(certPath, `${certPem}\n`);
+        const certSubject = execFileSync(
+          'openssl',
+          ['x509', '-in', certPath, '-noout', '-subject', '-nameopt', 'RFC2253'],
+          { encoding: 'utf8' },
+        ).trim();
+        signerVatId = parseVatIdFromSubjectDn(certSubject);
+        if (signerVatId) {
+          break;
+        }
+      }
+      assert.ok(signerVatId, `missing VATES identifier in signature ${signatureIndex + 1}`);
+      vatIds.push(signerVatId);
+      signatureIndex += 1;
+    }
+
+    return vatIds;
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 test('parseVerifyRoute accepts valid _verify route', () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
@@ -128,6 +196,126 @@ test('parseVerifyRoute rejects invalid version token', () => {
   assert.equal(parsed.statusCode, 400);
   assert.match(parsed.message, /resourceType/i);
 });
+
+test('parseVerifyRoute accepts resourceType=contract without requiring a version token', () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.context.resourceType, 'contract');
+});
+
+test('parseVatIdFromSubjectDn extracts VATES identifier from certificate subject', () => {
+  const vatId = parseVatIdFromSubjectDn('CN=Acme Hosting,O=Acme,organizationIdentifier=VATES-B12345678,C=ES');
+  assert.equal(vatId, 'VATES-B12345678');
+});
+
+test('selectPrimaryCredentialSignature ignores verifier signatures from VERIFIERS_VAT_LIST', () => {
+  const selected = selectPrimaryCredentialSignature(
+    [
+      { signatureIndex: 0, signerVatId: 'VATES-A11111111' },
+      { signatureIndex: 1, signerVatId: 'VATES-B22222222' },
+      { signatureIndex: 2, signerVatId: 'VATES-Z99999999' },
+    ],
+    ['VATES-Z99999999'],
+  );
+  assert.deepEqual(selected, { signatureIndex: 1, signerVatId: 'VATES-B22222222' });
+});
+
+test(
+  'selectPrimaryCredentialSignature handles the real FNMT multisign PDF regardless of which verifier VAT is configured',
+  { skip: !existsSync(REAL_MULTISIGN_PDF_PATH) },
+  () => {
+    const signerVatIds = extractSignerVatIdsFromRealPdf(REAL_MULTISIGN_PDF_PATH);
+    assert.deepEqual(signerVatIds, ['VATES-B42215152', 'VATES-G02793479']);
+
+    const signatures = signerVatIds.map((signerVatId, signatureIndex) => ({ signatureIndex, signerVatId }));
+
+    const verifierIsUnid = selectPrimaryCredentialSignature(signatures, ['VATES-G02793479']);
+    assert.deepEqual(verifierIsUnid, { signatureIndex: 0, signerVatId: 'VATES-B42215152' });
+
+    const verifierIsConectate = selectPrimaryCredentialSignature(signatures, ['VATES-B42215152']);
+    assert.deepEqual(verifierIsConectate, { signatureIndex: 1, signerVatId: 'VATES-G02793479' });
+  },
+);
+
+test(
+  'FnmtPdfVerificationService verifies all signatures before choosing which one feeds credential extraction',
+  { skip: !existsSync(REAL_MULTISIGN_PDF_PATH) },
+  async () => {
+    const pdfBytes = readFileSync(REAL_MULTISIGN_PDF_PATH);
+    const service = new FnmtPdfVerificationService({
+      fnmtRootCertPath: path.resolve('certs/fnmt/fnmt-root.pem'),
+      fnmtIntermediateCertPath: path.resolve('certs/fnmt/fnmt-intermediate.pem'),
+      fnmtAutoDownload: false,
+      templateUrlPattern: 'https://example.test/{resourceVersion}.pdf',
+      strictRevocation: true,
+      strictTemplateMatch: true,
+      templateMatchMode: 'strict-bytes',
+      verifierVatList: ['VATES-G02793479'],
+      digestAlgorithm: 'sha256',
+      templateCacheTtlSeconds: 0,
+      templateCacheMaxEntries: 0,
+      templatePreloadEnabled: false,
+      templatePreloadTenantId: 'ica',
+      templatePreloadJurisdictions: ['ES'],
+      templatePreloadSectors: ['animal-care'],
+      templatePreloadResourceTypes: [],
+      templateUseTestPrefix: false,
+      fnmtIntermediateCertUrls: [],
+      fnmtIntermediateCertPinsSha256: [],
+      fnmtIntermediateCertPinsSha1: [],
+    });
+
+    (service as any).trustAnchorsPromise = Promise.resolve({
+      rootPem: 'root',
+      intermediatePems: [],
+      rootSource: 'test',
+      intermediateSources: ['test'],
+    });
+
+    const verifiedIndexes: number[] = [];
+    (service as any).verifyPdfSignature = async (signature: { signatureIndex: number; signedData: Buffer }) => {
+      verifiedIndexes.push(signature.signatureIndex);
+      const signerVatId = signature.signatureIndex === 0 ? 'VATES-B42215152' : 'VATES-G02793479';
+      return {
+        signatureIndex: signature.signatureIndex,
+        signerCert: {
+          serialNumber: `serial-${signature.signatureIndex}`,
+          subject: `subject-${signerVatId}`,
+          issuer: 'issuer-test',
+        },
+        signerVatId,
+        revocationStatus: 'good',
+        revocationDebug: { finalStatus: 'good', checks: [] },
+        notes: [`verified-${signature.signatureIndex}`],
+        signedData: signature.signedData,
+      };
+    };
+
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed?.ok, true);
+    if (!parsed || !parsed.ok) return;
+
+    const result = await service.verify(parsed.context, {
+      thid: 'thid-multisign-real-001',
+      pdfBytes,
+      contentType: 'application/pdf',
+    });
+
+    assert.deepEqual(verifiedIndexes, [0, 1]);
+    assert.equal(result.signerSubject, 'subject-VATES-B42215152');
+    assert.equal(
+      result.notes.some((note) => note.includes('Signature 2 ignored for credential extraction')),
+      true,
+    );
+    assert.equal(
+      result.notes.some((note) => note.includes('Content/template validation skipped because resourceType=contract.')),
+      true,
+    );
+  },
+);
 
 test('parseAddEvidenceRoute accepts valid _add route', () => {
   const parsed = parseAddEvidenceRoute('/ica/cds-ES/v1/animal-care/network/evidence/official-registry/_add');

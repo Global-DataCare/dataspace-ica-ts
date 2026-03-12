@@ -427,6 +427,18 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert'],
   );
+  const verifySuccessExample = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response']
+    ?.post
+    ?.responses?.['200']
+    ?.content?.['application/didcomm-plain+json']
+    ?.examples?.verificationSucceededWithEvidence?.value as Record<string, any> | undefined;
+  const organizationSubject = verifySuccessExample?.body?.data?.[0]?.resource?.credentialSubject as Record<string, any> | undefined;
+  const personSubject = verifySuccessExample?.body?.data?.[1]?.resource?.credentialSubject as Record<string, any> | undefined;
+  assert.equal(organizationSubject?.controller, undefined);
+  assert.equal(personSubject?.memberOf?.controller, undefined);
+  assert.equal(personSubject?.id, 'urn:person:identifier:IDCES-99999999R');
+  assert.equal(personSubject?.alternateName, 'controller-es384-001');
+  assert.equal(personSubject?.additionalType, 'ES384');
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert-response'],
   );
@@ -783,8 +795,6 @@ test('VerifyResponseManager stores issued credentials and evidence using mem col
     provider: 'mem',
     required: true,
     firestoreCollectionPrefix: 'ica',
-    issuedCredentialsCollection: 'issued_credentials',
-    evidenceCollection: 'evidence_records',
   });
 
   const verifyResult: VerifyResult = {
@@ -845,8 +855,6 @@ test('AddEvidence managers persist evidence records using mem collections adapte
     provider: 'mem',
     required: true,
     firestoreCollectionPrefix: 'ica',
-    issuedCredentialsCollection: 'issued_credentials',
-    evidenceCollection: 'evidence_records',
   });
 
   const store = new InMemoryEntityJobStore<AddEvidenceRouteContext, AddEvidenceResult>(60);
@@ -981,8 +989,6 @@ test('AddEvidence managers accept Pontus-X vc+jwt DIDComm attachment evidence', 
     provider: 'mem',
     required: true,
     firestoreCollectionPrefix: 'ica',
-    issuedCredentialsCollection: 'issued_credentials',
-    evidenceCollection: 'evidence_records',
   });
 
   const previousIssuersList = process.env.ICA_EVIDENCE_VC_ISSUERS_LIST;
@@ -1161,8 +1167,6 @@ test('IssueCredential managers persist credential and evidence records using mem
     provider: 'mem',
     required: true,
     firestoreCollectionPrefix: 'ica',
-    issuedCredentialsCollection: 'issued_credentials',
-    evidenceCollection: 'evidence_records',
   });
 
   const store = new InMemoryEntityJobStore<IssueCredentialRouteContext, IssueCredentialResult>(60);
@@ -1289,8 +1293,6 @@ test('Credential status and revoke managers resolve and update revocation state'
     provider: 'mem',
     required: true,
     firestoreCollectionPrefix: 'ica',
-    issuedCredentialsCollection: 'issued_credentials',
-    evidenceCollection: 'evidence_records',
   });
 
   const issueStore = new InMemoryEntityJobStore<IssueCredentialRouteContext, IssueCredentialResult>(60);

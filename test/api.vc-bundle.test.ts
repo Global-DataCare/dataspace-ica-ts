@@ -155,7 +155,7 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
   }
 });
 
-test('buildVerificationVcBundle exposes ICA_SELF_CONTROLLER_* bootstrap metadata', () => {
+test('buildVerificationVcBundle does not expose non-schema.org controller field', () => {
   const previousControllerKid = process.env.ICA_SELF_CONTROLLER_KID;
   const previousControllerEmail = process.env.ICA_SELF_CONTROLLER_EMAIL;
   process.env.ICA_SELF_CONTROLLER_KID = 'controller-bootstrap-kid';
@@ -175,17 +175,15 @@ test('buildVerificationVcBundle exposes ICA_SELF_CONTROLLER_* bootstrap metadata
 
     const organizationResource = bundle.data[0]?.resource as Record<string, any>;
     const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
-    assert.equal(organizationSubject.controller?.kid, 'controller-bootstrap-kid');
-    assert.equal(organizationSubject.controller?.email, 'it-director@example.org');
+    assert.equal(organizationSubject.controller, undefined);
 
     const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
     const documentEvidence = organizationEvidence[1];
-    assert.equal(documentEvidence.document_details?.controller?.kid, 'controller-bootstrap-kid');
-    assert.equal(documentEvidence.document_details?.controller?.email, 'it-director@example.org');
+    assert.equal(documentEvidence.document_details?.controller, undefined);
 
     const personResource = bundle.data[1]?.resource as Record<string, any>;
     const personSubject = personResource.credentialSubject as Record<string, any>;
-    assert.equal(personSubject.email, 'it-director@example.org');
+    assert.equal(personSubject.email, undefined);
   } finally {
     resetActiveSigningKeysStateForTests();
     if (previousControllerKid === undefined) delete process.env.ICA_SELF_CONTROLLER_KID;
@@ -232,15 +230,15 @@ test('buildVerificationVcBundle maps annex form fields into credential subjects 
     ...buildTestVerifyResult('annex-fields'),
     signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
     annexFormFields: {
-      'organization.did': 'did:web:member.example.org',
-      'organization.additionalType': 'onehealth',
-      'organization.alternateName': 'did:web:ica.example.org:ica:cds-ES:v1:onehealth:organization:dataprovider:zAlias',
-      'organization.registrationNumber': 'ES-SAN-REG-0001',
-      'legalRepresentative.email': 'rep@example.org',
-      'controller.email': 'it-director@example.org',
-      'controller.kid': 'controller-es384-20260309',
-      'controller.alg': 'ES384',
-      'controller.publicKeyJwk': '{"kty":"EC","crv":"P-384","x":"abc","y":"def"}',
+      'Organization.sameAs': 'did:web:member.example.org',
+      'Organization.url': 'member.example.org',
+      'Organization.additionalType': 'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
+      'Organization.alternateName': 'acme',
+      'Organization.registrationNumber': 'ES-SAN-REG-0001',
+      'Organization.email': 'zOrgContactHash',
+      'Person.email': 'zControllerHash',
+      'Person.alternateName': 'controller-es384-20260309',
+      'Person.additionalType': 'ES384',
     },
   });
 
@@ -253,24 +251,23 @@ test('buildVerificationVcBundle maps annex form fields into credential subjects 
 
   assert.equal(organizationSubject.id, 'did:web:member.example.org');
   assert.equal(organizationSubject.sameAs, 'did:web:member.example.org');
-  assert.equal(organizationSubject.additionalType, 'onehealth');
   assert.equal(
-    organizationSubject.alternateName,
-    'did:web:ica.example.org:ica:cds-ES:v1:onehealth:organization:dataprovider:zAlias',
+    organizationSubject.additionalType,
+    'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
   );
+  assert.equal(organizationSubject.alternateName, 'acme');
   assert.equal(organizationSubject.registrationNumber, 'ES-SAN-REG-0001');
-  assert.equal(personSubject.email, 'rep@example.org');
-  assert.equal(organizationSubject.controller?.email, 'it-director@example.org');
-  assert.equal(organizationSubject.controller?.kid, 'controller-es384-20260309');
-  assert.equal(organizationSubject.controller?.alg, 'ES384');
-  assert.deepEqual(organizationSubject.controller?.publicKeyJwk, {
-    kty: 'EC',
-    crv: 'P-384',
-    x: 'abc',
-    y: 'def',
-  });
+  assert.equal(organizationSubject.email, 'zOrgContactHash');
+  assert.equal(organizationSubject.url, 'member.example.org');
+  assert.equal(personSubject.email, 'zControllerHash');
+  assert.equal(personSubject.alternateName, 'controller-es384-20260309');
+  assert.equal(personSubject.additionalType, 'ES384');
+  assert.equal(personSubject.memberOf?.alternateName, undefined);
+  assert.equal(personSubject.memberOf?.additionalType, undefined);
+  assert.equal(personSubject.memberOf?.email, undefined);
+  assert.equal(organizationSubject.controller, undefined);
   assert.equal(
-    documentEvidence.document_details?.annexFormFields?.['organization.did'],
+    documentEvidence.document_details?.annexFormFields?.['Organization.sameAs'],
     'did:web:member.example.org',
   );
 });

@@ -16,6 +16,7 @@ import { buildVerificationVcBundle } from '../tools/vc-bundle.ts';
 import { buildVcJwtAttachments } from '../tools/vc-jwt.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
+import { resolveIcaIssuerDid } from '../tools/ica-identity.ts';
 
 export type VerifyPollOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -201,7 +202,8 @@ export class VerifyResponseManager {
       };
     }
 
-    const body = buildVerificationVcBundle(route, verificationResult) as VerifyBundleResponse;
+    const issuerDid = resolveIcaIssuerDid(req);
+    const body = buildVerificationVcBundle(route, verificationResult, issuerDid) as VerifyBundleResponse;
 
     try {
       await this.collectionsService.persistFromVerificationBundle(route, thid, body);
@@ -215,7 +217,7 @@ export class VerifyResponseManager {
 
     return {
       type: 'succeeded',
-      payload: buildDidcommVerifyMessage(route, thid, body, req, buildVcJwtAttachments(route, body)),
+      payload: buildDidcommVerifyMessage(route, thid, body, req, buildVcJwtAttachments(route, body, issuerDid)),
     };
   }
 }

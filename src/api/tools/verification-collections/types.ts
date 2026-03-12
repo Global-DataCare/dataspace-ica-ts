@@ -54,10 +54,7 @@ export type VerificationCollectionsConfig = {
   provider: VerificationCollectionsProvider;
   required: boolean;
   firestoreProjectId?: string;
-  firestoreDatabaseId?: string;
   firestoreCollectionPrefix: string;
-  issuedCredentialsCollection: string;
-  evidenceCollection: string;
 };
 
 export interface VerificationCollectionsAdapter {

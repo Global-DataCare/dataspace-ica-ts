@@ -41,8 +41,6 @@ test('CredentialSearch managers support x-www-form-urlencoded unit search and re
     provider: 'mem',
     required: true,
     firestoreCollectionPrefix: 'ica',
-    issuedCredentialsCollection: 'issued_credentials',
-    evidenceCollection: 'evidence_records',
   });
 
   await collectionsService.storeIssuedCredentials([
@@ -142,8 +140,6 @@ test('CredentialSearch maps id parameter to taxId for credentialType organizatio
     provider: 'mem',
     required: true,
     firestoreCollectionPrefix: 'ica',
-    issuedCredentialsCollection: 'issued_credentials',
-    evidenceCollection: 'evidence_records',
   });
 
   await collectionsService.storeIssuedCredentials([

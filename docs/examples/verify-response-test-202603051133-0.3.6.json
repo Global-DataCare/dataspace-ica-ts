@@ -1,0 +1,266 @@
+{
+  "jti": "urn:uuid:verify-resp-001",
+  "iss": "did:web:localhost%3A3310",
+  "aud": "did:web:localhost%3A3310",
+  "thid": "verify-terms-001",
+  "type": "application/bundle-api+json",
+  "body": {
+    "resourceType": "Bundle",
+    "type": "batch-response",
+    "issues": {
+      "resourceType": "OperationOutcome",
+      "issue": [
+        {
+          "severity": "information",
+          "code": "informational",
+          "diagnostics": "Verification completed."
+        }
+      ]
+    },
+    "total": 2,
+    "data": [
+      {
+        "type": "Organization-verification-v1.0",
+        "response": {
+          "status": "200",
+          "outcome": {
+            "resourceType": "OperationOutcome",
+            "issue": [
+              {
+                "severity": "information",
+                "code": "informational",
+                "diagnostics": "Organization credential extracted from verified document."
+              }
+            ]
+          }
+        },
+        "resource": {
+          "id": "urn:uuid:org-vc-001",
+          "@context": [
+            "https://www.w3.org/ns/credentials/v2",
+            "https://schema.org"
+          ],
+          "type": [
+            "VerifiableCredential",
+            "OrganizationCredential"
+          ],
+          "issuer": "did:web:localhost%3A3310",
+          "validFrom": "2026-03-12T21:12:26.646Z",
+          "credentialSubject": {
+            "id": "urn:organization:taxid:VATES-B00000000",
+            "@type": "Organization",
+            "legalName": "Example Data Provider SL",
+            "taxID": "VATES-B00000000",
+            "sameAs": "did:web:provider.example.org",
+            "url": "provider.example.org",
+            "alternateName": "example-provider",
+            "additionalType": "sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider",
+            "email": "zOrgContactHash",
+            "address": {
+              "@type": "PostalAddress",
+              "addressCountry": "ES"
+            }
+          },
+          "evidence": [
+            {
+              "type": "electronic_signature",
+              "signature_type": "pades",
+              "issuer": "C=ES\nO=FNMT-RCM\nOU=CERES\nCN=AC Representación",
+              "serial_number": "20A438B97CF06452688B9E2C7967662A",
+              "created_at": "2026-03-12T21:12:26.646Z",
+              "attachments": [
+                {
+                  "content_type": "application/json",
+                  "content": "data:application/json;base64,eyJwcm9maWxlIjoib2lkYzRpZGEtZXZpZGVuY2UtdjEiLCJ2ZXJpZmljYXRpb25SZXN1bHQiOiJ2YWxpZCIsIi4uLiI6InRydW5jYXRlZCJ9"
+                }
+              ]
+            },
+            {
+              "type": "document",
+              "method": "eid",
+              "time": "2026-03-12T21:12:26.646Z",
+              "verifier": {
+                "organization": "did:web:localhost%3A3310"
+              },
+              "check_details": [
+                {
+                  "check_method": "vdig",
+                  "organization": "did:web:localhost%3A3310",
+                  "time": "2026-03-12T21:12:26.646Z"
+                },
+                {
+                  "check_method": "vcrypt",
+                  "organization": "did:web:localhost%3A3310",
+                  "time": "2026-03-12T21:12:26.646Z"
+                }
+              ],
+              "attachments": {
+                "digest": {
+                  "alg": "sha3-384",
+                  "value": "aafUF1Ne7Zrmg/y1f6jprx4f/n0OiOo9i4j5AXXN4ZotOFsahUHYdr+nZOnESHqH"
+                },
+                "url": "urn:uuid:audit-object-001"
+              },
+              "document_details": {
+                "type": "terms-and-conditions",
+                "document_number": "contract",
+                "serial_number": "20A438B97CF06452688B9E2C7967662A",
+                "issuer": {
+                  "id": "did:web:localhost%3A3310",
+                  "type": "TrustServiceProvider",
+                  "country_code": "ES",
+                  "jurisdiction": "ES"
+                }
+              }
+            }
+          ],
+          "proof": {
+            "type": "JsonWebSignature2020",
+            "created": "2026-03-12T21:12:57.534Z",
+            "proofPurpose": "assertionMethod",
+            "verificationMethod": "did:web:localhost%3A3310#verification-key-001",
+            "jws": "<detached-jws-organization-truncated>"
+          }
+        }
+      },
+      {
+        "type": "LegalRepresentative-verification-v1.0",
+        "response": {
+          "status": "200",
+          "outcome": {
+            "resourceType": "OperationOutcome",
+            "issue": [
+              {
+                "severity": "information",
+                "code": "informational",
+                "diagnostics": "Legal representative credential extracted from verified document."
+              }
+            ]
+          }
+        },
+        "resource": {
+          "id": "urn:uuid:person-vc-001",
+          "@context": [
+            "https://www.w3.org/ns/credentials/v2",
+            "https://schema.org"
+          ],
+          "type": [
+            "VerifiableCredential",
+            "PersonCredential",
+            "LegalRepresentativeCredential"
+          ],
+          "issuer": "did:web:localhost%3A3310",
+          "validFrom": "2026-03-12T21:12:26.646Z",
+          "credentialSubject": {
+            "id": "urn:person:identifier:IDCES-99999999R",
+            "@type": "Person",
+            "name": "Alex Example",
+            "hasOccupation": {
+              "@type": "Occupation",
+              "name": "LegalRepresentative",
+              "identifier": "urn:ilo:ilostat:isco-08:1120"
+            },
+            "memberOf": {
+              "@type": "Organization",
+              "legalName": "Example Data Provider SL",
+              "taxID": "VATES-B00000000"
+            },
+            "givenName": "Alex",
+            "familyName": "Example",
+            "identifier": "IDCES-99999999R",
+            "nationality": "ES",
+            "email": "zControllerHash",
+            "alternateName": "controller-es384-001",
+            "additionalType": "ES384"
+          },
+          "evidence": [
+            {
+              "type": "electronic_signature",
+              "signature_type": "pades",
+              "issuer": "C=ES\nO=FNMT-RCM\nOU=CERES\nCN=AC Representación",
+              "serial_number": "20A438B97CF06452688B9E2C7967662A",
+              "created_at": "2026-03-12T21:12:26.646Z",
+              "attachments": [
+                {
+                  "content_type": "application/json",
+                  "content": "data:application/json;base64,eyJwcm9maWxlIjoib2lkYzRpZGEtZXZpZGVuY2UtdjEiLCJ2ZXJpZmljYXRpb25SZXN1bHQiOiJ2YWxpZCIsIi4uLiI6InRydW5jYXRlZCJ9"
+                }
+              ]
+            },
+            {
+              "type": "document",
+              "method": "eid",
+              "time": "2026-03-12T21:12:26.646Z",
+              "verifier": {
+                "organization": "did:web:localhost%3A3310"
+              },
+              "check_details": [
+                {
+                  "check_method": "vdig",
+                  "organization": "did:web:localhost%3A3310",
+                  "time": "2026-03-12T21:12:26.646Z"
+                },
+                {
+                  "check_method": "vcrypt",
+                  "organization": "did:web:localhost%3A3310",
+                  "time": "2026-03-12T21:12:26.646Z"
+                }
+              ],
+              "attachments": {
+                "digest": {
+                  "alg": "sha3-384",
+                  "value": "aafUF1Ne7Zrmg/y1f6jprx4f/n0OiOo9i4j5AXXN4ZotOFsahUHYdr+nZOnESHqH"
+                },
+                "url": "urn:uuid:audit-object-001"
+              },
+              "document_details": {
+                "type": "terms-and-conditions",
+                "document_number": "contract",
+                "serial_number": "20A438B97CF06452688B9E2C7967662A",
+                "issuer": {
+                  "id": "did:web:localhost%3A3310",
+                  "type": "TrustServiceProvider",
+                  "country_code": "ES",
+                  "jurisdiction": "ES"
+                }
+              }
+            }
+          ],
+          "proof": {
+            "type": "JsonWebSignature2020",
+            "created": "2026-03-12T21:12:57.535Z",
+            "proofPurpose": "assertionMethod",
+            "verificationMethod": "did:web:localhost%3A3310#verification-key-001",
+            "jws": "<detached-jws-person-truncated>"
+          }
+        }
+      }
+    ]
+  },
+  "attachments": [
+    {
+      "id": "vc-jwt-1",
+      "format": "vc+jwt",
+      "media_type": "application/vc+jwt",
+      "filename": "Organization-verification-v1.0-1.jwt",
+      "data": {
+        "json": {
+          "format": "vc+jwt",
+          "jwt": "<vc-jwt-organization-truncated>"
+        }
+      }
+    },
+    {
+      "id": "vc-jwt-2",
+      "format": "vc+jwt",
+      "media_type": "application/vc+jwt",
+      "filename": "LegalRepresentative-verification-v1.0-2.jwt",
+      "data": {
+        "json": {
+          "format": "vc+jwt",
+          "jwt": "<vc-jwt-person-truncated>"
+        }
+      }
+    }
+  ]
+}

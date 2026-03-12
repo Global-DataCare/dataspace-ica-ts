@@ -4,6 +4,10 @@ import type {
   VerificationCollectionsAdapter,
   VerificationCollectionsConfig,
 } from './types.ts';
+import {
+  resolveEvidenceCollectionName,
+  resolveIssuedCredentialsCollectionName,
+} from '../verification-collections-storage.ts';
 
 const memState = {
   issuedById: new Map<string, IssuedCredentialRecord>(),
@@ -57,7 +61,6 @@ export class VerificationCollectionsFirestoreAdapter implements VerificationColl
         }
         const options: Record<string, unknown> = {};
         if (this.config.firestoreProjectId) options.projectId = this.config.firestoreProjectId;
-        if (this.config.firestoreDatabaseId) options.databaseId = this.config.firestoreDatabaseId;
         return new FirestoreCtor(options);
       })();
     }
@@ -68,8 +71,9 @@ export class VerificationCollectionsFirestoreAdapter implements VerificationColl
     if (!records.length) return;
     const client = await this.getClient();
     const batch = client.batch();
+    const collectionName = resolveIssuedCredentialsCollectionName(this.config.firestoreCollectionPrefix);
     for (const record of records) {
-      const ref = client.collection(this.config.issuedCredentialsCollection).doc(record.id);
+      const ref = client.collection(collectionName).doc(record.id);
       batch.set(ref, record, { merge: true });
     }
     await batch.commit();
@@ -79,8 +83,9 @@ export class VerificationCollectionsFirestoreAdapter implements VerificationColl
     if (!records.length) return;
     const client = await this.getClient();
     const batch = client.batch();
+    const collectionName = resolveEvidenceCollectionName(this.config.firestoreCollectionPrefix);
     for (const record of records) {
-      const ref = client.collection(this.config.evidenceCollection).doc(record.id);
+      const ref = client.collection(collectionName).doc(record.id);
       batch.set(ref, record, { merge: true });
     }
     await batch.commit();
@@ -88,13 +93,13 @@ export class VerificationCollectionsFirestoreAdapter implements VerificationColl
 
   async listIssuedCredentials(): Promise<IssuedCredentialRecord[]> {
     const client = await this.getClient();
-    const snapshot = await client.collection(this.config.issuedCredentialsCollection).limit(200).get();
+    const snapshot = await client.collection(resolveIssuedCredentialsCollectionName(this.config.firestoreCollectionPrefix)).limit(200).get();
     return snapshot.docs.map((doc: any) => doc.data() as IssuedCredentialRecord);
   }
 
   async listEvidenceRecords(): Promise<EvidenceRecord[]> {
     const client = await this.getClient();
-    const snapshot = await client.collection(this.config.evidenceCollection).limit(200).get();
+    const snapshot = await client.collection(resolveEvidenceCollectionName(this.config.firestoreCollectionPrefix)).limit(200).get();
     return snapshot.docs.map((doc: any) => doc.data() as EvidenceRecord);
   }
 }

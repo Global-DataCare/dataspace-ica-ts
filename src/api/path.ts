@@ -161,6 +161,10 @@ function parseResourceType(rawResourceType: string):
     };
   }
 
+  if (resourceType.toLowerCase() === 'contract') {
+    return { ok: true, normalized: 'contract' };
+  }
+
   const unifiedFlag = isUnifiedTestTermsPrefixEnabled();
   const allowTestPrefix = unifiedFlag !== undefined
     ? unifiedFlag
@@ -171,7 +175,7 @@ function parseResourceType(rawResourceType: string):
       return {
         ok: false,
         statusCode: 400,
-        message: 'resourceType must be a version token in format yyyyddmmhhmm.',
+        message: 'resourceType must be "contract" or a version token in format yyyyddmmhhmm.',
       };
     }
     return { ok: true, normalized: resourceType };

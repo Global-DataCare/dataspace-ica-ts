@@ -34,6 +34,13 @@ function firstHeaderValue(header: string | string[] | undefined): string {
   return (header || '').trim();
 }
 
+function firstForwardedHost(req: IncomingMessage | undefined): string {
+  if (!req) return '';
+  const raw = firstHeaderValue(req.headers['x-forwarded-host']);
+  if (!raw) return '';
+  return raw.split(',')[0]?.trim() || '';
+}
+
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   const normalized = value.trim().toLowerCase();
@@ -457,7 +464,7 @@ export function resolveIcaIssuerDid(req?: IncomingMessage): string {
     if (didFromExternalDomain) return didFromExternalDomain;
   }
 
-  const requestHost = req ? firstHeaderValue(req.headers.host) : '';
+  const requestHost = firstForwardedHost(req) || (req ? firstHeaderValue(req.headers.host) : '');
   if (requestHost) {
     const didFromHostHeader = buildDidWebFromAuthority(requestHost);
     if (didFromHostHeader) return didFromHostHeader;
@@ -617,8 +624,9 @@ export function buildControllerDidDocument(req?: IncomingMessage): JsonObject | 
 export function attachProofToCredential(
   vc: VerifiableCredentialV2,
   route: VerifyRouteContext,
+  issuerDidInput?: string,
 ): VerifiableCredentialV2 {
-  const issuerDid = resolveIcaIssuerDid();
+  const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
   const createdAt = new Date().toISOString();
   const vcWithoutProof = { ...vc };
   delete vcWithoutProof.proof;
@@ -666,8 +674,9 @@ export function attachProofToCredential(
 export function convertCredentialToVcJwt(
   vc: VerifiableCredentialV2,
   route: VerifyRouteContext,
+  issuerDidInput?: string,
 ): string {
-  const issuerDid = resolveIcaIssuerDid();
+  const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
   const signing = resolveSigningKeyMaterial();
   const isTestVersion = route.resourceType.toLowerCase().startsWith('test-');
 

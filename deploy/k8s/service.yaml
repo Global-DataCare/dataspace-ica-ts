@@ -5,7 +5,7 @@ metadata:
   labels:
     app: dataspace-ica-api
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
     app: dataspace-ica-api
   ports:

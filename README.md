@@ -811,6 +811,7 @@ Notas de seguridad:
 - `content[]` en respuestas usa `identifier` (DID) y `url` (endpoint) como forma pública (alineado con schema.org).
 - En `targets`: usar `@type` (JSON-LD) o `resourceType` (JSON plano). No usar `type`.
 - Esta restriccion aplica solo a `body.data[]` de `spaces`; `body.type` del envelope/Bundle (`batch-response`) sigue siendo valido.
+- GKE runtime (ADC, Firestore/GCS IAM, static IP): [`docs/security-gke.md`](./docs/security-gke.md)
 
 ## Polling Behavior
 
@@ -924,7 +925,8 @@ Route constraints:
 - `sector`: any value starting with `animal` or `health` (for `onehealth` umbrella)
 - `idHash` (discovery DID path): `multibase58(multihash(SHA3-256(id)))`
 - controller bootstrap `id`: normalized email (`trim().toLowerCase()`)
-- `resourceType` (prod): `yyyyddmmhhmm` (12 digits)
+- `resourceType=contract`: skips template/content validation
+- `resourceType` (versioned mode): `yyyyddmmhhmm` (12 digits)
 - `resourceType` (test): `test-yyyyddmmhhmm` (requires `ICA_ENABLE_TEST_TERMS_PREFIX=true`)
 - `evidenceType`: free classifier for `_add` (e.g., `address`, `official-registry`, `qualification`)
 - `_add` supports vc+jwt DIDComm attachments (`application/vc+jwt`) verified against `ICA_EVIDENCE_VC_ISSUERS_LIST` (DID/URL issuer trust list)
@@ -1071,25 +1073,29 @@ Verification behavior:
 - `ICA_VERIFY_STRICT_TEMPLATE_MATCH` (default `true`)
 - `ICA_VERIFY_TEMPLATE_MATCH_MODE` (`strict-bytes` | `logical-content`)
 - `ICA_VERIFY_DIGEST_ALGORITHM` (default `sha3-384`)
+- `VERIFIERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures are still validated but ignored when choosing the signer used for credential extraction in multi-signed PDFs)
+
+For multi-signed contract PDFs, every detected signature is still CMS/chain/revocation validated. `VERIFIERS_VAT_LIST` only affects which signer is used to populate the organization/person credentials.
 
 Audit document persistence:
 
-- `ICA_AUDIT_STORAGE_PROVIDER` (`none` | `filesystem` | `gcs`)
+- `STORAGE_PROVIDER` (`mem` | `filesystem` | `gcs`)
 - `ICA_AUDIT_STORAGE_REQUIRED`
 - `ICA_AUDIT_ATTACHMENT_URL_PATTERN`
 - `ICA_AUDIT_STORAGE_FS_DIR`
-- `ICA_AUDIT_STORAGE_GCS_BUCKET`
+- `GCS_BUCKET_NAME`
 - `ICA_AUDIT_STORAGE_GCS_PREFIX`
 
 Verification collections persistence:
 
-- `ICA_COLLECTIONS_PROVIDER` (`mem` | `firestore`, default `mem`)
+- `DB_PROVIDER` (`mem` | `firestore`, default `mem`)
 - `ICA_COLLECTIONS_REQUIRED`
 - `ICA_COLLECTIONS_PREFIX`
-- `ICA_COLLECTIONS_ISSUED_COLLECTION`
-- `ICA_COLLECTIONS_EVIDENCE_COLLECTION`
-- `ICA_COLLECTIONS_FIRESTORE_PROJECT_ID`
-- `ICA_COLLECTIONS_FIRESTORE_DATABASE_ID`
+- `FIRESTORE_PROJECT_ID`
+
+Collection names are derived by code from `ICA_COLLECTIONS_PREFIX` using the fixed pattern:
+- `${prefix}_issued_credentials`
+- `${prefix}_evidence_records`
 
 Template source:
 
@@ -1144,20 +1150,25 @@ npm run create:terms:pdf -- \
 Predefined annex field names:
 
 - `organization.additionalType`
-- `organization.did`
 - `organization.sameAs`
+- `organization.url`
 - `organization.alternateName`
 - `organization.registrationNumber`
-- `legalRepresentative.email`
-- `controller.email`
-- `controller.kid`
-- `controller.alg`
-- `controller.publicKeyJwk`
+- `organization.email`
+- `person.email`
+- `person.alternateName`
+- `person.additionalType`
 
 During `_verify`, signed PDF form values are extracted and incorporated into evidence/VC output:
 
 - Included as `annexFormFields` inside evidence `document_details`.
 - Mapped into organization/person credential subjects when present.
-- If `organization.did`/`organization.sameAs` is a real `did:web`, it is used in VC subject mapping.
+- If `organization.sameAs` is a real `did:web`, it is used in VC subject mapping.
+- `organization.alternateName` is the short org alias, e.g. `acme`.
+- `organization.additionalType` carries the flattened profile string, e.g. `sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider`.
+- `organization.email` is the organization contact hash/email.
+- `person.email` is the controller hash/email.
+- `person.alternateName` is used for the controller `kid`.
+- `person.additionalType` is used for the controller algorithm, e.g. `ES384`.
 
 Extended guide: [docs/terms-annex-form.md](./docs/terms-annex-form.md)

@@ -33,6 +33,9 @@ export type IssuedCredentialLookup = {
   credentialStatusId?: string;
 };
 
+const ISSUED_CREDENTIALS_COLLECTION_LEAF = 'issued_credentials';
+const EVIDENCE_COLLECTION_LEAF = 'evidence_records';
+
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   const normalized = value.trim().toLowerCase();
@@ -66,7 +69,7 @@ function parseProvider(raw: string | undefined, fallback: VerificationCollection
   if (normalized === 'mem' || normalized === 'firestore') {
     return normalized;
   }
-  throw new Error(`Unsupported ICA_COLLECTIONS_PROVIDER="${normalized}". Use "mem" or "firestore".`);
+  throw new Error(`Unsupported DB_PROVIDER="${normalized}". Use "mem" or "firestore".`);
 }
 
 function buildCollectionName(prefix: string, leaf: string): string {
@@ -76,19 +79,22 @@ function buildCollectionName(prefix: string, leaf: string): string {
 }
 
 export function loadVerificationCollectionsConfigFromEnv(): VerificationCollectionsConfig {
-  const provider = parseProvider(process.env.ICA_COLLECTIONS_PROVIDER, 'mem');
+  const provider = parseProvider(process.env.DB_PROVIDER, 'mem');
   const prefix = (process.env.ICA_COLLECTIONS_PREFIX || 'ica').trim();
-  const issuedLeaf = (process.env.ICA_COLLECTIONS_ISSUED_COLLECTION || 'issued_credentials').trim();
-  const evidenceLeaf = (process.env.ICA_COLLECTIONS_EVIDENCE_COLLECTION || 'evidence_records').trim();
   return {
     provider,
     required: parseBoolean(process.env.ICA_COLLECTIONS_REQUIRED, true),
-    firestoreProjectId: (process.env.ICA_COLLECTIONS_FIRESTORE_PROJECT_ID || '').trim() || undefined,
-    firestoreDatabaseId: (process.env.ICA_COLLECTIONS_FIRESTORE_DATABASE_ID || '').trim() || undefined,
+    firestoreProjectId: (process.env.FIRESTORE_PROJECT_ID || '').trim() || undefined,
     firestoreCollectionPrefix: prefix,
-    issuedCredentialsCollection: buildCollectionName(prefix, issuedLeaf),
-    evidenceCollection: buildCollectionName(prefix, evidenceLeaf),
   };
+}
+
+export function resolveIssuedCredentialsCollectionName(prefix: string): string {
+  return buildCollectionName(prefix, ISSUED_CREDENTIALS_COLLECTION_LEAF);
+}
+
+export function resolveEvidenceCollectionName(prefix: string): string {
+  return buildCollectionName(prefix, EVIDENCE_COLLECTION_LEAF);
 }
 
 function extractCredentialRecords(

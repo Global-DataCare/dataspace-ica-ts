@@ -1,12 +1,11 @@
 {
-  "organization.additionalType": "onehealth",
-  "organization.did": "did:web:member.example.org",
-  "organization.sameAs": "did:web:member.example.org",
-  "organization.alternateName": "did:web:ica.example.org:ica:cds-ES:v1:onehealth:organization:dataprovider:zAliasHash",
-  "organization.registrationNumber": "ES-SAN-REG-0001",
-  "legalRepresentative.email": "representative@example.org",
-  "controller.email": "it-director@example.org",
-  "controller.kid": "controller-es384-20260309",
-  "controller.alg": "ES384",
-  "controller.publicKeyJwk": "{\"kty\":\"EC\",\"crv\":\"P-384\",\"x\":\"abc\",\"y\":\"def\"}"
+  "Organization.alternateName": "acme",
+  "Organization.sameAs": "did:web:member.example.org",
+  "Organization.url": "member.example.org",
+  "Organization.additionalType": "sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider",
+  "Organization.registrationNumber": "ES-SAN-REG-0001",
+  "Organization.email": "zOrgContactHash",
+  "Person.email": "zControllerHash",
+  "Person.alternateName": "controller-es384-20260309",
+  "Person.additionalType": "ES384"
 }

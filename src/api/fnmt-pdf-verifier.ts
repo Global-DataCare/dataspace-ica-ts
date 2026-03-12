@@ -1,6 +1,6 @@
 import { createHash, X509Certificate } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -410,59 +410,108 @@ function selectSignerCertificate(certs: string[]): string {
   return certs[0];
 }
 
-function extractPdfSignature(pdfBytes: Buffer): { signatureDer: Buffer; signedData: Buffer } {
+type ExtractedPdfSignature = {
+  signatureIndex: number;
+  signatureDer: Buffer;
+  signedData: Buffer;
+};
+
+type VerifiedPdfSignature = {
+  signatureIndex: number;
+  signerCert: X509Certificate;
+  signerVatId?: string;
+  revocationStatus: RevocationStatus;
+  revocationDebug: RevocationDebugInfo;
+  notes: string[];
+  signedData: Buffer;
+};
+
+function normalizeVatId(value: string | undefined): string | undefined {
+  const normalized = value?.trim().replace(/\s+/g, '').toUpperCase();
+  return normalized || undefined;
+}
+
+export function parseVatIdFromSubjectDn(subjectDn: string): string | undefined {
+  const match = /\bVATES-[A-Z0-9]+\b/i.exec(subjectDn);
+  return normalizeVatId(match?.[0]);
+}
+
+export function selectPrimaryCredentialSignature<T extends { signerVatId?: string }>(
+  signatures: T[],
+  verifierVatList: string[],
+): T | undefined {
+  const verifierVatSet = new Set(
+    verifierVatList
+      .map((value) => normalizeVatId(value))
+      .filter((value): value is string => Boolean(value)),
+  );
+  for (let index = signatures.length - 1; index >= 0; index -= 1) {
+    const signature = signatures[index];
+    const signerVatId = normalizeVatId(signature.signerVatId);
+    if (signerVatId && verifierVatSet.has(signerVatId)) {
+      continue;
+    }
+    return signature;
+  }
+  return undefined;
+}
+
+function extractPdfSignatures(pdfBytes: Buffer): ExtractedPdfSignature[] {
   const pdfAsLatin1 = pdfBytes.toString('latin1');
   const byteRangeRegex = /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g;
   let match: RegExpExecArray | null;
-  let latest: RegExpExecArray | null = null;
+  const signatures: ExtractedPdfSignature[] = [];
+  let signatureIndex = 0;
 
   while (true) {
     match = byteRangeRegex.exec(pdfAsLatin1);
     if (!match) break;
-    latest = match;
+    const start1 = Number.parseInt(match[1], 10);
+    const length1 = Number.parseInt(match[2], 10);
+    const start2 = Number.parseInt(match[3], 10);
+    const length2 = Number.parseInt(match[4], 10);
+
+    if (!Number.isFinite(start1) || !Number.isFinite(length1) || !Number.isFinite(start2) || !Number.isFinite(length2)) {
+      throw new Error('Invalid PDF ByteRange values.');
+    }
+
+    if (start1 < 0 || length1 <= 0 || start2 <= 0 || length2 <= 0 || start2 <= start1 + length1) {
+      throw new Error('Invalid PDF ByteRange ordering.');
+    }
+
+    const signedData = Buffer.concat([
+      pdfBytes.subarray(start1, start1 + length1),
+      pdfBytes.subarray(start2, start2 + length2),
+    ]);
+
+    const signatureWindow = pdfBytes.subarray(start1 + length1, start2);
+    const lt = signatureWindow.indexOf(0x3c); // <
+    const gt = signatureWindow.lastIndexOf(0x3e); // >
+    if (lt === -1 || gt === -1 || gt <= lt) {
+      throw new Error('Unable to extract CMS signature bytes from PDF.');
+    }
+
+    let hex = signatureWindow.subarray(lt + 1, gt).toString('latin1').replace(/[^0-9a-fA-F]/g, '');
+    while (hex.endsWith('00')) {
+      hex = hex.slice(0, -2);
+    }
+    if (!hex.length || hex.length % 2 !== 0) {
+      throw new Error('Malformed CMS signature payload inside PDF.');
+    }
+
+    signatures.push({
+      signatureIndex,
+      signatureDer: Buffer.from(hex, 'hex'),
+      signedData,
+    });
+    signatureIndex += 1;
   }
 
-  if (!latest) {
+  if (!signatures.length) {
     throw new Error('PDF is missing ByteRange, no digital signature found.');
   }
 
-  const start1 = Number.parseInt(latest[1], 10);
-  const length1 = Number.parseInt(latest[2], 10);
-  const start2 = Number.parseInt(latest[3], 10);
-  const length2 = Number.parseInt(latest[4], 10);
-
-  if (!Number.isFinite(start1) || !Number.isFinite(length1) || !Number.isFinite(start2) || !Number.isFinite(length2)) {
-    throw new Error('Invalid PDF ByteRange values.');
-  }
-
-  if (start1 < 0 || length1 <= 0 || start2 <= 0 || length2 <= 0 || start2 <= start1 + length1) {
-    throw new Error('Invalid PDF ByteRange ordering.');
-  }
-
-  const signedData = Buffer.concat([
-    pdfBytes.subarray(start1, start1 + length1),
-    pdfBytes.subarray(start2, start2 + length2),
-  ]);
-
-  const signatureWindow = pdfBytes.subarray(start1 + length1, start2);
-  const lt = signatureWindow.indexOf(0x3c); // <
-  const gt = signatureWindow.lastIndexOf(0x3e); // >
-  if (lt === -1 || gt === -1 || gt <= lt) {
-    throw new Error('Unable to extract CMS signature bytes from PDF.');
-  }
-
-  let hex = signatureWindow.subarray(lt + 1, gt).toString('latin1').replace(/[^0-9a-fA-F]/g, '');
-  while (hex.endsWith('00')) {
-    hex = hex.slice(0, -2);
-  }
-  if (!hex.length || hex.length % 2 !== 0) {
-    throw new Error('Malformed CMS signature payload inside PDF.');
-  }
-
-  return {
-    signatureDer: Buffer.from(hex, 'hex'),
-    signedData,
-  };
+  return signatures;
 }
 
 async function extractCrlUrls(certPemPath: string): Promise<string[]> {
@@ -626,6 +675,7 @@ export type FnmtVerifierConfig = {
   strictRevocation: boolean;
   strictTemplateMatch: boolean;
   templateMatchMode: TemplateMatchMode;
+  verifierVatList: string[];
   digestAlgorithm: string;
   templateCacheTtlSeconds: number;
   templateCacheMaxEntries: number;
@@ -703,6 +753,9 @@ export function loadFnmtVerifierConfigFromEnv(): FnmtVerifierConfig {
     strictRevocation: parseBoolean(process.env.ICA_VERIFY_STRICT_REVOCATION, true),
     strictTemplateMatch: parseBoolean(process.env.ICA_VERIFY_STRICT_TEMPLATE_MATCH, true),
     templateMatchMode: parseTemplateMatchMode(process.env.ICA_VERIFY_TEMPLATE_MATCH_MODE, 'strict-bytes'),
+    verifierVatList: parseCsvList(process.env.VERIFIERS_VAT_LIST)
+      .map((value) => normalizeVatId(value))
+      .filter((value): value is string => Boolean(value)),
     digestAlgorithm: parseDigestAlgorithm(process.env.ICA_VERIFY_DIGEST_ALGORITHM, 'sha3-384'),
     templateCacheTtlSeconds: parsePositiveInteger(process.env.ICA_TERMS_TEMPLATE_CACHE_TTL_SECONDS, 900),
     templateCacheMaxEntries: parsePositiveInteger(process.env.ICA_TERMS_TEMPLATE_CACHE_MAX_ENTRIES, 64),
@@ -847,6 +900,298 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
     await Promise.all(preloadRequests);
   }
 
+  private async verifyPdfSignature(
+    signature: ExtractedPdfSignature,
+    workspace: string,
+    rootPem: string,
+    intermediatePems: string[],
+  ): Promise<VerifiedPdfSignature> {
+    const notes: string[] = [];
+    const signatureWorkspace = path.join(workspace, `signature-${signature.signatureIndex}`);
+    await mkdir(signatureWorkspace, { recursive: true });
+
+    const signatureDerPath = path.join(signatureWorkspace, 'signature.der');
+    const signedDataPath = path.join(signatureWorkspace, 'signed-data.bin');
+    const signerFromCmsPath = path.join(signatureWorkspace, 'signer-from-cms.pem');
+    await writeFile(signatureDerPath, signature.signatureDer);
+    await writeFile(signedDataPath, signature.signedData);
+
+    await runOpenSsl([
+      'cms',
+      '-verify',
+      '-binary',
+      '-inform',
+      'DER',
+      '-in',
+      signatureDerPath,
+      '-content',
+      signedDataPath,
+      '-noverify',
+      '-signer',
+      signerFromCmsPath,
+      '-out',
+      path.join(signatureWorkspace, 'verified.bin'),
+    ]);
+    notes.push('CMS signature and authenticated attributes validated.');
+
+    const p7CertsPath = path.join(signatureWorkspace, 'pkcs7-certs.pem');
+    await runOpenSsl(['pkcs7', '-inform', 'DER', '-in', signatureDerPath, '-print_certs', '-out', p7CertsPath]);
+    const embeddedCerts = dedupePemCertificates(splitPemCertificates(await readFile(p7CertsPath, 'utf8')));
+    if (!embeddedCerts.length) {
+      throw new Error('No embedded certificates found in PDF signature.');
+    }
+
+    const signerPemFromCms = extractFirstPemCertificate(await readFile(signerFromCmsPath, 'utf8'));
+    const signerPem = signerPemFromCms || selectSignerCertificate(embeddedCerts);
+    const signerCert = new X509Certificate(signerPem);
+    const signerVatId = parseVatIdFromSubjectDn(signerCert.subject);
+    const untrustedPem = dedupePemCertificates([
+      ...intermediatePems,
+      ...embeddedCerts.filter((pem) => pem !== signerPem),
+    ]);
+
+    const signerPath = path.join(signatureWorkspace, 'signer.pem');
+    const rootPath = path.join(signatureWorkspace, 'fnmt-root.pem');
+    const untrustedPath = path.join(signatureWorkspace, 'untrusted-chain.pem');
+    await writeFile(signerPath, signerPem);
+    await writeFile(rootPath, rootPem);
+    await writeFile(untrustedPath, `${untrustedPem.join('\n')}\n`);
+
+    const chainCheck = await runOpenSslSafe(['verify', '-CAfile', rootPath, '-untrusted', untrustedPath, signerPath]);
+    if (!chainCheck.ok) {
+      throw new Error(`Certificate chain validation failed: ${asSingleLineError(chainCheck.error)}`);
+    }
+    notes.push('Signer chain validated against FNMT root/intermediate.');
+
+    const revocationChecks: RevocationDebugCheck[] = [];
+    let signerCrlUrls: string[] = [];
+    try {
+      signerCrlUrls = await extractCrlUrls(signerPath);
+    } catch (error: unknown) {
+      const message = `Signer CRL distribution parse failed: ${asSingleLineError(error)}`;
+      revocationChecks.push({
+        phase: 'discovery',
+        status: 'parse_error',
+        message,
+      });
+      notes.push(message);
+    }
+    const caCrlUrls = new Set<string>();
+    for (let index = 0; index < untrustedPem.length; index += 1) {
+      const certPem = untrustedPem[index];
+      let cert: X509Certificate;
+      try {
+        cert = new X509Certificate(certPem);
+      } catch {
+        continue;
+      }
+      if (!cert.ca) continue;
+      const certPath = path.join(signatureWorkspace, `ca-chain-${index}.pem`);
+      await writeFile(certPath, certPem);
+      try {
+        const urls = await extractCrlUrls(certPath);
+        for (const url of urls) caCrlUrls.add(url);
+      } catch (error: unknown) {
+        const message = `CA CRL distribution parse failed for chain cert ${index}: ${asSingleLineError(error)}`;
+        revocationChecks.push({
+          phase: 'discovery',
+          status: 'parse_error',
+          message,
+        });
+        notes.push(message);
+      }
+    }
+    const crlUrls = [...new Set([...signerCrlUrls, ...caCrlUrls])];
+
+    let revocationStatus: RevocationStatus = 'unknown';
+    if (!crlUrls.length) {
+      const message = 'No CRL URLs found in signer/intermediate certificates.';
+      revocationChecks.push({
+        phase: 'discovery',
+        status: 'no_urls',
+        message,
+      });
+      notes.push(message);
+    } else {
+      revocationChecks.push({
+        phase: 'discovery',
+        status: 'ok',
+        message: `Discovered ${crlUrls.length} CRL URL(s).`,
+      });
+      const crlPemList: string[] = [];
+      for (let index = 0; index < crlUrls.length; index += 1) {
+        const crlUrl = crlUrls[index];
+        try {
+          const response = await fetch(crlUrl, { signal: AbortSignal.timeout(15000) });
+          if (!response.ok) {
+            notes.push(`CRL download failed (${response.status}) for ${crlUrl}`);
+            revocationChecks.push({
+              url: crlUrl,
+              phase: 'download',
+              status: 'http_error',
+              httpStatus: response.status,
+              message: `HTTP ${response.status}`,
+            });
+            continue;
+          }
+          const crlBuffer = Buffer.from(await response.arrayBuffer());
+          try {
+            const crlPem = await crlBufferToPem(crlBuffer, signatureWorkspace, `crl-${index}`);
+            crlPemList.push(crlPem);
+            notes.push(`CRL loaded from ${crlUrl}`);
+            revocationChecks.push({
+              url: crlUrl,
+              phase: 'download',
+              status: 'ok',
+              httpStatus: response.status,
+              message: 'CRL downloaded and parsed.',
+            });
+          } catch (error: unknown) {
+            const message = asSingleLineError(error);
+            notes.push(`CRL parse error for ${crlUrl}: ${message}`);
+            revocationChecks.push({
+              url: crlUrl,
+              phase: 'download',
+              status: 'parse_error',
+              httpStatus: response.status,
+              message,
+            });
+          }
+        } catch (error: unknown) {
+          const message = asSingleLineError(error);
+          const status = isTimeoutLikeError(error) ? 'timeout' : 'download_error';
+          notes.push(`CRL download error for ${crlUrl}: ${message}`);
+          revocationChecks.push({
+            url: crlUrl,
+            phase: 'download',
+            status,
+            message,
+          });
+        }
+      }
+
+      if (crlPemList.length) {
+        const crlFilePath = path.join(signatureWorkspace, 'all.crl.pem');
+        await writeFile(crlFilePath, `${crlPemList.join('\n')}\n`);
+        const verifyWithMode = async (mode: '-crl_check_all' | '-crl_check') => runOpenSslSafe([
+          'verify',
+          mode,
+          '-CAfile',
+          rootPath,
+          '-untrusted',
+          untrustedPath,
+          '-CRLfile',
+          crlFilePath,
+          signerPath,
+        ]);
+
+        const revocationCheckAll = await verifyWithMode('-crl_check_all');
+        if (revocationCheckAll.ok) {
+          revocationStatus = 'good';
+          notes.push('Revocation check passed.');
+          revocationChecks.push({
+            phase: 'verify',
+            status: 'ok',
+            message: 'OpenSSL CRL verification passed (mode=-crl_check_all).',
+          });
+        } else if (isDifferentCrlScopeError(revocationCheckAll.error)) {
+          const scopeErrorMessage = asSingleLineError(revocationCheckAll.error);
+          notes.push(`Chain CRL check scope mismatch: ${scopeErrorMessage}`);
+          revocationChecks.push({
+            phase: 'verify',
+            status: 'verify_error',
+            message: `mode=-crl_check_all ${scopeErrorMessage}`,
+          });
+
+          const revocationCheckLeaf = await verifyWithMode('-crl_check');
+          if (revocationCheckLeaf.ok) {
+            revocationStatus = 'good';
+            notes.push('Leaf revocation check passed after chain scope mismatch.');
+            revocationChecks.push({
+              phase: 'verify',
+              status: 'ok',
+              message: 'OpenSSL CRL verification passed (mode=-crl_check fallback).',
+            });
+          } else {
+            const lowerError = asSingleLineError(revocationCheckLeaf.error).toLowerCase();
+            if (lowerError.includes('certificate revoked')) {
+              revocationStatus = 'revoked';
+              notes.push('Certificate is revoked according to CRL.');
+              revocationChecks.push({
+                phase: 'verify',
+                status: 'revoked',
+                message: `mode=-crl_check ${lowerError}`,
+              });
+            } else {
+              revocationStatus = 'unknown';
+              notes.push(`Revocation check inconclusive: ${lowerError}`);
+              revocationChecks.push({
+                phase: 'verify',
+                status: 'verify_error',
+                message: `mode=-crl_check ${lowerError}`,
+              });
+            }
+          }
+        } else {
+          const lowerError = asSingleLineError(revocationCheckAll.error).toLowerCase();
+          if (lowerError.includes('certificate revoked')) {
+            revocationStatus = 'revoked';
+            notes.push('Certificate is revoked according to CRL.');
+            revocationChecks.push({
+              phase: 'verify',
+              status: 'revoked',
+              message: `mode=-crl_check_all ${lowerError}`,
+            });
+          } else {
+            revocationStatus = 'unknown';
+            notes.push(`Revocation check inconclusive: ${lowerError}`);
+            revocationChecks.push({
+              phase: 'verify',
+              status: 'verify_error',
+              message: `mode=-crl_check_all ${lowerError}`,
+            });
+          }
+        }
+      } else {
+        notes.push('No CRL was successfully downloaded.');
+        revocationChecks.push({
+          phase: 'verify',
+          status: 'verify_error',
+          message: 'No CRL was successfully downloaded and parsed.',
+        });
+      }
+    }
+
+    const revocationDebug: RevocationDebugInfo = {
+      finalStatus: revocationStatus,
+      checks: revocationChecks,
+    };
+
+    if (this.config.strictRevocation && revocationStatus !== 'good') {
+      const revocationNotes = notes
+        .filter((note) =>
+          note.startsWith('CRL ')
+          || note.startsWith('No CRL')
+          || note.toLowerCase().includes('revocation'),
+        );
+      const detail = revocationNotes.length ? ` details: ${revocationNotes.join(' | ')}` : '';
+      throw new VerificationDiagnosticError(
+        `Revocation check did not pass (status=${revocationStatus}).${detail}`,
+        { revocation: revocationDebug },
+      );
+    }
+
+    return {
+      signatureIndex: signature.signatureIndex,
+      signerCert,
+      signerVatId,
+      revocationStatus,
+      revocationDebug,
+      notes,
+      signedData: signature.signedData,
+    };
+  }
+
   private async resolveCert(
     label: string,
     pemFromEnv: string | undefined,
@@ -973,332 +1318,114 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
       const intermediatePems = trustAnchors.intermediatePems;
       notes.push(`FNMT root loaded from ${trustAnchors.rootSource}`);
       notes.push(`FNMT intermediate loaded from ${trustAnchors.intermediateSources.join(', ')}`);
+      const extractedSignatures = extractPdfSignatures(submission.pdfBytes);
+      notes.push(`Detected ${extractedSignatures.length} PDF signature(s).`);
 
-      const templateUrl = resolveTemplateUrl(
-        this.config.templateUrlPattern,
-        route,
-        this.config.templateUseTestPrefix,
-      );
-      const { bytes: templateBytes, source: templateSource } = await this.loadTemplateBytes(templateUrl);
-      notes.push(
-        templateSource === 'cache'
-          ? `Template loaded from cache: ${templateUrl}`
-          : `Template downloaded: ${templateUrl}`,
-      );
-
-      const { signatureDer, signedData } = extractPdfSignature(submission.pdfBytes);
-      const signatureDerPath = path.join(workspace, 'signature.der');
-      const signedDataPath = path.join(workspace, 'signed-data.bin');
-      const signerFromCmsPath = path.join(workspace, 'signer-from-cms.pem');
-      await writeFile(signatureDerPath, signatureDer);
-      await writeFile(signedDataPath, signedData);
-
-      await runOpenSsl([
-        'cms',
-        '-verify',
-        '-binary',
-        '-inform',
-        'DER',
-        '-in',
-        signatureDerPath,
-        '-content',
-        signedDataPath,
-        '-noverify',
-        '-signer',
-        signerFromCmsPath,
-        '-out',
-        path.join(workspace, 'verified.bin'),
-      ]);
-      notes.push('CMS signature and authenticated attributes validated.');
-
-      const p7CertsPath = path.join(workspace, 'pkcs7-certs.pem');
-      await runOpenSsl(['pkcs7', '-inform', 'DER', '-in', signatureDerPath, '-print_certs', '-out', p7CertsPath]);
-      const embeddedCerts = dedupePemCertificates(splitPemCertificates(await readFile(p7CertsPath, 'utf8')));
-      if (!embeddedCerts.length) {
-        throw new Error('No embedded certificates found in PDF signature.');
-      }
-
-      const signerPemFromCms = extractFirstPemCertificate(await readFile(signerFromCmsPath, 'utf8'));
-      const signerPem = signerPemFromCms || selectSignerCertificate(embeddedCerts);
-      const signerCert = new X509Certificate(signerPem);
-      const untrustedPem = dedupePemCertificates([
-        ...intermediatePems,
-        ...embeddedCerts.filter((pem) => pem !== signerPem),
-      ]);
-
-      const signerPath = path.join(workspace, 'signer.pem');
-      const rootPath = path.join(workspace, 'fnmt-root.pem');
-      const untrustedPath = path.join(workspace, 'untrusted-chain.pem');
-      await writeFile(signerPath, signerPem);
-      await writeFile(rootPath, rootPem);
-      await writeFile(untrustedPath, `${untrustedPem.join('\n')}\n`);
-
-      const chainCheck = await runOpenSslSafe(['verify', '-CAfile', rootPath, '-untrusted', untrustedPath, signerPath]);
-      if (!chainCheck.ok) {
-        throw new Error(`Certificate chain validation failed: ${asSingleLineError(chainCheck.error)}`);
-      }
-      notes.push('Signer chain validated against FNMT root/intermediate.');
-
-      const revocationChecks: RevocationDebugCheck[] = [];
-      let signerCrlUrls: string[] = [];
-      try {
-        signerCrlUrls = await extractCrlUrls(signerPath);
-      } catch (error: unknown) {
-        const message = `Signer CRL distribution parse failed: ${asSingleLineError(error)}`;
-        revocationChecks.push({
-          phase: 'discovery',
-          status: 'parse_error',
-          message,
-        });
-        notes.push(message);
-      }
-      const caCrlUrls = new Set<string>();
-      for (let index = 0; index < untrustedPem.length; index += 1) {
-        const certPem = untrustedPem[index];
-        let cert: X509Certificate;
+      const verifiedSignatures: VerifiedPdfSignature[] = [];
+      for (const signature of extractedSignatures) {
+        let verifiedSignature: VerifiedPdfSignature;
         try {
-          cert = new X509Certificate(certPem);
-        } catch {
-          continue;
-        }
-        if (!cert.ca) continue;
-        const certPath = path.join(workspace, `ca-chain-${index}.pem`);
-        await writeFile(certPath, certPem);
-        try {
-          const urls = await extractCrlUrls(certPath);
-          for (const url of urls) caCrlUrls.add(url);
+          verifiedSignature = await this.verifyPdfSignature(signature, workspace, rootPem, intermediatePems);
         } catch (error: unknown) {
-          const message = `CA CRL distribution parse failed for chain cert ${index}: ${asSingleLineError(error)}`;
-          revocationChecks.push({
-            phase: 'discovery',
-            status: 'parse_error',
-            message,
-          });
-          notes.push(message);
+          const label = `Signature ${signature.signatureIndex + 1}`;
+          if (error instanceof VerificationDiagnosticError) {
+            throw new VerificationDiagnosticError(`${label} failed: ${error.message}`, error.errorDetails);
+          }
+          throw new Error(`${label} failed: ${asSingleLineError(error)}`);
+        }
+        verifiedSignatures.push(verifiedSignature);
+        const label = `Signature ${signature.signatureIndex + 1}`;
+        if (verifiedSignature.signerVatId) {
+          notes.push(`${label} signer VAT: ${verifiedSignature.signerVatId}`);
+        } else {
+          notes.push(`${label} signer VAT: not present in certificate subject.`);
+        }
+        notes.push(...verifiedSignature.notes.map((note) => `${label}: ${note}`));
+      }
+
+      const primarySignature = selectPrimaryCredentialSignature(verifiedSignatures, this.config.verifierVatList);
+      if (!primarySignature) {
+        throw new Error('All PDF signatures belong to verifier organizations listed in VERIFIERS_VAT_LIST.');
+      }
+
+      for (const signature of verifiedSignatures) {
+        if (signature.signatureIndex === primarySignature.signatureIndex) continue;
+        if (signature.signerVatId && this.config.verifierVatList.includes(signature.signerVatId)) {
+          notes.push(
+            `Signature ${signature.signatureIndex + 1} ignored for credential extraction because signer VAT ` +
+            `${signature.signerVatId} is listed in VERIFIERS_VAT_LIST.`,
+          );
         }
       }
-      const crlUrls = [...new Set([...signerCrlUrls, ...caCrlUrls])];
+      notes.push(`Credential extraction uses signature ${primarySignature.signatureIndex + 1}.`);
 
-      let revocationStatus: RevocationStatus = 'unknown';
-      if (!crlUrls.length) {
-        const message = 'No CRL URLs found in signer/intermediate certificates.';
-        revocationChecks.push({
-          phase: 'discovery',
-          status: 'no_urls',
-          message,
-        });
-        notes.push(message);
+      const skipTemplateValidation = route.resourceType === 'contract';
+      let templateUrl = '';
+      let templateMatch = true;
+      let templateDigestHex = '';
+      let templateSha256Hex = '';
+      if (skipTemplateValidation) {
+        notes.push('Content/template validation skipped because resourceType=contract.');
       } else {
-        revocationChecks.push({
-          phase: 'discovery',
-          status: 'ok',
-          message: `Discovered ${crlUrls.length} CRL URL(s).`,
-        });
-        const crlPemList: string[] = [];
-        for (let index = 0; index < crlUrls.length; index += 1) {
-          const crlUrl = crlUrls[index];
-          try {
-            const response = await fetch(crlUrl, { signal: AbortSignal.timeout(15000) });
-            if (!response.ok) {
-              notes.push(`CRL download failed (${response.status}) for ${crlUrl}`);
-              revocationChecks.push({
-                url: crlUrl,
-                phase: 'download',
-                status: 'http_error',
-                httpStatus: response.status,
-                message: `HTTP ${response.status}`,
-              });
-              continue;
-            }
-            const crlBuffer = Buffer.from(await response.arrayBuffer());
-            try {
-              const crlPem = await crlBufferToPem(crlBuffer, workspace, `crl-${index}`);
-              crlPemList.push(crlPem);
-              notes.push(`CRL loaded from ${crlUrl}`);
-              revocationChecks.push({
-                url: crlUrl,
-                phase: 'download',
-                status: 'ok',
-                httpStatus: response.status,
-                message: 'CRL downloaded and parsed.',
-              });
-            } catch (error: unknown) {
-              const message = asSingleLineError(error);
-              notes.push(`CRL parse error for ${crlUrl}: ${message}`);
-              revocationChecks.push({
-                url: crlUrl,
-                phase: 'download',
-                status: 'parse_error',
-                httpStatus: response.status,
-                message,
-              });
-            }
-          } catch (error: unknown) {
-            const message = asSingleLineError(error);
-            const status = isTimeoutLikeError(error) ? 'timeout' : 'download_error';
-            notes.push(`CRL download error for ${crlUrl}: ${message}`);
-            revocationChecks.push({
-              url: crlUrl,
-              phase: 'download',
-              status,
-              message,
-            });
-          }
-        }
+        templateUrl = resolveTemplateUrl(
+          this.config.templateUrlPattern,
+          route,
+          this.config.templateUseTestPrefix,
+        );
+        const { bytes: templateBytes, source: templateSource } = await this.loadTemplateBytes(templateUrl);
+        notes.push(
+          templateSource === 'cache'
+            ? `Template loaded from cache: ${templateUrl}`
+            : `Template downloaded: ${templateUrl}`,
+        );
 
-        if (crlPemList.length) {
-          const crlFilePath = path.join(workspace, 'all.crl.pem');
-          await writeFile(crlFilePath, `${crlPemList.join('\n')}\n`);
-          const verifyWithMode = async (mode: '-crl_check_all' | '-crl_check') => runOpenSslSafe([
-            'verify',
-            mode,
-            '-CAfile',
-            rootPath,
-            '-untrusted',
-            untrustedPath,
-            '-CRLfile',
-            crlFilePath,
-            signerPath,
-          ]);
+        const signedPdfDigestHex = hashHex(submission.pdfBytes, this.config.digestAlgorithm);
+        const unsignedPdfDigestHex = hashHex(primarySignature.signedData, this.config.digestAlgorithm);
+        templateDigestHex = hashHex(templateBytes, this.config.digestAlgorithm);
+        const strictBytesTemplateMatch =
+          templateDigestHex === signedPdfDigestHex || templateDigestHex === unsignedPdfDigestHex;
 
-          const revocationCheckAll = await verifyWithMode('-crl_check_all');
-          if (revocationCheckAll.ok) {
-            revocationStatus = 'good';
-            notes.push('Revocation check passed.');
-            revocationChecks.push({
-              phase: 'verify',
-              status: 'ok',
-              message: 'OpenSSL CRL verification passed (mode=-crl_check_all).',
-            });
-          } else if (isDifferentCrlScopeError(revocationCheckAll.error)) {
-            const scopeErrorMessage = asSingleLineError(revocationCheckAll.error);
-            notes.push(`Chain CRL check scope mismatch: ${scopeErrorMessage}`);
-            revocationChecks.push({
-              phase: 'verify',
-              status: 'verify_error',
-              message: `mode=-crl_check_all ${scopeErrorMessage}`,
-            });
-
-            const revocationCheckLeaf = await verifyWithMode('-crl_check');
-            if (revocationCheckLeaf.ok) {
-              revocationStatus = 'good';
-              notes.push('Leaf revocation check passed after chain scope mismatch.');
-              revocationChecks.push({
-                phase: 'verify',
-                status: 'ok',
-                message: 'OpenSSL CRL verification passed (mode=-crl_check fallback).',
-              });
-            } else {
-              const lowerError = asSingleLineError(revocationCheckLeaf.error).toLowerCase();
-              if (lowerError.includes('certificate revoked')) {
-                revocationStatus = 'revoked';
-                notes.push('Certificate is revoked according to CRL.');
-                revocationChecks.push({
-                  phase: 'verify',
-                  status: 'revoked',
-                  message: `mode=-crl_check ${lowerError}`,
-                });
-              } else {
-                revocationStatus = 'unknown';
-                notes.push(`Revocation check inconclusive: ${lowerError}`);
-                revocationChecks.push({
-                  phase: 'verify',
-                  status: 'verify_error',
-                  message: `mode=-crl_check ${lowerError}`,
-                });
-              }
-            }
+        templateMatch = strictBytesTemplateMatch;
+        if (this.config.templateMatchMode === 'logical-content') {
+          const templateLogical = computePdfLogicalFingerprint(templateBytes);
+          const uploadedLogical = computePdfLogicalFingerprint(primarySignature.signedData);
+          templateMatch = Boolean(
+            templateLogical
+            && uploadedLogical
+            && templateLogical.hash === uploadedLogical.hash,
+          );
+          notes.push('Template match mode: logical-content');
+          if (templateLogical && uploadedLogical) {
+            notes.push(
+              `Logical content hashes template=${templateLogical.hash} uploaded=${uploadedLogical.hash} ` +
+              `(pages template/uploaded=${templateLogical.pageCount}/${uploadedLogical.pageCount}, ` +
+              `content-streams=${templateLogical.pageContentCount}/${uploadedLogical.pageContentCount}).`,
+            );
           } else {
-            const lowerError = asSingleLineError(revocationCheckAll.error).toLowerCase();
-            if (lowerError.includes('certificate revoked')) {
-              revocationStatus = 'revoked';
-              notes.push('Certificate is revoked according to CRL.');
-              revocationChecks.push({
-                phase: 'verify',
-                status: 'revoked',
-                message: `mode=-crl_check_all ${lowerError}`,
-              });
-            } else {
-              revocationStatus = 'unknown';
-              notes.push(`Revocation check inconclusive: ${lowerError}`);
-              revocationChecks.push({
-                phase: 'verify',
-                status: 'verify_error',
-                message: `mode=-crl_check_all ${lowerError}`,
-              });
-            }
+            notes.push('Logical content fingerprint unavailable for template and/or uploaded PDF.');
           }
         } else {
-          notes.push('No CRL was successfully downloaded.');
-          revocationChecks.push({
-            phase: 'verify',
-            status: 'verify_error',
-            message: 'No CRL was successfully downloaded and parsed.',
-          });
+          notes.push('Template match mode: strict-bytes');
         }
-      }
 
-      const revocationDebug: RevocationDebugInfo = {
-        finalStatus: revocationStatus,
-        checks: revocationChecks,
-      };
-
-      if (this.config.strictRevocation && revocationStatus !== 'good') {
-        const revocationNotes = notes
-          .filter((note) =>
-            note.startsWith('CRL ')
-            || note.startsWith('No CRL')
-            || note.toLowerCase().includes('revocation'),
+        if (!templateMatch) {
+          notes.push(
+            `Template hash (${this.config.digestAlgorithm}) did not match uploaded PDF hash or unsigned PDF hash.`,
           );
-        const detail = revocationNotes.length ? ` details: ${revocationNotes.join(' | ')}` : '';
-        throw new VerificationDiagnosticError(
-          `Revocation check did not pass (status=${revocationStatus}).${detail}`,
-          { revocation: revocationDebug },
-        );
+        }
+        if (this.config.strictTemplateMatch && !templateMatch) {
+          throw new Error('Uploaded PDF does not match the expected template version.');
+        }
+
+        templateSha256Hex = hashHex(templateBytes, 'sha256');
       }
 
       const signedPdfDigestHex = hashHex(submission.pdfBytes, this.config.digestAlgorithm);
-      const unsignedPdfDigestHex = hashHex(signedData, this.config.digestAlgorithm);
-      const templateDigestHex = hashHex(templateBytes, this.config.digestAlgorithm);
-      const strictBytesTemplateMatch =
-        templateDigestHex === signedPdfDigestHex || templateDigestHex === unsignedPdfDigestHex;
-
-      let templateMatch = strictBytesTemplateMatch;
-      if (this.config.templateMatchMode === 'logical-content') {
-        const templateLogical = computePdfLogicalFingerprint(templateBytes);
-        const uploadedLogical = computePdfLogicalFingerprint(submission.pdfBytes);
-        templateMatch = Boolean(
-          templateLogical
-          && uploadedLogical
-          && templateLogical.hash === uploadedLogical.hash,
-        );
-        notes.push(`Template match mode: logical-content`);
-        if (templateLogical && uploadedLogical) {
-          notes.push(
-            `Logical content hashes template=${templateLogical.hash} uploaded=${uploadedLogical.hash} ` +
-            `(pages template/uploaded=${templateLogical.pageCount}/${uploadedLogical.pageCount}, ` +
-            `content-streams=${templateLogical.pageContentCount}/${uploadedLogical.pageContentCount}).`,
-          );
-        } else {
-          notes.push('Logical content fingerprint unavailable for template and/or uploaded PDF.');
-        }
-      } else {
-        notes.push(`Template match mode: strict-bytes`);
-      }
-
-      if (!templateMatch) {
-        notes.push(
-          `Template hash (${this.config.digestAlgorithm}) did not match uploaded PDF hash or unsigned PDF hash.`,
-        );
-      }
-      if (this.config.strictTemplateMatch && !templateMatch) {
-        throw new Error('Uploaded PDF does not match the expected template version.');
-      }
+      const unsignedPdfDigestHex = hashHex(primarySignature.signedData, this.config.digestAlgorithm);
 
       // Legacy sha256 block kept for compatibility in result payload.
       const signedPdfSha256Hex = hashHex(submission.pdfBytes, 'sha256');
-      const unsignedPdfSha256Hex = hashHex(signedData, 'sha256');
-      const templateSha256Hex = hashHex(templateBytes, 'sha256');
+      const unsignedPdfSha256Hex = hashHex(primarySignature.signedData, 'sha256');
 
       return {
         ok: true,
@@ -1307,23 +1434,23 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
         templateMatch,
         signatureValid: true,
         chainValid: true,
-        revocationStatus,
+        revocationStatus: primarySignature.revocationStatus,
         digest: {
           alg: this.config.digestAlgorithm,
           signedPdfHex: signedPdfDigestHex,
           unsignedPdfHex: unsignedPdfDigestHex,
           templateHex: templateDigestHex,
         },
-        signerCertificateSerialNumber: signerCert.serialNumber,
-        signerSubject: signerCert.subject,
-        signerIssuer: signerCert.issuer,
+        signerCertificateSerialNumber: primarySignature.signerCert.serialNumber,
+        signerSubject: primarySignature.signerCert.subject,
+        signerIssuer: primarySignature.signerCert.issuer,
         hashes: {
           signedPdfSha256Hex,
           unsignedPdfSha256Hex,
           templateSha256Hex,
         },
         notes,
-        revocationDebug,
+        revocationDebug: primarySignature.revocationDebug,
       };
     } finally {
       await rm(workspace, { recursive: true, force: true });

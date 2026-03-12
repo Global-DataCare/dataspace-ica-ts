@@ -1,6 +1,66 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
-import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
+
+type PdfRgbColor = { type: 'RGB'; red: number; green: number; blue: number };
+
+type PdfFontLike = {
+  widthOfTextAtSize(text: string, size: number): number;
+};
+
+type PdfTextFieldLike = {
+  setText(value: string): void;
+  addToPage(page: unknown, options: Record<string, unknown>): void;
+};
+
+type PdfFormFieldLike = {
+  getName(): string;
+  getText?: () => string | undefined;
+  getSelected?: () => string[] | string | undefined;
+  isChecked?: () => boolean;
+};
+
+type PdfFormLike = {
+  getFields(): PdfFormFieldLike[];
+  createTextField(name: string): PdfTextFieldLike;
+};
+
+type PdfPageLike = {
+  drawText(text: string, options: Record<string, unknown>): void;
+  drawRectangle(options: Record<string, unknown>): void;
+};
+
+type PdfDocumentLike = {
+  getForm(): PdfFormLike;
+  addPage(size: [number, number]): PdfPageLike;
+  embedFont(fontName: string): Promise<PdfFontLike>;
+  save(): Promise<Uint8Array<ArrayBufferLike>>;
+};
+
+type PdfLibModule = {
+  PDFDocument: {
+    load(
+      bytes: Buffer<ArrayBufferLike>,
+      options: { ignoreEncryption: boolean; updateMetadata: boolean },
+    ): Promise<PdfDocumentLike>;
+    create(): Promise<PdfDocumentLike>;
+  };
+  StandardFonts: {
+    Helvetica: string;
+    HelveticaBold: string;
+  };
+  rgb(red: number, green: number, blue: number): PdfRgbColor;
+};
+
+const require = createRequire(import.meta.url);
+let pdfLibModule: PdfLibModule | null = null;
+
+async function loadPdfLib(): Promise<PdfLibModule> {
+  if (!pdfLibModule) {
+    pdfLibModule = require('pdf-lib') as PdfLibModule;
+  }
+  return pdfLibModule;
+}
 
 export type TermsAnnexFieldSpec = {
   name: string;
@@ -19,13 +79,8 @@ export type TermsAnnexPdfOptions = {
 export const TERMS_ANNEX_FIELD_SPECS: TermsAnnexFieldSpec[] = [
   {
     name: 'organization.additionalType',
-    label: 'Organization sector / additionalType',
-    placeholder: 'onehealth | animal-care | health-care | ...',
-  },
-  {
-    name: 'organization.did',
-    label: 'Organization real DID',
-    placeholder: 'did:web:member.example.org',
+    label: 'Organization profile / additionalType',
+    placeholder: 'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
   },
   {
     name: 'organization.sameAs',
@@ -33,9 +88,14 @@ export const TERMS_ANNEX_FIELD_SPECS: TermsAnnexFieldSpec[] = [
     placeholder: 'did:web:member.example.org',
   },
   {
+    name: 'organization.url',
+    label: 'Organization primary domain',
+    placeholder: 'member.example.org',
+  },
+  {
     name: 'organization.alternateName',
-    label: 'Organization internal alias',
-    placeholder: 'did:web:ica.example.org:ica:cds-ES:v1:...',
+    label: 'Organization alias',
+    placeholder: 'acme',
   },
   {
     name: 'organization.registrationNumber',
@@ -43,31 +103,30 @@ export const TERMS_ANNEX_FIELD_SPECS: TermsAnnexFieldSpec[] = [
     placeholder: 'ES-SAN-REG-0001',
   },
   {
-    name: 'legalRepresentative.email',
-    label: 'Legal representative email',
-    placeholder: 'rep@example.org',
+    name: 'organization.email',
+    label: 'Organization contact hash/email',
+    placeholder: 'zOrgContactHash',
   },
   {
-    name: 'controller.email',
-    label: 'Controller email (delegated if different)',
-    placeholder: 'it-director@example.org',
+    name: 'person.email',
+    label: 'Controller hash/email',
+    placeholder: 'zControllerHash',
   },
   {
-    name: 'controller.kid',
+    name: 'person.alternateName',
     label: 'Controller key id (kid)',
     placeholder: 'controller-es384-20260309',
   },
   {
-    name: 'controller.alg',
+    name: 'person.additionalType',
     label: 'Controller algorithm',
     placeholder: 'ES384 | ML-DSA',
   },
-  {
-    name: 'controller.publicKeyJwk',
-    label: 'Controller public key JWK (JSON)',
-    placeholder: '{"kty":"EC","crv":"P-384","x":"...","y":"..."}',
-  },
 ];
+
+const CANONICAL_ANNEX_FIELD_NAMES = new Map(
+  TERMS_ANNEX_FIELD_SPECS.map((spec) => [spec.name.toLowerCase(), spec.name] as const),
+);
 
 function asNonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -76,7 +135,7 @@ function asNonEmptyString(value: unknown): string {
 function wrapByWidth(
   text: string,
   maxWidth: number,
-  font: PDFFont,
+  font: PdfFontLike,
   fontSize: number,
 ): string[] {
   const words = text
@@ -144,6 +203,7 @@ export async function extractTermsAnnexFormFieldsFromPdf(
 ): Promise<{ fields: Record<string, string>; warnings: string[] }> {
   const warnings: string[] = [];
   try {
+    const { PDFDocument } = await loadPdfLib();
     const document = await PDFDocument.load(pdfBytes, { ignoreEncryption: true, updateMetadata: false });
     const form = document.getForm();
     const allFields = form.getFields();
@@ -155,16 +215,18 @@ export async function extractTermsAnnexFormFieldsFromPdf(
     for (const field of allFields) {
       const name = asNonEmptyString((field as { getName?: () => string }).getName?.());
       if (!name) continue;
-      byName.set(name, field);
+      const canonicalName = CANONICAL_ANNEX_FIELD_NAMES.get(name.toLowerCase());
+      if (!canonicalName || byName.has(canonicalName)) continue;
+      byName.set(canonicalName, field);
     }
 
     const fields: Record<string, string> = {};
-    for (const spec of TERMS_ANNEX_FIELD_SPECS) {
-      const field = byName.get(spec.name);
+    for (const fieldName of TERMS_ANNEX_FIELD_SPECS.map((spec) => spec.name)) {
+      const field = byName.get(fieldName);
       if (!field) continue;
       const value = readFieldValue(field);
       if (!value) continue;
-      fields[spec.name] = value;
+      fields[fieldName] = value;
     }
     return { fields, warnings };
   } catch (error: unknown) {
@@ -177,6 +239,7 @@ export async function generateTermsAnnexPdf(options: TermsAnnexPdfOptions): Prom
   outputPath: string;
   includedFieldNames: string[];
 }> {
+  const { PDFDocument, StandardFonts, rgb } = await loadPdfLib();
   const document = await PDFDocument.create();
   const form = document.getForm();
   const regular = await document.embedFont(StandardFonts.Helvetica);

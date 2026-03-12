@@ -18,8 +18,8 @@ data:
   ICA_TERMS_TEMPLATE_CACHE_MAX_ENTRIES: "64"
   ICA_TERMS_TEMPLATE_URL_PATTERN: "https://raw.githubusercontent.com/Global-DataCare/terms/refs/heads/main/dataspace/{sector}/{jurisdictionLower}/{resourceVersion}/terms.pdf"
 
-  # Audit storage: none|filesystem|gcs
-  ICA_AUDIT_STORAGE_PROVIDER: "none"
+  # Audit storage: mem|filesystem|gcs
+  STORAGE_PROVIDER: "mem"
   ICA_AUDIT_STORAGE_REQUIRED: "true"
   ICA_AUDIT_ATTACHMENT_URL_PATTERN: "urn:uuid:{objectId}"
   ICA_AUDIT_STORAGE_FS_DIR: "/app/data/audit-pdf"
@@ -27,14 +27,11 @@ data:
 
   # Verification collections (issued credentials + evidence records)
   # Provider: mem|firestore
-  ICA_COLLECTIONS_PROVIDER: "mem"
+  DB_PROVIDER: "mem"
   ICA_COLLECTIONS_REQUIRED: "true"
   ICA_COLLECTIONS_PREFIX: "ica"
-  ICA_COLLECTIONS_ISSUED_COLLECTION: "issued_credentials"
-  ICA_COLLECTIONS_EVIDENCE_COLLECTION: "evidence_records"
   # Optional when provider=firestore
-  # ICA_COLLECTIONS_FIRESTORE_PROJECT_ID: "your-gcp-project-id"
-  # ICA_COLLECTIONS_FIRESTORE_DATABASE_ID: "(default)"
+  # FIRESTORE_PROJECT_ID: "your-gcp-project-id"
 
   # Optional automatic trust bootstrap from FNMT public URLs.
   ICA_FNMT_AUTO_DOWNLOAD: "true"
