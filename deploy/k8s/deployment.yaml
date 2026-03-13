@@ -14,6 +14,7 @@ spec:
       labels:
         app: dataspace-ica-api
     spec:
+      serviceAccountName: dataspace-ica-runtime
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

@@ -5,6 +5,7 @@ export type AllowedSector = string;
 export type VerifyAction = '_verify' | '_verify-response';
 export type ActivateAction = '_activate' | '_activate-response';
 export type RotateAction = '_rotate' | '_rotate-response';
+export type CreateDidDocumentAction = '_create' | '_create-response';
 export type AddEvidenceAction = '_add' | '_add-response';
 export type DelegationPolicyAction = '_upsert' | '_upsert-response';
 export type IssueCredentialAction = '_issue' | '_issue-response';
@@ -76,6 +77,16 @@ export interface RotateRouteContext {
   format: 'keys';
   resourceType: 'credentials' | 'communications';
   action: RotateAction;
+}
+
+export interface CreateDidDocumentRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'entity';
+  format: 'did';
+  resourceType: 'document';
+  action: CreateDidDocumentAction;
 }
 
 export interface AddEvidenceRouteContext {
@@ -222,6 +233,36 @@ export interface RotateSubmission {
   jti?: string;
   controllerProof?: ControllerDidcommProof;
   controllerAuthorizationPayloadBase64Url?: string;
+}
+
+export interface CreateDidDocumentControllerInput {
+  sameAs?: string;
+  alg?: SupportedSigningAlgorithm;
+  publicKeyJwk: Record<string, unknown>;
+}
+
+export interface CreateDidDocumentOrganizationInput {
+  identifier?: string;
+  taxID?: string;
+  legalName?: string;
+  sameAs?: string;
+  url?: string;
+  alternateName?: string;
+  additionalType?: string;
+  alg?: SupportedSigningAlgorithm;
+  publicKeyJwk: Record<string, unknown>;
+}
+
+export interface CreateDidDocumentInput {
+  id?: string;
+  controller: CreateDidDocumentControllerInput;
+  organization: CreateDidDocumentOrganizationInput;
+}
+
+export interface CreateDidDocumentSubmission {
+  thid: string;
+  jti?: string;
+  items: CreateDidDocumentInput[];
 }
 
 export interface AddEvidenceSubmission {
@@ -516,6 +557,22 @@ export interface CredentialSearchResult {
   items: CredentialSearchResultItem[];
 }
 
+export interface CreateDidDocumentResult {
+  createdCount: number;
+  items: CreateDidDocumentResultItem[];
+}
+
+export interface CreateDidDocumentResultItem {
+  did: string;
+  verificationMethod: string;
+  nodeOperator: string;
+  createdAt: string;
+  controllerSameAs?: string;
+  organizationTaxId?: string;
+  organizationLegalName?: string;
+  didDocument: Record<string, unknown>;
+}
+
 export interface CredentialSearchResultItem {
   issuedCredentialRecordId: string;
   credentialId: string;
@@ -536,6 +593,16 @@ export interface CredentialSearchJob {
   createdAt: number;
   updatedAt: number;
   result?: CredentialSearchResult;
+  error?: string;
+}
+
+export interface CreateDidDocumentJob {
+  thid: string;
+  route: CreateDidDocumentRouteContext;
+  status: EntityJobStatus;
+  createdAt: number;
+  updatedAt: number;
+  result?: CreateDidDocumentResult;
   error?: string;
 }
 

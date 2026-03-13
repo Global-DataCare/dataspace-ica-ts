@@ -7,6 +7,7 @@ import {
   buildRotateResponseLocation,
   parseActivateRoute,
   parseAddEvidenceRoute,
+  parseCreateDidDocumentRoute,
   parseDcatCatalogDdoDatasetRoute,
   parseDcatCatalogDdoRequestRoute,
   parseDcatCatalogDatasetRoute,
@@ -24,6 +25,8 @@ import { ActivateRequestManager } from './managers/activate-request-manager.ts';
 import { ActivateResponseManager } from './managers/activate-response-manager.ts';
 import { AddEvidenceRequestManager } from './managers/add-evidence-request-manager.ts';
 import { AddEvidenceResponseManager } from './managers/add-evidence-response-manager.ts';
+import { CreateDidDocumentRequestManager } from './managers/create-did-document-request-manager.ts';
+import { CreateDidDocumentResponseManager } from './managers/create-did-document-response-manager.ts';
 import { DelegationPolicyUpsertRequestManager } from './managers/delegation-policy-upsert-request-manager.ts';
 import { DelegationPolicyUpsertResponseManager } from './managers/delegation-policy-upsert-response-manager.ts';
 import { CredentialRevokeRequestManager } from './managers/credential-revoke-request-manager.ts';
@@ -70,6 +73,8 @@ import type {
   ActivateRouteContext,
   AddEvidenceResult,
   AddEvidenceRouteContext,
+  CreateDidDocumentResult,
+  CreateDidDocumentRouteContext,
   DelegationPolicyRouteContext,
   DelegationPolicyUpsertResult,
   CredentialRevokeResult,
@@ -178,6 +183,7 @@ function sendError(
     | ActivateRouteContext
     | RotateRouteContext
     | AddEvidenceRouteContext
+    | CreateDidDocumentRouteContext
     | DelegationPolicyRouteContext
     | IssueCredentialRouteContext
     | CredentialStatusRouteContext
@@ -450,6 +456,9 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const addEvidenceJobStore = new InMemoryEntityJobStore<AddEvidenceRouteContext, AddEvidenceResult>(
     options.jobResultTtlSeconds || 3600,
   );
+  const createDidDocumentJobStore = new InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>(
+    options.jobResultTtlSeconds || 3600,
+  );
   const delegationPolicyJobStore = new InMemoryEntityJobStore<
     DelegationPolicyRouteContext,
     DelegationPolicyUpsertResult
@@ -482,6 +491,8 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
     dataspaceSyncService,
   );
   const addEvidenceResponseManager = new AddEvidenceResponseManager(addEvidenceJobStore);
+  const createDidDocumentRequestManager = new CreateDidDocumentRequestManager(createDidDocumentJobStore);
+  const createDidDocumentResponseManager = new CreateDidDocumentResponseManager(createDidDocumentJobStore);
   const delegationPolicyUpsertRequestManager = new DelegationPolicyUpsertRequestManager(delegationPolicyJobStore);
   const delegationPolicyUpsertResponseManager = new DelegationPolicyUpsertResponseManager(delegationPolicyJobStore);
   const issueCredentialRequestManager = new IssueCredentialRequestManager(
@@ -574,6 +585,10 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
               'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate',
             rotateCommunicationsResponse:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate-response',
+            createDidDocument:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create',
+            createDidDocumentResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response',
             dcatCatalogRequest:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request',
             dcatCatalogDataset:
@@ -952,6 +967,48 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         }
 
         const outcome = await verifyResponseManager.poll(route, req, requestUrl);
+        if (outcome.type === 'error') {
+          sendError(req, res, outcome.statusCode, outcome.message, route);
+          return;
+        }
+        if (outcome.type === 'pending') {
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        sendDidcommJson(res, 200, outcome.payload);
+        return;
+      }
+
+      const parsedCreateDidDocument = parseCreateDidDocumentRoute(requestUrl.pathname);
+      if (parsedCreateDidDocument) {
+        if (!parsedCreateDidDocument.ok) {
+          sendError(req, res, parsedCreateDidDocument.statusCode, parsedCreateDidDocument.message);
+          return;
+        }
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', parsedCreateDidDocument.context);
+          return;
+        }
+
+        const route = parsedCreateDidDocument.context;
+        if (route.action === '_create') {
+          const outcome = await createDidDocumentRequestManager.submit(route, req);
+          if (outcome.type === 'error') {
+            sendError(req, res, outcome.statusCode, outcome.message, route);
+            return;
+          }
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+
+        const outcome = await createDidDocumentResponseManager.poll(route, req, requestUrl);
         if (outcome.type === 'error') {
           sendError(req, res, outcome.statusCode, outcome.message, route);
           return;

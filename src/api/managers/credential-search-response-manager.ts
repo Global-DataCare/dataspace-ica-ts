@@ -65,7 +65,7 @@ export class CredentialSearchResponseManager {
       return {
         type: 'error',
         statusCode: 400,
-        message: 'Missing thid or jti for _search-response polling.',
+        message: 'Missing thid for _search-response polling.',
       };
     }
 

@@ -61,7 +61,7 @@ export class AddEvidenceResponseManager {
       return {
         type: 'error',
         statusCode: 400,
-        message: 'Missing thid or jti for _add-response polling.',
+        message: 'Missing thid for _add-response polling.',
       };
     }
 

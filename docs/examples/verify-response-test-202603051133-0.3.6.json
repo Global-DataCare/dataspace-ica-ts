@@ -46,8 +46,11 @@
           ],
           "issuer": "did:web:localhost%3A3310",
           "validFrom": "2026-03-12T21:12:26.646Z",
+          "meta": {
+            "versionId": "zPdfVersionHash001"
+          },
           "credentialSubject": {
-            "id": "urn:organization:taxid:VATES-B00000000",
+            "id": "did:web:globaldatacare.es:onehealth:organization:taxid:VATES-B00000000",
             "@type": "Organization",
             "legalName": "Example Data Provider SL",
             "taxID": "VATES-B00000000",
@@ -55,7 +58,6 @@
             "url": "provider.example.org",
             "alternateName": "example-provider",
             "additionalType": "sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider",
-            "email": "zOrgContactHash",
             "address": {
               "@type": "PostalAddress",
               "addressCountry": "ES"
@@ -151,6 +153,9 @@
           ],
           "issuer": "did:web:localhost%3A3310",
           "validFrom": "2026-03-12T21:12:26.646Z",
+          "meta": {
+            "versionId": "zPdfVersionHash001"
+          },
           "credentialSubject": {
             "id": "urn:person:identifier:IDCES-99999999R",
             "@type": "Person",
@@ -169,7 +174,7 @@
             "familyName": "Example",
             "identifier": "IDCES-99999999R",
             "nationality": "ES",
-            "email": "zControllerHash",
+            "sameAs": "urn:multibase:zControllerHash",
             "alternateName": "controller-es384-001",
             "additionalType": "ES384"
           },

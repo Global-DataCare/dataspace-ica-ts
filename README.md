@@ -896,6 +896,8 @@ Verification and keys:
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_rotate-response` (stub)
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate` (stub)
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate-response` (stub)
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response`
 
 `_rotate` submit endpoints validate controller authorization signature (`body.signature.data`) before returning `202`.
 
@@ -997,10 +999,66 @@ Important:
 - `./cloud_deploy.sh` in this repo deploys to **GKE**.
 - GKE gives internal service (`ClusterIP`) or public IP (`LoadBalancer`), not `*.run.app`.
 - `*.run.app` URLs are from **Cloud Run** deployments.
+- Before deploying, `./cloud_deploy.sh` now validates local `gcp-service-account.json` (or `GOOGLE_APPLICATION_CREDENTIALS` if set) and fails if its `project_id` does not match `FIRESTORE_PROJECT_ID`.
+- Staging/production GKE should not use `GOOGLE_APPLICATION_CREDENTIALS=./gcp-service-account.json`; use Workload Identity instead.
 
 Step-by-step guide:
 
 - [`deploy/k8s/README.md`](./deploy/k8s/README.md)
+- [`docs/security-gke.md`](./docs/security-gke.md) for runtime identity, Firestore/GCS IAM, and Workload Identity enablement
+
+### Service Account JSON via CLI
+
+For local Firestore/GCS testing, create a service-account key in the runtime data project, not the cluster project.
+
+Typical split in this repo:
+
+- GKE cluster project: `globaldatacare-test`
+- Runtime data/artifacts project: `globaldatacare-ica-dev`
+
+List existing service accounts in the runtime project:
+
+```bash
+gcloud iam service-accounts list --project globaldatacare-ica-dev
+```
+
+Create a dedicated service account if needed:
+
+```bash
+gcloud iam service-accounts create dataspace-ica-local \
+  --project globaldatacare-ica-dev \
+  --display-name="dataspace-ica local runtime"
+```
+
+Create the JSON key file:
+
+```bash
+gcloud iam service-accounts keys create gcp-service-account.json \
+  --project globaldatacare-ica-dev \
+  --iam-account=dataspace-ica-local@globaldatacare-ica-dev.iam.gserviceaccount.com
+```
+
+Check that the JSON belongs to the expected runtime project:
+
+```bash
+node --input-type=module -e "import { readFileSync } from 'node:fs'; const j=JSON.parse(readFileSync('gcp-service-account.json','utf8')); console.log(j.project_id)"
+```
+
+Expected output for this setup:
+
+```text
+globaldatacare-ica-dev
+```
+
+Recommended local test flow with that file:
+
+```bash
+cp env.example .env.local.gcloud
+# uncomment GOOGLE_APPLICATION_CREDENTIALS=./gcp-service-account.json if needed
+npm run api:local:gcloud
+```
+
+If you later deploy to GKE, keep `GOOGLE_APPLICATION_CREDENTIALS` commented in `.env.deploy.*` unless you are explicitly mounting that JSON into the pod.
 
 ## Environment Configuration (summary)
 
@@ -1154,7 +1212,6 @@ Predefined annex field names:
 - `organization.url`
 - `organization.alternateName`
 - `organization.registrationNumber`
-- `organization.email`
 - `person.email`
 - `person.alternateName`
 - `person.additionalType`
@@ -1163,11 +1220,14 @@ During `_verify`, signed PDF form values are extracted and incorporated into evi
 
 - Included as `annexFormFields` inside evidence `document_details`.
 - Mapped into organization/person credential subjects when present.
-- If `organization.sameAs` is a real `did:web`, it is used in VC subject mapping.
+- Organization VC `credentialSubject.id` is the canonical dataspace DID:
+  `did:web:<ORG_PUBLIC_DOMAIN_NODE_OPERATOR>:<sector>:organization:taxid:<VATES-NIF>`
+  (defaults to `did:web:globaldatacare.es:...`).
+- If `organization.sameAs` is a real `did:web` and differs from that canonical dataspace DID, it is mapped to `credentialSubject.sameAs`.
 - `organization.alternateName` is the short org alias, e.g. `acme`.
 - `organization.additionalType` carries the flattened profile string, e.g. `sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider`.
-- `organization.email` is the organization contact hash/email.
-- `person.email` is the controller hash/email.
+- `person.email` is the controller hash/email and is mapped to `credentialSubject.sameAs`.
+  If it arrives in plain text, backend hashes it automatically to `urn:multibase:z...`.
 - `person.alternateName` is used for the controller `kid`.
 - `person.additionalType` is used for the controller algorithm, e.g. `ES384`.
 

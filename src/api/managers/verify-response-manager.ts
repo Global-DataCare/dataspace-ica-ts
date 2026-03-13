@@ -10,6 +10,7 @@ import type {
   OperationOutcomeResource,
   VerificationErrorDetails,
   VerifyBundleResponse,
+  VerifyResult,
   VerifyRouteContext,
 } from '../types.ts';
 import { buildVerificationVcBundle } from '../tools/vc-bundle.ts';
@@ -17,6 +18,7 @@ import { buildVcJwtAttachments } from '../tools/vc-jwt.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 import { resolveIcaIssuerDid } from '../tools/ica-identity.ts';
+import { multibase58MultihashSha3_384Hex, sameAsValuesEqual } from '../tools/multihash.ts';
 
 export type VerifyPollOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -53,6 +55,120 @@ function buildOperationOutcome(issue: OperationOutcomeIssue[]): OperationOutcome
     resourceType: 'OperationOutcome',
     issue,
   };
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function appendOutcomeIssue(
+  outcome: unknown,
+  issue: OperationOutcomeIssue,
+): OperationOutcomeResource {
+  const existing = asObject(outcome);
+  const issueList = Array.isArray(existing?.issue)
+    ? existing.issue.filter((entry) => entry && typeof entry === 'object') as OperationOutcomeIssue[]
+    : [];
+  return {
+    resourceType: 'OperationOutcome',
+    issue: [...issueList, issue],
+  };
+}
+
+function parseIsoTimestamp(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function selectLatestRecord<T extends { updatedAt?: string; createdAt?: string }>(records: T[]): T | undefined {
+  return [...records].sort((left, right) => {
+    const leftTime = Math.max(parseIsoTimestamp(left.updatedAt || ''), parseIsoTimestamp(left.createdAt || ''));
+    const rightTime = Math.max(parseIsoTimestamp(right.updatedAt || ''), parseIsoTimestamp(right.createdAt || ''));
+    return rightTime - leftTime;
+  })[0];
+}
+
+function buildControllerChangedIssue(): OperationOutcomeIssue {
+  return {
+    severity: 'warning',
+    code: 'business-rule',
+    diagnostics: 'controllerChanged=true: incoming controller.sameAs differs from the latest stored legal representative credential for this organization.',
+  };
+}
+
+async function enrichVerificationBundleWithStoredVersionState(
+  route: VerifyRouteContext,
+  result: VerifyResult,
+  bundle: VerifyBundleResponse,
+  collectionsService: VerificationCollectionsService,
+): Promise<void> {
+  const versionId = multibase58MultihashSha3_384Hex(result.digest?.signedPdfHex || '');
+  const data = Array.isArray(bundle.data) ? bundle.data : [];
+  const organizationEntry = data.find((entry) => entry?.type === 'Organization-verification-v1.0');
+  const personEntry = data.find((entry) => entry?.type === 'LegalRepresentative-verification-v1.0');
+  const organizationResource = asObject(organizationEntry?.resource);
+  const personResource = asObject(personEntry?.resource);
+  const organizationSubject = asObject(organizationResource?.credentialSubject);
+  const personSubject = asObject(personResource?.credentialSubject);
+  const organizationTaxId = asString(organizationSubject?.taxID);
+  const currentControllerSameAs = asString(personSubject?.sameAs);
+
+  const records = (await collectionsService.listIssuedCredentials()).filter((record) =>
+    record.tenantId === route.tenantId
+    && record.jurisdiction.toLowerCase() === route.jurisdiction.toLowerCase()
+    && record.sector === route.sector
+  );
+
+  const organizationRecords = records.filter((record) => {
+    const subject = asObject(record.credential?.credentialSubject);
+    return asString(subject?.['@type']) === 'Organization' && asString(subject?.taxID) === organizationTaxId;
+  });
+  const latestOrganizationRecord = selectLatestRecord(organizationRecords);
+  const latestOrganizationMeta = asObject(asObject(latestOrganizationRecord?.credential)?.meta);
+  const previousVersionId = asString(latestOrganizationMeta?.versionId);
+
+  const personRecords = records.filter((record) => {
+    const subject = asObject(record.credential?.credentialSubject);
+    const memberOf = asObject(subject?.memberOf);
+    return asString(subject?.['@type']) === 'Person' && asString(memberOf?.taxID) === organizationTaxId;
+  });
+  const latestPersonRecord = selectLatestRecord(personRecords);
+  const latestPersonSubject = asObject(asObject(latestPersonRecord?.credential)?.credentialSubject);
+  const latestControllerSameAs = asString(latestPersonSubject?.sameAs);
+  const controllerChanged = !!currentControllerSameAs
+    && !!latestControllerSameAs
+    && !sameAsValuesEqual(currentControllerSameAs, latestControllerSameAs);
+
+  const meta: Record<string, unknown> = {
+    versionId,
+  };
+  if (previousVersionId && previousVersionId !== versionId) {
+    meta.previousVersionId = previousVersionId;
+  }
+  if (controllerChanged) {
+    meta.controllerChanged = true;
+  }
+
+  for (const entry of data) {
+    const resource = asObject(entry?.resource);
+    if (!resource) continue;
+    resource.meta = { ...meta };
+  }
+
+  if (controllerChanged) {
+    const warning = buildControllerChangedIssue();
+    bundle.issues = appendOutcomeIssue(bundle.issues, warning);
+    for (const entry of data) {
+      if (!entry?.response) continue;
+      entry.response.outcome = appendOutcomeIssue(entry.response.outcome, warning);
+    }
+  }
 }
 
 function mapRevocationDebugIssue(
@@ -115,7 +231,7 @@ export class VerifyResponseManager {
       return {
         type: 'error',
         statusCode: 400,
-        message: 'Missing thid or jti for _verify-response polling.',
+        message: 'Missing thid for _verify-response polling.',
       };
     }
 
@@ -206,6 +322,7 @@ export class VerifyResponseManager {
     const body = buildVerificationVcBundle(route, verificationResult, issuerDid) as VerifyBundleResponse;
 
     try {
+      await enrichVerificationBundleWithStoredVersionState(route, verificationResult, body, this.collectionsService);
       await this.collectionsService.persistFromVerificationBundle(route, thid, body);
     } catch (error: unknown) {
       return {

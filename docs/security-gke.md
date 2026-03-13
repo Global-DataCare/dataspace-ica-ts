@@ -2,20 +2,21 @@
 
 This note explains the minimum secure setup for this repository in GKE and the exact difference between local credentials and cluster runtime identity.
 
-## 1) What to do now (to keep it working)
+## 1) Runtime model: local vs cloud
 
-Use this in `.env.deploy.<env>` for GKE:
+This repository now uses two different authentication models on purpose:
 
-- Keep `GOOGLE_APPLICATION_CREDENTIALS` commented (or unset).
-- Keep `DB_PROVIDER=firestore` only if runtime IAM is correctly granted.
-- Keep `STORAGE_PROVIDER=gcs` only if bucket IAM is correctly granted.
+- local development: `GOOGLE_APPLICATION_CREDENTIALS=./gcp-service-account.json`
+- cloud/GKE: Workload Identity
 
-Then redeploy:
+For GKE:
 
-```bash
-./cloud_deploy.sh staging --yes
-kubectl -n dataspace-ica rollout status deployment/dataspace-ica-api --timeout=300s
-```
+- do not set `GOOGLE_APPLICATION_CREDENTIALS` in `.env.deploy.<env>`
+- use `DB_PROVIDER=firestore`
+- use `STORAGE_PROVIDER=gcs`
+- grant Firestore/GCS IAM to the workload identity
+
+The pod can be healthy and still fail at runtime if that workload identity does not have permissions on Firestore/GCS.
 
 ## 2) Why the `gcp-service-account.json` path failed
 
@@ -33,80 +34,121 @@ In your setup, these can be different:
 
 That is valid, but IAM must be explicitly granted cross-project.
 
-## 3.1) Cross-project GCS (create bucket + grant write from cluster project)
+## 4) What cloud runtime needs
 
-This is the exact flow for your current topology:
+### 4.1) Create or reuse a Google Service Account in the runtime project
 
-- GKE cluster project: `globaldatacare-test`
-- Runtime resources project: `globaldatacare-ica-dev`
+Use a dedicated runtime GSA in `globaldatacare-ica-dev`:
 
 ```bash
-# A) Create bucket in runtime project (if it does not exist)
-RUNTIME_PROJECT=globaldatacare-ica-dev
-REGION=europe-southwest1
-BUCKET=globaldatacare-ica-dev
-
-gcloud storage buckets create "gs://$BUCKET" \
-  --project "$RUNTIME_PROJECT" \
-  --location "$REGION" \
-  --uniform-bucket-level-access
-
-# B) Resolve cluster runtime identity (default node SA)
-CLUSTER_PROJECT=globaldatacare-test
-PROJECT_NUMBER=$(gcloud projects describe "$CLUSTER_PROJECT" --format='value(projectNumber)')
-NODE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-echo "$NODE_SA"
-
-# C) Grant bucket write permission to cluster runtime identity
-gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
-  --member="serviceAccount:${NODE_SA}" \
-  --role="roles/storage.objectAdmin"
+gcloud iam service-accounts create dataspace-ica-runtime \
+  --project globaldatacare-ica-dev \
+  --display-name="dataspace-ica runtime"
 ```
 
-If bucket name is already taken globally, use a unique bucket name and update:
-- `GCS_BUCKET_NAME`
+If it already exists, reuse:
 
-## 4) Runtime identity options
+`dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com`
 
-### Option A (recommended): GKE identity, no key file
-
-Do not set `GOOGLE_APPLICATION_CREDENTIALS`.
-
-Grant IAM in target project/resources to the cluster runtime identity (typically default compute SA):
+### 4.2) Grant Firestore and GCS permissions to that GSA
 
 ```bash
-PROJECT_NUMBER=$(gcloud projects describe globaldatacare-test --format='value(projectNumber)')
-NODE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-
 gcloud projects add-iam-policy-binding globaldatacare-ica-dev \
-  --member="serviceAccount:${NODE_SA}" \
+  --member="serviceAccount:dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com" \
   --role="roles/datastore.user"
 
 gcloud storage buckets add-iam-policy-binding gs://globaldatacare-ica-dev \
-  --member="serviceAccount:${NODE_SA}" \
+  --member="serviceAccount:dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com" \
   --role="roles/storage.objectAdmin"
 ```
 
-### Option B: JSON key file mounted into pod
+### 4.3) Enable Workload Identity on the cluster
 
-Only use if you intentionally manage long-lived service account keys.
+If this is not enabled, the binding below fails and the pod cannot assume the GSA.
 
-You must:
+```bash
+gcloud container clusters update gdc-unid-southwest \
+  --project globaldatacare-test \
+  --zone europe-southwest1-a \
+  --workload-pool=globaldatacare-test.svc.id.goog
+```
 
-- Create K8s Secret with the JSON file.
-- Mount it in `Deployment`.
-- Point `GOOGLE_APPLICATION_CREDENTIALS` to mounted path.
+This cluster update may stay in `Updating ...` for several minutes.
 
-If any of these steps is missing, runtime fails.
+Check later with:
 
-## 5) Networking/IP reminders
+```bash
+gcloud container clusters describe gdc-unid-southwest \
+  --project globaldatacare-test \
+  --zone europe-southwest1-a \
+  --format="yaml(workloadIdentityConfig,workloadPool,location,name)"
+```
+
+Expected after enablement:
+
+- `workloadIdentityConfig.workloadPool: globaldatacare-test.svc.id.goog`
+
+### 4.4) Bind the Kubernetes Service Account to the Google Service Account
+
+This repo now uses Kubernetes Service Account `dataspace-ica-runtime`, not `default`.
+
+Annotate the KSA:
+
+```bash
+kubectl annotate serviceaccount dataspace-ica-runtime \
+  -n dataspace-ica \
+  iam.gke.io/gcp-service-account=dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com \
+  --overwrite
+```
+
+Allow impersonation from the cluster workload pool:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com \
+  --project globaldatacare-ica-dev \
+  --member="serviceAccount:globaldatacare-test.svc.id.goog[dataspace-ica/dataspace-ica-runtime]" \
+  --role="roles/iam.workloadIdentityUser"
+```
+
+Here:
+
+- `globaldatacare-test` = cluster project
+- `dataspace-ica` = Kubernetes namespace
+- `dataspace-ica-runtime` = Kubernetes Service Account
+
+### 4.5) What must not be in `.env.deploy.staging`
+
+Do not set this in GKE runtime env:
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=./gcp-service-account.json
+```
+
+That path exists on your laptop, not inside the pod.
+
+### 4.6) Redeploy
+
+```bash
+./cloud_deploy.sh staging --yes
+kubectl -n dataspace-ica rollout restart deployment/dataspace-ica-api
+kubectl -n dataspace-ica rollout status deployment/dataspace-ica-api --timeout=240s
+```
+
+## 5) Fallback if Workload Identity is not enabled yet
+
+If you do not enable Workload Identity, the pod keeps trying to use the node identity.
+
+That may or may not work depending on IAM granted to the node pool service account, but it no longer depends on any local JSON file being injected into the pod.
+
+## 6) Networking/IP reminders
 
 - `CLUSTER-IP` is internal-only.
 - `EXTERNAL-IP` is public service endpoint.
 - Pod IP (`10.x.x.x`) is private and ephemeral.
 - For stable public IP, use `K8S_LOADBALANCER_IP` with a reserved IP in the cluster project/region.
 
-## 6) Quick validation after deploy
+## 7) Quick validation after deploy
 
 ```bash
 NAMESPACE=dataspace-ica

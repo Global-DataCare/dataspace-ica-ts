@@ -23,7 +23,6 @@ Field lookup is case-insensitive on read, so `Organization.sameAs` and `organiza
 - `organization.url`
 - `organization.alternateName`
 - `organization.registrationNumber`
-- `organization.email`
 - `person.email`
 - `person.alternateName`
 - `person.additionalType`
@@ -35,17 +34,19 @@ When a signed PDF contains these form fields, the API extracts them and carries 
 - `VerifyResult.annexFormFields` includes the extracted name/value map.
 - `document_details.annexFormFields` inside evidence `type=document` includes the same map.
 - VC mapping uses these fields:
-  - `organization.sameAs` -> `credentialSubject.id` and `sameAs` (organization VC, when it is a `did:web`).
+  - `credentialSubject.id` (organization VC) is the canonical dataspace-member DID derived as
+    `did:web:<ORG_PUBLIC_DOMAIN_NODE_OPERATOR>:<sector>:organization:taxid:<VATES-NIF>`.
+    Default public domain is `globaldatacare.es`.
+  - `organization.sameAs` -> `credentialSubject.sameAs` when present and different from the canonical dataspace-member DID.
+    Use it for an alternative real organization DID, for example `did:web:provider.example.org`.
   - `organization.url` -> `credentialSubject.url` (stored as bare domain, without `http(s)://`).
   - `organization.additionalType` -> `credentialSubject.additionalType`.
     Used as a flattened profile string such as `sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider`.
   - `organization.alternateName` -> `credentialSubject.alternateName`.
     Used for the short organization alias such as `acme`, not for the DID.
   - `organization.registrationNumber` -> `credentialSubject.registrationNumber`.
-  - `organization.email` -> organization VC `credentialSubject.email`.
-    Used for the organization contact hash/email.
-  - `person.email` -> person VC `credentialSubject.email` (preferred over certificate email).
-    Used for the controller hash/email.
+  - `person.email` -> person VC `credentialSubject.sameAs` (preferred over certificate email).
+    If it arrives as plain email, backend hashes it automatically to `urn:multibase:z...` so the plain value is not persisted.
   - `person.alternateName` -> person VC `credentialSubject.alternateName`.
     Used for the controller `kid`. We use `alternateName` instead of `nickname` to stay within the agreed schema.org Organization/Person subset already used here.
   - `person.additionalType` -> person VC `credentialSubject.additionalType`.

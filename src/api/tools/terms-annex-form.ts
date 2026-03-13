@@ -103,11 +103,6 @@ export const TERMS_ANNEX_FIELD_SPECS: TermsAnnexFieldSpec[] = [
     placeholder: 'ES-SAN-REG-0001',
   },
   {
-    name: 'organization.email',
-    label: 'Organization contact hash/email',
-    placeholder: 'zOrgContactHash',
-  },
-  {
     name: 'person.email',
     label: 'Controller hash/email',
     placeholder: 'zControllerHash',

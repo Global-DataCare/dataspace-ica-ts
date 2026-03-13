@@ -8,6 +8,8 @@ import type {
   ActivateSigningKeySubmission,
   AddEvidenceInput,
   AddEvidenceSubmission,
+  CreateDidDocumentInput,
+  CreateDidDocumentSubmission,
   ControllerDidcommProof,
   CredentialRevokeSubmission,
   DelegationPolicyInput,
@@ -35,6 +37,7 @@ import { assertSchemaOrgCredential } from './tools/schemaorg-credential-validati
 import { computeControllerAuthorizationPayloadBase64Url } from './tools/controller-authorization-payload.ts';
 import { extractVerifiedVcJwtAttachmentEvidence } from './tools/vc-jwt-evidence.ts';
 import { extractTermsAnnexFormFieldsFromPdf } from './tools/terms-annex-form.ts';
+import { normalizeSameAsHash } from './tools/multihash.ts';
 
 type ParsedThreadPayload = {
   thid?: string;
@@ -462,7 +465,7 @@ export async function parseActivateSigningKeySubmission(
 
 async function parseDidcommPlainObject(
   req: IncomingMessage,
-  action: '_add' | '_issue' | '_status' | '_revoke' | '_rotate' | '_upsert' | '_search' | '_list' | '_replace',
+  action: '_add' | '_issue' | '_status' | '_revoke' | '_rotate' | '_upsert' | '_search' | '_list' | '_replace' | '_create',
 ): Promise<{ parsed: ParsedObject; parsedBody: ParsedObject }> {
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
@@ -517,6 +520,122 @@ export async function parseRotateSubmission(req: IncomingMessage): Promise<Rotat
     ...(jti ? { jti } : {}),
     ...(controllerProof ? { controllerProof } : {}),
     controllerAuthorizationPayloadBase64Url,
+  };
+}
+
+function parseCreateDidDocumentController(
+  rawValue: unknown,
+  indexLabel: string,
+): CreateDidDocumentInput['controller'] {
+  const controller = asObject(rawValue) || {};
+  const publicKeyJwk = asObject(controller.publicKeyJwk);
+  if (!publicKeyJwk) {
+    throw new Error(`${indexLabel}.controller.publicKeyJwk is required.`);
+  }
+  const alg = asNonEmptyString(controller.alg) || asNonEmptyString(publicKeyJwk.alg) || undefined;
+  const sameAs = normalizeSameAsHash(asNonEmptyString(controller.sameAs)) || undefined;
+  return {
+    ...(sameAs ? { sameAs } : {}),
+    ...(alg ? { alg: alg as SupportedSigningAlgorithm } : {}),
+    publicKeyJwk: { ...publicKeyJwk },
+  };
+}
+
+function parseCreateDidDocumentOrganization(
+  rawValue: unknown,
+  indexLabel: string,
+): CreateDidDocumentInput['organization'] {
+  const organization = asObject(rawValue) || {};
+  const publicKeyJwk = asObject(organization.publicKeyJwk);
+  if (!publicKeyJwk) {
+    throw new Error(`${indexLabel}.organization.publicKeyJwk is required.`);
+  }
+  const identifier =
+    asNonEmptyString(organization.identifier)
+    || asNonEmptyString(organization.id)
+    || undefined;
+  const taxID =
+    asNonEmptyString(organization.taxID)
+    || asNonEmptyString(organization.taxId)
+    || undefined;
+  const legalName = asNonEmptyString(organization.legalName) || undefined;
+  const sameAs = asNonEmptyString(organization.sameAs) || undefined;
+  const url = asNonEmptyString(organization.url) || undefined;
+  const alternateName = asNonEmptyString(organization.alternateName) || undefined;
+  const additionalType = asNonEmptyString(organization.additionalType) || undefined;
+  const alg = asNonEmptyString(organization.alg) || asNonEmptyString(publicKeyJwk.alg) || undefined;
+  if (!identifier && !url) {
+    throw new Error(
+      `${indexLabel}.organization.identifier is required unless ${indexLabel}.organization.url is provided.`,
+    );
+  }
+  if (!identifier && !taxID) {
+    throw new Error(
+      `${indexLabel}.organization.taxID is required when ${indexLabel}.organization.identifier is omitted.`,
+    );
+  }
+  return {
+    ...(identifier ? { identifier } : {}),
+    ...(taxID ? { taxID } : {}),
+    ...(legalName ? { legalName } : {}),
+    ...(sameAs ? { sameAs } : {}),
+    ...(url ? { url } : {}),
+    ...(alternateName ? { alternateName } : {}),
+    ...(additionalType ? { additionalType } : {}),
+    ...(alg ? { alg: alg as SupportedSigningAlgorithm } : {}),
+    publicKeyJwk: { ...publicKeyJwk },
+  };
+}
+
+function parseCreateDidDocumentInput(
+  rawEntry: unknown,
+  fallback: ParsedObject,
+  indexLabel: string,
+): CreateDidDocumentInput {
+  const entry = asObject(rawEntry) || {};
+  const resource = asObject(entry.resource) || entry;
+  const controller = parseCreateDidDocumentController(
+    resource.controller || fallback.controller,
+    indexLabel,
+  );
+  const organization = parseCreateDidDocumentOrganization(
+    resource.organization || fallback.organization,
+    indexLabel,
+  );
+  const id =
+    asNonEmptyString(resource.id || entry.id || fallback.id || organization.identifier)
+    || undefined;
+
+  return {
+    ...(id ? { id } : {}),
+    controller,
+    organization,
+  };
+}
+
+export async function parseCreateDidDocumentSubmission(req: IncomingMessage): Promise<CreateDidDocumentSubmission> {
+  const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_create');
+  const thid = extractThid({
+    thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+  });
+  const jti = asNonEmptyString(parsed.jti || parsedBody.jti) || undefined;
+  const fallback: ParsedObject = { ...parsed, ...parsedBody };
+  const rawBatchEntries = Array.isArray(parsedBody.data)
+    ? parsedBody.data
+    : Array.isArray(parsed.data)
+      ? parsed.data
+      : [];
+  if (!rawBatchEntries.length) {
+    throw new Error('DID document create payload requires body.data[] with at least one item.');
+  }
+  const items = rawBatchEntries.map((entry, index) =>
+    parseCreateDidDocumentInput(entry, fallback, `body.data[${index}]`));
+
+  return {
+    thid,
+    ...(jti ? { jti } : {}),
+    items,
   };
 }
 
@@ -1150,7 +1269,7 @@ export async function parsePollingThreadId(
   req: IncomingMessage,
   requestUrl: URL,
 ): Promise<string | undefined> {
-  const queryValue = requestUrl.searchParams.get('thid') || requestUrl.searchParams.get('jti');
+  const queryValue = requestUrl.searchParams.get('thid');
   if (queryValue?.trim()) return queryValue.trim();
 
   if (req.method?.toUpperCase() !== 'POST') {
@@ -1164,8 +1283,7 @@ export async function parsePollingThreadId(
     const webReq = buildWebRequest(req);
     const formData = await webReq.formData();
     const thid = String(formData.get('thid') || '').trim();
-    const jti = String(formData.get('jti') || '').trim();
-    return thid || jti || undefined;
+    return thid || undefined;
   }
 
   const raw = await readIncomingBuffer(req);
@@ -1173,16 +1291,15 @@ export async function parsePollingThreadId(
 
   if (contentType === 'application/x-www-form-urlencoded') {
     const params = new URLSearchParams(raw.toString('utf8'));
-    const thid = params.get('thid') || params.get('jti');
+    const thid = params.get('thid');
     return thid?.trim() || undefined;
   }
 
-  if (contentType === 'application/json' || !contentType) {
+  if (contentType === 'application/json' || contentType === 'application/didcomm-plain+json' || !contentType) {
     try {
       const body = JSON.parse(raw.toString('utf8')) as ParsedThreadPayload;
       const thid = String(body.thid || '').trim();
-      const jti = String(body.jti || '').trim();
-      return thid || jti || undefined;
+      return thid || undefined;
     } catch {
       return undefined;
     }

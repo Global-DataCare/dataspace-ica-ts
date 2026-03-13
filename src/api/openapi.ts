@@ -1364,8 +1364,11 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
           type: ['VerifiableCredential', 'OrganizationCredential'],
           issuer: 'did:web:localhost%3A3310',
           validFrom: '2026-03-12T21:12:26.646Z',
+          meta: {
+            versionId: 'zPdfVersionHash001',
+          },
           credentialSubject: {
-            id: 'urn:organization:taxid:VATES-B00000000',
+            id: 'did:web:globaldatacare.es:onehealth:organization:taxid:VATES-B00000000',
             '@type': 'Organization',
             legalName: 'Example Data Provider SL',
             taxID: 'VATES-B00000000',
@@ -1374,7 +1377,6 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
             alternateName: 'example-provider',
             additionalType:
               'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
-            email: 'zOrgContactHash',
             address: {
               '@type': 'PostalAddress',
               addressCountry: 'ES',
@@ -1464,6 +1466,9 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
           type: ['VerifiableCredential', 'PersonCredential', 'LegalRepresentativeCredential'],
           issuer: 'did:web:localhost%3A3310',
           validFrom: '2026-03-12T21:12:26.646Z',
+          meta: {
+            versionId: 'zPdfVersionHash001',
+          },
           credentialSubject: {
             id: 'urn:person:identifier:IDCES-99999999R',
             '@type': 'Person',
@@ -1482,7 +1487,7 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
             familyName: 'Example',
             identifier: 'IDCES-99999999R',
             nationality: 'ES',
-            email: 'zControllerHash',
+            sameAs: 'urn:multibase:zControllerHash',
             alternateName: 'controller-es384-001',
             additionalType: 'ES384',
           },
@@ -2040,6 +2045,10 @@ export function buildIcaVerifyOpenApiSpec(
         description: 'FNMT PDF verification flow (_verify / _verify-response).',
       },
       {
+        name: 'entity/did/document',
+        description: 'Asynchronous organization did:web document creation and polling.',
+      },
+      {
         name: 'entity/keys/credentials',
         description: 'ICA credential-signing key lifecycle (_activate / _rotate).',
       },
@@ -2244,6 +2253,322 @@ export function buildIcaVerifyOpenApiSpec(
             },
             '404': {
               description: 'Controller DID document is not configured for the requested route.',
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create': {
+        post: {
+          tags: ['entity/did/document'],
+          summary: 'Create organization did:web document asynchronously',
+          description:
+            'Starts async creation of one or more organization did:web documents. `organization.publicKeyJwk` is the organization signing key used in the DID document `verificationMethod`. `controller.publicKeyJwk` is a different key used only to derive the top-level `controller` as `did:key:...`; the two keys must be different. Minimal explicit mode: send `organization.identifier` plus `organization.publicKeyJwk`, and the identifier must match a stored organization VC `credentialSubject.id`. Minimal derived mode: send `organization.url`, `organization.taxID`, and `organization.publicKeyJwk`; backend derives `did:web:<organization.url>:<sector>:organization:taxid:<VATES-NIF>`, and that derived DID must match the stored organization VC `credentialSubject.id` for the same `organization.taxID`. Optional runtime flag `ICA_CREATE_DID_REQUIRE_CONTROLLER_SAMEAS_MATCH=true` enforces that `controller.sameAs` matches the stored Person credential `credentialSubject.sameAs` for the same organization. Poll `_create-response` with the same `thid`.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: true,
+                },
+                examples: {
+                  createDidDocumentRequest: {
+                    summary: 'Create one organization did:web document',
+                    value: {
+                      jti: 'req-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              organization: {
+                                identifier: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                publicKeyJwk: {
+                                  kty: 'EC',
+                                  crv: 'P-384',
+                                  x: '<org-x-coordinate>',
+                                  y: '<org-y-coordinate>',
+                                },
+                              },
+                              controller: {
+                                sameAs: 'urn:multibase:zControllerHash',
+                                publicKeyJwk: {
+                                  kty: 'EC',
+                                  crv: 'P-384',
+                                  x: '<controller-x-coordinate>',
+                                  y: '<controller-y-coordinate>',
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  createDidDocumentRequestDerivedFromUrl: {
+                    summary: 'Create one organization did:web document deriving identifier from organization.url',
+                    value: {
+                      jti: 'req-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              organization: {
+                                url: 'globaldatacare.es',
+                                taxID: 'VATES-B00000000',
+                                publicKeyJwk: {
+                                  kty: 'EC',
+                                  crv: 'P-384',
+                                  x: '<org-x-coordinate>',
+                                  y: '<org-y-coordinate>',
+                                },
+                              },
+                              controller: {
+                                sameAs: 'urn:multibase:zControllerHash',
+                                publicKeyJwk: {
+                                  kty: 'EC',
+                                  crv: 'P-384',
+                                  x: '<controller-x-coordinate>',
+                                  y: '<controller-y-coordinate>',
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted. Poll _create-response endpoint. If `thid` was omitted in the request, read the generated one from `Location`.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Polling endpoint URL including the generated `thid` query parameter, for example `/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001`.',
+                  example:
+                    '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '415': {
+              description: 'Unsupported content type.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response': {
+        post: {
+          tags: ['entity/did/document'],
+          summary: 'Poll organization did:web document creation result',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'ES' },
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+            },
+            {
+              name: 'thid',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Create DID document thread id. Can also be sent in body as thid.',
+            },
+          ],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    thid: { type: 'string' },
+                  },
+                },
+                examples: {
+                  pollByBodyThid: {
+                    summary: 'Poll using body thid',
+                    value: {
+                      thid: 'thid-create-did-001',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Still pending.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Same `_create-response` polling URL including `?thid=...` so Swagger can keep using the generated thread id.',
+                  example:
+                    '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '200': {
+              description: 'DID document creation completed.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                  examples: {
+                    createDidDocumentCompleted: {
+                      summary: 'Organization did:web document created',
+                      value: {
+                        jti: 'urn:uuid:create-did-response-001',
+                        iss: 'did:web:localhost%3A3310',
+                        aud: 'did:web:localhost%3A3310',
+                        thid: 'thid-create-did-001',
+                        type: 'application/bundle-api+json',
+                        body: {
+                          resourceType: 'Bundle',
+                          type: 'batch-response',
+                          total: 1,
+                          issues: {
+                            resourceType: 'OperationOutcome',
+                            issue: [
+                              {
+                                severity: 'information',
+                                code: 'informational',
+                                diagnostics: 'DID document(s) created: 1.',
+                              },
+                            ],
+                          },
+                          data: [
+                            {
+                              type: 'EntityDidDocumentCreate-v1.0',
+                              response: {
+                                status: '200',
+                                outcome: {
+                                  resourceType: 'OperationOutcome',
+                                  issue: [
+                                    {
+                                      severity: 'information',
+                                      code: 'informational',
+                                      diagnostics: 'DID document(s) created: 1.',
+                                    },
+                                  ],
+                                },
+                              },
+                              resource: {
+                                didDocument: {
+                                  '@context': [
+                                    'https://www.w3.org/ns/did/v1',
+                                    'https://w3id.org/security/suites/jws-2020/v1',
+                                  ],
+                                  id: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                  controller: 'did:key:z<controller-public-key-multibase>',
+                                  verificationMethod: [
+                                    {
+                                      id:
+                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#<jwk-rfc7638-thumbprint>',
+                                      type: 'JsonWebKey2020',
+                                      controller:
+                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                      publicKeyJwk: {
+                                        kty: 'EC',
+                                        crv: 'P-384',
+                                        x: '<org-x-coordinate>',
+                                        y: '<org-y-coordinate>',
+                                        kid: '<jwk-rfc7638-thumbprint>',
+                                        alg: 'ES384',
+                                        use: 'sig',
+                                      },
+                                    },
+                                  ],
+                                  assertionMethod: [
+                                    'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#<jwk-rfc7638-thumbprint>',
+                                  ],
+                                  authentication: [
+                                    'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#<jwk-rfc7638-thumbprint>',
+                                  ],
+                                },
+                                meta: {
+                                  createdAt: '2026-03-12T21:12:26.646Z',
+                                },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Missing or invalid thread id.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '404': {
+              description: 'DID document create job not found.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
             },
           },
         },
@@ -3720,7 +4045,7 @@ export function buildIcaVerifyOpenApiSpec(
               in: 'query',
               required: false,
               schema: { type: 'string' },
-              description: 'Activation thread id. Can also be sent in body as thid or jti.',
+              description: 'Activation thread id. Can also be sent in body as thid.',
             },
           ],
           responses: {
@@ -3807,7 +4132,7 @@ export function buildIcaVerifyOpenApiSpec(
               in: 'query',
               required: false,
               schema: { type: 'string' },
-              description: 'Evidence add thread id. Can also be sent in body as thid or jti.',
+              description: 'Evidence add thread id. Can also be sent in body as thid.',
             },
           ],
           responses: {
@@ -3888,7 +4213,7 @@ export function buildIcaVerifyOpenApiSpec(
               in: 'query',
               required: false,
               schema: { type: 'string' },
-              description: 'Delegation policy upsert thread id. Can also be sent in body as thid or jti.',
+              description: 'Delegation policy upsert thread id. Can also be sent in body as thid.',
             },
           ],
           responses: {
@@ -3975,7 +4300,7 @@ export function buildIcaVerifyOpenApiSpec(
               in: 'query',
               required: false,
               schema: { type: 'string' },
-              description: 'Credential issue thread id. Can also be sent in body as thid or jti.',
+              description: 'Credential issue thread id. Can also be sent in body as thid.',
             },
           ],
           responses: {
@@ -4062,7 +4387,7 @@ export function buildIcaVerifyOpenApiSpec(
               in: 'query',
               required: false,
               schema: { type: 'string' },
-              description: 'Credential status thread id. Can also be sent in body as thid or jti.',
+              description: 'Credential status thread id. Can also be sent in body as thid.',
             },
           ],
           responses: {
@@ -4149,7 +4474,7 @@ export function buildIcaVerifyOpenApiSpec(
               in: 'query',
               required: false,
               schema: { type: 'string' },
-              description: 'Credential revoke thread id. Can also be sent in body as thid or jti.',
+              description: 'Credential revoke thread id. Can also be sent in body as thid.',
             },
           ],
           responses: {
@@ -4236,7 +4561,7 @@ export function buildIcaVerifyOpenApiSpec(
               in: 'query',
               required: false,
               schema: { type: 'string' },
-              description: 'Credential search thread id. Can also be sent in body as thid or jti.',
+              description: 'Credential search thread id. Can also be sent in body as thid.',
             },
           ],
           responses: {

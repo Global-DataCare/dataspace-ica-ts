@@ -59,6 +59,10 @@ import {
   resetVerificationCollectionsMemStateForTests,
   VerificationCollectionsService,
 } from '../src/api/tools/verification-collections-storage.ts';
+import {
+  multibase58MultihashSha3_384Hex,
+  normalizeSameAsHash,
+} from '../src/api/tools/multihash.ts';
 import type {
   ActivateSigningKeyInput,
   AddEvidenceResult,
@@ -78,6 +82,9 @@ import type {
 function base64UrlEncodeJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
+
+const TEST_SHA3_384_HEX = 'ab'.repeat(48);
+const TEST_SHA3_384_HEX_ALT = 'cd'.repeat(48);
 
 function buildControllerProofJws(input: {
   kid: string;
@@ -408,6 +415,7 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.equal(openApi.tags.some((tag) => tag.name === 'network/evidence'), true);
   assert.equal(openApi.tags.some((tag) => tag.name === 'network/policies'), true);
   assert.equal(openApi.tags.some((tag) => tag.name === 'catalog/dcat3'), true);
+  assert.equal(openApi.tags.some((tag) => tag.name === 'entity/did/document'), true);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request']);
@@ -417,6 +425,33 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   );
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate-response'],
+  );
+  assert.ok(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create'],
+  );
+  assert.ok(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response'],
+  );
+  assert.equal(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create']?.post?.responses?.['202']?.headers
+      ?.Location?.example,
+    '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001',
+  );
+  assert.equal(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response']?.post?.responses?.['202']
+      ?.headers?.Location?.example,
+    '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001',
+  );
+  assert.equal(
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response']?.post?.requestBody
+      ?.content?.['application/json']?.examples?.pollByBodyThid?.value?.thid,
+    'thid-create-did-001',
+  );
+  assert.equal(
+    (openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response']?.post?.parameters?.find(
+      (parameter: any) => parameter?.name === 'thid',
+    ) as any)?.description,
+    'Create DID document thread id. Can also be sent in body as thid.',
   );
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add'],
@@ -439,6 +474,11 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.equal(personSubject?.id, 'urn:person:identifier:IDCES-99999999R');
   assert.equal(personSubject?.alternateName, 'controller-es384-001');
   assert.equal(personSubject?.additionalType, 'ES384');
+  assert.equal(
+    organizationSubject?.id,
+    'did:web:globaldatacare.es:onehealth:organization:taxid:VATES-B00000000',
+  );
+  assert.equal(organizationSubject?.sameAs, 'did:web:provider.example.org');
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert-response'],
   );
@@ -723,9 +763,9 @@ test('VerifyResponseManager succeeded job returns result inside body', async () 
     revocationStatus: 'good',
     digest: {
       alg: 'sha3-384',
-      signedPdfHex: 'a',
-      unsignedPdfHex: 'b',
-      templateHex: 'c',
+      signedPdfHex: TEST_SHA3_384_HEX,
+      unsignedPdfHex: TEST_SHA3_384_HEX,
+      templateHex: TEST_SHA3_384_HEX,
     },
     signerCertificateSerialNumber: '00AA11',
     signerSubject: 'CN=Signer',
@@ -807,9 +847,9 @@ test('VerifyResponseManager stores issued credentials and evidence using mem col
     revocationStatus: 'good',
     digest: {
       alg: 'sha3-384',
-      signedPdfHex: 'deadbeef',
-      unsignedPdfHex: 'beadfeed',
-      templateHex: 'cafebabe',
+      signedPdfHex: TEST_SHA3_384_HEX,
+      unsignedPdfHex: TEST_SHA3_384_HEX_ALT,
+      templateHex: TEST_SHA3_384_HEX,
     },
     signerCertificateSerialNumber: '00AA11',
     signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
@@ -842,6 +882,123 @@ test('VerifyResponseManager stores issued credentials and evidence using mem col
   assert.equal(evidence.length, 4);
   assert.equal(issued.every((item) => item.tenantId === 'acme'), true);
   assert.equal(evidence.every((item) => item.tenantId === 'acme'), true);
+  const expectedVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX);
+  assert.equal((issued[0]?.credential?.meta as Record<string, unknown>)?.versionId, expectedVersionId);
+  assert.equal((issued[1]?.credential?.meta as Record<string, unknown>)?.versionId, expectedVersionId);
+});
+
+test('VerifyResponseManager versions repeated organization PDFs and warns when controller changes', async () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  resetVerificationCollectionsMemStateForTests();
+  const collectionsService = new VerificationCollectionsService({
+    provider: 'mem',
+    required: true,
+    firestoreCollectionPrefix: 'ica',
+  });
+
+  const firstResult: VerifyResult = {
+    ok: true,
+    verifiedAt: '2026-03-05T00:00:00.000Z',
+    templateUrl: '',
+    templateMatch: true,
+    signatureValid: true,
+    chainValid: true,
+    revocationStatus: 'good',
+    digest: {
+      alg: 'sha3-384',
+      signedPdfHex: TEST_SHA3_384_HEX,
+      unsignedPdfHex: TEST_SHA3_384_HEX,
+      templateHex: TEST_SHA3_384_HEX,
+    },
+    signerCertificateSerialNumber: '00AA11',
+    signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+    signerIssuer: 'CN=FNMT Intermediate',
+    hashes: {
+      signedPdfSha256Hex: 'deadbeef',
+      unsignedPdfSha256Hex: 'beadfeed',
+      templateSha256Hex: 'cafebabe',
+    },
+    notes: [],
+    annexFormFields: {
+      'Person.email': 'controller.one@example.org',
+    },
+  };
+
+  const secondResult: VerifyResult = {
+    ...firstResult,
+    verifiedAt: '2026-03-06T00:00:00.000Z',
+    digest: {
+      alg: 'sha3-384',
+      signedPdfHex: TEST_SHA3_384_HEX_ALT,
+      unsignedPdfHex: TEST_SHA3_384_HEX_ALT,
+      templateHex: TEST_SHA3_384_HEX,
+    },
+    annexFormFields: {
+      'Person.email': 'controller.two@example.org',
+    },
+  };
+
+  const store = new InMemoryVerificationJobStore(60);
+  store.enqueue('thid-persist-v1', parsed.context);
+  store.markSucceeded('thid-persist-v1', firstResult);
+  store.enqueue('thid-persist-v2', parsed.context);
+  store.markSucceeded('thid-persist-v2', secondResult);
+
+  const manager = new VerifyResponseManager(store, collectionsService);
+  const req = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
+
+  const outcomeV1 = await manager.poll(
+    parsed.context,
+    req,
+    new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify-response?thid=thid-persist-v1'),
+  );
+  assert.equal(outcomeV1.type, 'succeeded');
+
+  const outcomeV2 = await manager.poll(
+    parsed.context,
+    req,
+    new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify-response?thid=thid-persist-v2'),
+  );
+  assert.equal(outcomeV2.type, 'succeeded');
+  if (outcomeV2.type !== 'succeeded') return;
+
+  const payload = outcomeV2.payload as { body?: { issues?: { issue?: Array<Record<string, unknown>> } } };
+  assert.equal(
+    payload.body?.issues?.issue?.some((issue) => String(issue.diagnostics || '').includes('controllerChanged=true')),
+    true,
+  );
+
+  const issued = (await collectionsService.listIssuedCredentials())
+    .filter((item) => item.thid === 'thid-persist-v2');
+  const evidence = (await collectionsService.listEvidenceRecords())
+    .filter((item) => item.thid === 'thid-persist-v2');
+  assert.equal(issued.length, 2);
+  assert.equal(evidence.length, 4);
+
+  const expectedVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX_ALT);
+  const expectedPreviousVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX);
+  const organizationRecord = issued.find((item) => {
+    const subject = (item.credential?.credentialSubject || {}) as Record<string, unknown>;
+    return subject['@type'] === 'Organization';
+  });
+  const personRecord = issued.find((item) => {
+    const subject = (item.credential?.credentialSubject || {}) as Record<string, unknown>;
+    return subject['@type'] === 'Person';
+  });
+  const organizationMeta = (organizationRecord?.credential?.meta || {}) as Record<string, unknown>;
+  const personMeta = (personRecord?.credential?.meta || {}) as Record<string, unknown>;
+  assert.equal(organizationMeta.versionId, expectedVersionId);
+  assert.equal(organizationMeta.previousVersionId, expectedPreviousVersionId);
+  assert.equal(organizationMeta.controllerChanged, true);
+  assert.equal(personMeta.versionId, expectedVersionId);
+  assert.equal(personMeta.previousVersionId, expectedPreviousVersionId);
+  assert.equal(personMeta.controllerChanged, true);
+  const personSubject = (personRecord?.credential?.credentialSubject || {}) as Record<string, unknown>;
+  assert.equal(personSubject.sameAs, normalizeSameAsHash('controller.two@example.org'));
 });
 
 test('AddEvidence managers persist evidence records using mem collections adapter', async () => {
@@ -1460,9 +1617,9 @@ function buildTestVerifyResult(label: string): VerifyResult {
     revocationStatus: 'good',
     digest: {
       alg: 'sha3-384',
-      signedPdfHex: 'a',
-      unsignedPdfHex: 'b',
-      templateHex: 'c',
+      signedPdfHex: TEST_SHA3_384_HEX,
+      unsignedPdfHex: TEST_SHA3_384_HEX_ALT,
+      templateHex: TEST_SHA3_384_HEX,
     },
     signerCertificateSerialNumber: '00AA11',
     signerSubject: 'CN=Signer',

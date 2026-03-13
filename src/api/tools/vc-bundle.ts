@@ -16,6 +16,8 @@ import type {
   VerifyRouteContext,
 } from '../types.ts';
 import { attachProofToCredential, resolveIcaIssuerDid } from './ica-identity.ts';
+import { buildOrganizationDidFromTaxId } from './organization-did.ts';
+import { normalizeSameAsHash } from './multihash.ts';
 
 function normalizeDnKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, '');
@@ -62,7 +64,6 @@ const ANNEX_ORGANIZATION_SAME_AS = 'organization.sameAs';
 const ANNEX_ORGANIZATION_URL = 'organization.url';
 const ANNEX_ORGANIZATION_ALTERNATE_NAME = 'organization.alternateName';
 const ANNEX_ORGANIZATION_REGISTRATION_NUMBER = 'organization.registrationNumber';
-const ANNEX_ORGANIZATION_EMAIL = 'organization.email';
 const ANNEX_PERSON_EMAIL = 'person.email';
 const ANNEX_PERSON_ALTERNATE_NAME = 'person.alternateName';
 const ANNEX_PERSON_ADDITIONAL_TYPE = 'person.additionalType';
@@ -80,6 +81,46 @@ function getAnnexOrganizationDid(result: VerifyResult): string | undefined {
   const candidate = getAnnexField(result, ANNEX_ORGANIZATION_SAME_AS);
   if (!candidate) return undefined;
   return candidate.startsWith('did:web:') ? candidate : undefined;
+}
+
+function resolveOrganizationPublicDid(route: VerifyRouteContext, organizationTaxId: string | undefined): string | undefined {
+  const normalizedTaxId = (organizationTaxId || '').trim();
+  if (!normalizedTaxId) return undefined;
+  return buildOrganizationDidFromTaxId(route.sector, normalizedTaxId);
+}
+
+function resolveOrganizationSubjectIdentifiers(
+  route: VerifyRouteContext,
+  organizationTaxId: string | undefined,
+  annexSameAsDid: string | undefined,
+): { id: string; sameAs?: string } {
+  const publicDid = resolveOrganizationPublicDid(route, organizationTaxId);
+  const alternateDid = annexSameAsDid && annexSameAsDid !== publicDid
+    ? annexSameAsDid
+    : undefined;
+
+  if (publicDid) {
+    return {
+      id: publicDid,
+      ...(alternateDid ? { sameAs: alternateDid } : {}),
+    };
+  }
+
+  if (annexSameAsDid) {
+    return {
+      id: annexSameAsDid,
+    };
+  }
+
+  if (organizationTaxId) {
+    return {
+      id: `urn:organization:taxid:${organizationTaxId}`,
+    };
+  }
+
+  return {
+    id: `urn:organization:certificate:${route.tenantId}`,
+  };
 }
 
 function normalizeOrganizationUrl(value: string | undefined): string | undefined {
@@ -319,12 +360,11 @@ export function buildVerificationVcBundle(
   const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
 
   const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU);
-  const organizationDid = getAnnexOrganizationDid(result);
+  const annexOrganizationDid = getAnnexOrganizationDid(result);
   const organizationAdditionalType = getAnnexField(result, ANNEX_ORGANIZATION_ADDITIONAL_TYPE);
   const organizationAlternateName = getAnnexField(result, ANNEX_ORGANIZATION_ALTERNATE_NAME);
   const organizationRegistrationNumber = getAnnexField(result, ANNEX_ORGANIZATION_REGISTRATION_NUMBER);
   const organizationUrl = normalizeOrganizationUrl(getAnnexField(result, ANNEX_ORGANIZATION_URL));
-  const organizationEmail = getAnnexField(result, ANNEX_ORGANIZATION_EMAIL);
   const organizationTaxId = parseOrganizationTaxId(subjectDn);
   const representativeName =
     [subjectDn.GN || subjectDn.GIVENNAME, subjectDn.SN || subjectDn.SURNAME]
@@ -339,6 +379,7 @@ export function buildVerificationVcBundle(
     subjectDn.EMAIL,
     subjectDn.E,
   );
+  const personSameAs = normalizeSameAsHash(personEmail || '');
   const personAlternateName = getAnnexField(result, ANNEX_PERSON_ALTERNATE_NAME);
   const personAdditionalType = getAnnexField(result, ANNEX_PERSON_ADDITIONAL_TYPE);
   const country = subjectDn.C || subjectDn.COUNTRYNAME || undefined;
@@ -353,11 +394,10 @@ export function buildVerificationVcBundle(
     serialNumber,
     verifierOrganization,
   );
+  const organizationIdentifiers = resolveOrganizationSubjectIdentifiers(route, organizationTaxId, annexOrganizationDid);
 
   const organizationSubject: Record<string, unknown> = {
-    id: organizationDid || (organizationTaxId
-      ? `urn:organization:taxid:${organizationTaxId}`
-      : `urn:organization:certificate:${route.tenantId}`),
+    id: organizationIdentifiers.id,
     '@type': 'Organization',
   };
   if (orgLegalName) {
@@ -372,17 +412,14 @@ export function buildVerificationVcBundle(
   if (organizationAdditionalType) {
     organizationSubject.additionalType = organizationAdditionalType;
   }
-  if (organizationDid) {
-    organizationSubject.sameAs = organizationDid;
+  if (organizationIdentifiers.sameAs) {
+    organizationSubject.sameAs = organizationIdentifiers.sameAs;
   }
   if (organizationAlternateName) {
     organizationSubject.alternateName = organizationAlternateName;
   }
   if (organizationRegistrationNumber) {
     organizationSubject.registrationNumber = organizationRegistrationNumber;
-  }
-  if (organizationEmail) {
-    organizationSubject.email = organizationEmail;
   }
   if (organizationUrl) {
     organizationSubject.url = organizationUrl;
@@ -433,8 +470,8 @@ export function buildVerificationVcBundle(
   if (country) {
     personSubject.nationality = country;
   }
-  if (personEmail) {
-    personSubject.email = personEmail;
+  if (personSameAs) {
+    personSubject.sameAs = personSameAs;
   }
   if (personAlternateName) {
     personSubject.alternateName = personAlternateName;

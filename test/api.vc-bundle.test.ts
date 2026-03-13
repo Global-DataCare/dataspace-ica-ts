@@ -3,6 +3,7 @@ import test from 'node:test';
 import { parseVerifyRoute } from '../src/api/path.ts';
 import { buildVerificationVcBundle } from '../src/api/server.ts';
 import { resetActiveSigningKeysStateForTests } from '../src/api/tools/active-signing-keys.ts';
+import { normalizeSameAsHash } from '../src/api/tools/multihash.ts';
 import type { VerifyResult } from '../src/api/types.ts';
 
 function buildTestVerifyResult(label: string): VerifyResult {
@@ -35,8 +36,10 @@ function buildTestVerifyResult(label: string): VerifyResult {
 test('buildVerificationVcBundle returns two VCs each with evidence', () => {
   const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
   const previousExternalDomain = process.env.ICA_EXTERNAL_DOMAIN;
+  const previousOrganizationDidPublicDomain = process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
   delete process.env.ICA_DIDCOMM_ISSUER_DID;
   delete process.env.ICA_EXTERNAL_DOMAIN;
+  delete process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
   try {
     const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
     assert.ok(parsed);
@@ -84,9 +87,11 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
     assert.equal(personResource.resourceType, undefined);
 
     const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    assert.equal(organizationSubject.id, 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678');
     assert.equal(organizationSubject['@type'], 'Organization');
     assert.equal(organizationSubject.legalName, 'Acme Health SL');
     assert.equal(organizationSubject.taxID, 'VATES-A12345678');
+    assert.equal(organizationSubject.sameAs, undefined);
     assert.equal(organizationSubject.identifier, undefined);
     assert.equal(organizationSubject.sector, undefined);
     assert.equal(organizationSubject.name, undefined);
@@ -152,6 +157,11 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
     } else {
       process.env.ICA_EXTERNAL_DOMAIN = previousExternalDomain;
     }
+    if (previousOrganizationDidPublicDomain === undefined) {
+      delete process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
+    } else {
+      process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = previousOrganizationDidPublicDomain;
+    }
   }
 });
 
@@ -184,6 +194,7 @@ test('buildVerificationVcBundle does not expose non-schema.org controller field'
     const personResource = bundle.data[1]?.resource as Record<string, any>;
     const personSubject = personResource.credentialSubject as Record<string, any>;
     assert.equal(personSubject.email, undefined);
+    assert.equal(personSubject.sameAs, undefined);
   } finally {
     resetActiveSigningKeysStateForTests();
     if (previousControllerKid === undefined) delete process.env.ICA_SELF_CONTROLLER_KID;
@@ -221,55 +232,83 @@ test('buildVerificationVcBundle uses external audit attachment when available', 
 });
 
 test('buildVerificationVcBundle maps annex form fields into credential subjects and evidence details', () => {
+  const previousOrganizationDidPublicDomain = process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
+  process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = 'globaldatacare.es';
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) {
+    if (previousOrganizationDidPublicDomain === undefined) delete process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
+    else process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = previousOrganizationDidPublicDomain;
+    return;
+  }
+
+  try {
+    const bundle = buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult('annex-fields'),
+      signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+      annexFormFields: {
+        'Organization.sameAs': 'did:web:member.example.org',
+        'Organization.url': 'member.example.org',
+        'Organization.additionalType': 'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
+        'Organization.alternateName': 'acme',
+        'Organization.registrationNumber': 'ES-SAN-REG-0001',
+        'Person.email': 'zControllerHash',
+        'Person.alternateName': 'controller-es384-20260309',
+        'Person.additionalType': 'ES384',
+      },
+    });
+
+    const organizationResource = bundle.data[0].resource as Record<string, any>;
+    const personResource = bundle.data[1].resource as Record<string, any>;
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+    const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
+    const documentEvidence = organizationEvidence[1] as Record<string, any>;
+
+    assert.equal(organizationSubject.id, 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678');
+    assert.equal(organizationSubject.sameAs, 'did:web:member.example.org');
+    assert.equal(
+      organizationSubject.additionalType,
+      'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
+    );
+    assert.equal(organizationSubject.alternateName, 'acme');
+    assert.equal(organizationSubject.registrationNumber, 'ES-SAN-REG-0001');
+    assert.equal(organizationSubject.email, undefined);
+    assert.equal(organizationSubject.url, 'member.example.org');
+    assert.equal(personSubject.email, undefined);
+    assert.equal(personSubject.sameAs, 'urn:multibase:zControllerHash');
+    assert.equal(personSubject.alternateName, 'controller-es384-20260309');
+    assert.equal(personSubject.additionalType, 'ES384');
+    assert.equal(personSubject.memberOf?.alternateName, undefined);
+    assert.equal(personSubject.memberOf?.additionalType, undefined);
+    assert.equal(personSubject.memberOf?.email, undefined);
+    assert.equal(organizationSubject.controller, undefined);
+    assert.equal(
+      documentEvidence.document_details?.annexFormFields?.['Organization.sameAs'],
+      'did:web:member.example.org',
+    );
+  } finally {
+    if (previousOrganizationDidPublicDomain === undefined) delete process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
+    else process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = previousOrganizationDidPublicDomain;
+  }
+});
+
+test('buildVerificationVcBundle hashes plain controller email into credentialSubject.sameAs', () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
 
   const bundle = buildVerificationVcBundle(parsed.context, {
-    ...buildTestVerifyResult('annex-fields'),
-    signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
-    annexFormFields: {
-      'Organization.sameAs': 'did:web:member.example.org',
-      'Organization.url': 'member.example.org',
-      'Organization.additionalType': 'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
-      'Organization.alternateName': 'acme',
-      'Organization.registrationNumber': 'ES-SAN-REG-0001',
-      'Organization.email': 'zOrgContactHash',
-      'Person.email': 'zControllerHash',
-      'Person.alternateName': 'controller-es384-20260309',
-      'Person.additionalType': 'ES384',
-    },
+    ...buildTestVerifyResult('plain-controller-email'),
+    signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,EMAILADDRESS=Jane.Doe@Example.org,C=ES',
   });
 
-  const organizationResource = bundle.data[0].resource as Record<string, any>;
   const personResource = bundle.data[1].resource as Record<string, any>;
-  const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
   const personSubject = personResource.credentialSubject as Record<string, any>;
-  const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
-  const documentEvidence = organizationEvidence[1] as Record<string, any>;
-
-  assert.equal(organizationSubject.id, 'did:web:member.example.org');
-  assert.equal(organizationSubject.sameAs, 'did:web:member.example.org');
-  assert.equal(
-    organizationSubject.additionalType,
-    'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
-  );
-  assert.equal(organizationSubject.alternateName, 'acme');
-  assert.equal(organizationSubject.registrationNumber, 'ES-SAN-REG-0001');
-  assert.equal(organizationSubject.email, 'zOrgContactHash');
-  assert.equal(organizationSubject.url, 'member.example.org');
-  assert.equal(personSubject.email, 'zControllerHash');
-  assert.equal(personSubject.alternateName, 'controller-es384-20260309');
-  assert.equal(personSubject.additionalType, 'ES384');
-  assert.equal(personSubject.memberOf?.alternateName, undefined);
-  assert.equal(personSubject.memberOf?.additionalType, undefined);
-  assert.equal(personSubject.memberOf?.email, undefined);
-  assert.equal(organizationSubject.controller, undefined);
-  assert.equal(
-    documentEvidence.document_details?.annexFormFields?.['Organization.sameAs'],
-    'did:web:member.example.org',
-  );
+  assert.equal(personSubject.email, undefined);
+  assert.equal(personSubject.sameAs, normalizeSameAsHash('Jane.Doe@Example.org'));
 });
 
 test('buildVerificationVcBundle omits intermediate crl_check_all verify_error when fallback succeeds', () => {

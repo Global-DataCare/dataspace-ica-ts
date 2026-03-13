@@ -38,7 +38,6 @@ test('generateTermsAnnexPdf builds annex PDF and extractTermsAnnexFormFieldsFrom
       'organization.sameAs': 'did:web:member.example.org',
       'organization.url': 'member.example.org',
       'organization.registrationNumber': 'ES-SAN-REG-0001',
-      'organization.email': 'zOrgContactHash',
       'person.alternateName': 'controller-es384-20260309',
     },
   });
@@ -55,7 +54,6 @@ test('generateTermsAnnexPdf builds annex PDF and extractTermsAnnexFormFieldsFrom
   assert.equal(extracted.fields['organization.sameAs'], 'did:web:member.example.org');
   assert.equal(extracted.fields['organization.url'], 'member.example.org');
   assert.equal(extracted.fields['organization.registrationNumber'], 'ES-SAN-REG-0001');
-  assert.equal(extracted.fields['organization.email'], 'zOrgContactHash');
   assert.equal(extracted.fields['person.alternateName'], 'controller-es384-20260309');
 });
 

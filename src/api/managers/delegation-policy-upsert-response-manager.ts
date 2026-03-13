@@ -65,7 +65,7 @@ export class DelegationPolicyUpsertResponseManager {
       return {
         type: 'error',
         statusCode: 400,
-        message: 'Missing thid or jti for _upsert-response polling.',
+        message: 'Missing thid for _upsert-response polling.',
       };
     }
 

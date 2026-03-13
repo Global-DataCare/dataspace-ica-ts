@@ -4,7 +4,6 @@
   "Organization.url": "member.example.org",
   "Organization.additionalType": "sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider",
   "Organization.registrationNumber": "ES-SAN-REG-0001",
-  "Organization.email": "zOrgContactHash",
   "Person.email": "zControllerHash",
   "Person.alternateName": "controller-es384-20260309",
   "Person.additionalType": "ES384"

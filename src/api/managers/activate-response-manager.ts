@@ -60,7 +60,7 @@ export class ActivateResponseManager {
       return {
         type: 'error',
         statusCode: 400,
-        message: 'Missing thid or jti for _activate-response polling.',
+        message: 'Missing thid for _activate-response polling.',
       };
     }
 

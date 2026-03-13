@@ -4,6 +4,8 @@ import type {
   AddEvidenceAction,
   AddEvidenceRouteContext,
   AllowedSector,
+  CreateDidDocumentAction,
+  CreateDidDocumentRouteContext,
   DelegationPolicyAction,
   DelegationPolicyRouteContext,
   CredentialRevokeAction,
@@ -30,6 +32,8 @@ const VERIFY_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/terms\/pdf\/(?<resourceType>[^/]+)\/(?<action>_verify(?:-response)?)$/i;
 const ENTITY_KEYS_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/entity\/keys\/(?<resourceType>credentials|communications)\/(?<action>_(?:activate(?:-response)?|rotate(?:-response)?))$/i;
+const ENTITY_DID_DOCUMENT_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/entity\/did\/document\/(?<action>_create(?:-response)?)$/i;
 const NETWORK_EVIDENCE_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/evidence\/(?<evidenceType>[^/]+)\/(?<action>_add(?:-response)?)$/i;
 const NETWORK_POLICY_DELEGATION_ROUTE_REGEX =
@@ -73,6 +77,10 @@ function asActivateAction(raw: string): ActivateAction {
 
 function asRotateAction(raw: string): RotateAction {
   return raw.toLowerCase() === '_rotate-response' ? '_rotate-response' : '_rotate';
+}
+
+function asCreateDidDocumentAction(raw: string): CreateDidDocumentAction {
+  return raw.toLowerCase() === '_create-response' ? '_create-response' : '_create';
 }
 
 function asAddEvidenceAction(raw: string): AddEvidenceAction {
@@ -398,6 +406,71 @@ export function parseRotateRoute(pathname: string): ParsedRotateRoute | null {
 
 export function buildRotateResponseLocation(context: RotateRouteContext): string {
   return `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/entity/keys/${context.resourceType}/_rotate-response`;
+}
+
+export type ParsedCreateDidDocumentRoute =
+  | { ok: true; context: CreateDidDocumentRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseCreateDidDocumentRoute(pathname: string): ParsedCreateDidDocumentRoute | null {
+  const match = ENTITY_DID_DOCUMENT_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+
+  const tenantId = match.groups.tenantId.trim();
+  const jurisdiction = match.groups.jurisdiction.trim();
+  const sector = match.groups.sector.trim().toLowerCase() as AllowedSector;
+  const action = asCreateDidDocumentAction(match.groups.action.trim());
+
+  if (!tenantId) {
+    return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
+  }
+  const localTenantId = configuredLocalTenantId();
+  if (localTenantId && tenantId.toLowerCase() !== localTenantId.toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
+    };
+  }
+  if (!jurisdiction) {
+    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
+  }
+  if (!isAllowedSector(sector)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: ALLOWED_SECTOR_ERROR,
+    };
+  }
+
+  return {
+    ok: true,
+    context: {
+      tenantId,
+      jurisdiction,
+      sector,
+      section: 'entity',
+      format: 'did',
+      resourceType: 'document',
+      action,
+    },
+  };
+}
+
+export function buildCreateDidDocumentResponseLocation(
+  context: CreateDidDocumentRouteContext,
+  params?: Record<string, string | undefined>,
+): string {
+  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/entity/did/document/_create-response`;
+  if (!params) return base;
+  const entries = Object.entries(params).filter(([, value]) => value && value.trim());
+  if (!entries.length) return base;
+  const search = new URLSearchParams();
+  for (const [key, value] of entries) {
+    if (value) search.set(key, value);
+  }
+  const suffix = search.toString();
+  return suffix ? `${base}?${suffix}` : base;
 }
 
 export type ParsedAddEvidenceRoute =

@@ -34,14 +34,17 @@ Deploy the same locally built `dataspace-ica:<package-version>` image to GKE:
 - `DEPLOY_REGION`
 - `DEPLOY_SERVICE_NAME`
 - `ARTIFACT_REGISTRY_NAME`
-- optional: `IMAGE_TAG`, `K8S_NAMESPACE`, `K8S_CONTEXT`, `LOCAL_IMAGE`, `K8S_LOADBALANCER_IP`
+- optional: `IMAGE_TAG`, `K8S_NAMESPACE`, `K8S_CONTEXT`, `LOCAL_IMAGE`, `K8S_LOADBALANCER_IP`, `GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT`
 
 Recommended:
-- Set `IMAGE_TAG` explicitly (for example `0.4.0`) to keep deploys aligned with the package version.
+- Set `IMAGE_TAG` explicitly (for example `0.4.2`) to keep deploys aligned with the package version.
 
 Important:
 - `cloud_deploy.sh` does not create the GCP project, billing link, bucket, or cluster for you.
 - Those resources must exist (and your account must have IAM permissions) before running deploy.
+- If a local `gcp-service-account.json` exists in the repo root, `cloud_deploy.sh` validates that its `project_id` matches `FIRESTORE_PROJECT_ID` and fails early on mismatch.
+- If `GOOGLE_APPLICATION_CREDENTIALS` is set in `.env.deploy.<env>`, the pointed file must exist locally before deploy starts.
+- The deployment uses Kubernetes ServiceAccount `dataspace-ica-runtime`. If `GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT` is set, `cloud_deploy.sh` annotates that KSA with `iam.gke.io/gcp-service-account=<GSA>`.
 
 ## GCP bootstrap (project + billing + GCS)
 
@@ -148,6 +151,75 @@ The account running `cloud_deploy.sh` typically needs:
 - `roles/container.developer` (or stronger, depending on cluster policy)
 - `roles/iam.serviceAccountUser` (if acting as runtime SA)
 
+### 8.1) Runtime identity for Firestore and GCS
+
+The pod may start successfully and still fail at runtime if its workload identity does not have access to Firestore/GCS.
+
+Required model:
+
+- local development = JSON file
+- cloud/GKE = Workload Identity
+
+Create or reuse a runtime GSA in the runtime project:
+
+```bash
+gcloud iam service-accounts create dataspace-ica-runtime \
+  --project globaldatacare-ica-dev \
+  --display-name="dataspace-ica runtime"
+```
+
+Grant runtime IAM:
+
+```bash
+gcloud projects add-iam-policy-binding globaldatacare-ica-dev \
+  --member="serviceAccount:dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com" \
+  --role="roles/datastore.user"
+
+gcloud storage buckets add-iam-policy-binding gs://globaldatacare-ica-dev \
+  --member="serviceAccount:dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+```
+
+This repo uses Kubernetes Service Account `dataspace-ica-runtime`.
+
+If Workload Identity is not enabled yet on the cluster, enable it first:
+
+```bash
+gcloud container clusters update gdc-unid-southwest \
+  --project globaldatacare-test \
+  --zone europe-southwest1-a \
+  --workload-pool=globaldatacare-test.svc.id.goog
+```
+
+Then bind KSA -> GSA:
+
+```bash
+kubectl annotate serviceaccount dataspace-ica-runtime \
+  -n dataspace-ica \
+  iam.gke.io/gcp-service-account=dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com \
+  --overwrite
+
+gcloud iam service-accounts add-iam-policy-binding \
+  dataspace-ica-runtime@globaldatacare-ica-dev.iam.gserviceaccount.com \
+  --project globaldatacare-ica-dev \
+  --member="serviceAccount:globaldatacare-test.svc.id.goog[dataspace-ica/dataspace-ica-runtime]" \
+  --role="roles/iam.workloadIdentityUser"
+```
+
+Do not keep this in `.env.deploy.staging`:
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=./gcp-service-account.json
+```
+
+Redeploy after the binding:
+
+```bash
+./cloud_deploy.sh staging --yes
+kubectl -n dataspace-ica rollout restart deployment/dataspace-ica-api
+kubectl -n dataspace-ica rollout status deployment/dataspace-ica-api --timeout=240s
+```
+
 ## IAM helper script (developers/groups)
 
 To grant IAM roles for multiple developers (or a group) across billing + projects:
@@ -197,7 +269,7 @@ Adjust location to your policy/latency needs.
 If you prefer manual commands:
 
 ```bash
-docker build -t dataspace-ica:0.4.0 .
+docker build -t dataspace-ica:0.4.2 .
 kubectl apply -f deploy/k8s/configmap.yaml
 kubectl apply -f deploy/k8s/service.yaml
 kubectl apply -f deploy/k8s/deployment.yaml

@@ -1,35 +1,34 @@
-import type { IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
 import type { InMemoryEntityJobStore } from '../entity-job-store.ts';
 import { parsePollingThreadId } from '../request-parsing.ts';
-import { buildCredentialRevokeResponseLocation } from '../path.ts';
+import { buildCreateDidDocumentResponseLocation } from '../path.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import type {
-  CredentialRevokeResult,
-  CredentialRevokeRouteContext,
+  CreateDidDocumentResult,
+  CreateDidDocumentRouteContext,
   DidcommPlaintextMessage,
   OperationOutcomeIssue,
   OperationOutcomeResource,
   VerifyBundleResponse,
 } from '../types.ts';
 
-export type CredentialRevokePollOutcome =
+export type CreateDidDocumentPollOutcome =
   | { type: 'error'; statusCode: number; message: string }
   | { type: 'pending'; location: string; retryAfter: number }
   | { type: 'failed'; payload: unknown }
   | { type: 'succeeded'; payload: unknown };
 
-function sameRoute(a: CredentialRevokeRouteContext, b: CredentialRevokeRouteContext): boolean {
+function sameRoute(a: CreateDidDocumentRouteContext, b: CreateDidDocumentRouteContext): boolean {
   return (
     a.tenantId === b.tenantId &&
     a.jurisdiction.toLowerCase() === b.jurisdiction.toLowerCase() &&
-    a.sector === b.sector &&
-    a.credentialType.toLowerCase() === b.credentialType.toLowerCase()
+    a.sector === b.sector
   );
 }
 
-function buildDidcommCredentialRevokeMessage(
-  route: CredentialRevokeRouteContext,
+function buildDidcommCreateDidDocumentMessage(
+  route: CreateDidDocumentRouteContext,
   thid: string,
   body: VerifyBundleResponse,
   req: IncomingMessage,
@@ -48,24 +47,24 @@ function buildOperationOutcome(issue: OperationOutcomeIssue[]): OperationOutcome
   };
 }
 
-export class CredentialRevokeResponseManager {
-  private readonly jobStore: InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>;
+export class CreateDidDocumentResponseManager {
+  private readonly jobStore: InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>;
 
-  constructor(jobStore: InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>) {
+  constructor(jobStore: InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>) {
     this.jobStore = jobStore;
   }
 
   async poll(
-    route: CredentialRevokeRouteContext,
+    route: CreateDidDocumentRouteContext,
     req: IncomingMessage,
     requestUrl: URL,
-  ): Promise<CredentialRevokePollOutcome> {
+  ): Promise<CreateDidDocumentPollOutcome> {
     const thid = await parsePollingThreadId(req, requestUrl);
     if (!thid) {
       return {
         type: 'error',
         statusCode: 400,
-        message: 'Missing thid for _revoke-response polling.',
+        message: 'Missing thid for _create-response polling.',
       };
     }
 
@@ -74,7 +73,7 @@ export class CredentialRevokeResponseManager {
       return {
         type: 'error',
         statusCode: 404,
-        message: `Credential _revoke job not found for thid=${thid}.`,
+        message: `DID document _create job not found for thid=${thid}.`,
       };
     }
     if (!sameRoute(job.route, route)) {
@@ -88,13 +87,13 @@ export class CredentialRevokeResponseManager {
     if (job.status === 'queued' || job.status === 'running') {
       return {
         type: 'pending',
-        location: buildCredentialRevokeResponseLocation(route),
+        location: buildCreateDidDocumentResponseLocation(route, { thid }),
         retryAfter: 3,
       };
     }
 
     if (job.status === 'failed') {
-      const diagnostics = job.error || 'Unknown credential _revoke failure.';
+      const diagnostics = job.error || 'Unknown DID document _create failure.';
       const outcome = buildOperationOutcome([
         { severity: 'error', code: 'exception', diagnostics },
       ]);
@@ -105,23 +104,11 @@ export class CredentialRevokeResponseManager {
         total: 1,
         data: [
           {
-            type: 'NetworkCredentialRevoke-v1.0',
+            type: 'EntityDidDocumentCreate-v1.0',
             resource: {
-              id: `urn:uuid:${randomUUID()}`,
-              type: 'network-credential-revoke-v1.0',
-              thid,
-              tenantId: route.tenantId,
-              jurisdiction: route.jurisdiction.toUpperCase(),
-              sector: route.sector,
-              credentialType: route.credentialType,
-              status: 'failed',
-              createdAt: new Date(job.createdAt).toISOString(),
-              updatedAt: new Date(job.updatedAt).toISOString(),
-              content: [
-                {
-                  error: diagnostics,
-                },
-              ],
+              error: {
+                message: diagnostics,
+              },
             },
             response: {
               status: '500',
@@ -132,7 +119,7 @@ export class CredentialRevokeResponseManager {
       };
       return {
         type: 'failed',
-        payload: buildDidcommCredentialRevokeMessage(route, thid, failedBody, req),
+        payload: buildDidcommCreateDidDocumentMessage(route, thid, failedBody, req),
       };
     }
 
@@ -140,7 +127,7 @@ export class CredentialRevokeResponseManager {
       return {
         type: 'error',
         statusCode: 500,
-        message: `Credential _revoke job ${thid} finished without result payload.`,
+        message: `DID document _create job ${thid} finished without result payload.`,
       };
     }
 
@@ -148,40 +135,31 @@ export class CredentialRevokeResponseManager {
       {
         severity: 'information',
         code: 'informational',
-        diagnostics: `Credential status set to revoked for ${job.result.revokedCount} item(s).`,
+        diagnostics: `DID document(s) created: ${job.result.createdCount}.`,
       },
     ]);
     const succeededBody: VerifyBundleResponse = {
       resourceType: 'Bundle',
       type: 'batch-response',
       issues: outcome,
-      total: 1,
-      data: [
-        {
-          type: 'NetworkCredentialRevoke-v1.0',
-          resource: {
-            id: `urn:uuid:${randomUUID()}`,
-            type: 'network-credential-revoke-v1.0',
-            thid,
-            tenantId: route.tenantId,
-            jurisdiction: route.jurisdiction.toUpperCase(),
-            sector: route.sector,
-            credentialType: route.credentialType,
-            status: 'revoked',
-            createdAt: new Date(job.createdAt).toISOString(),
-            updatedAt: new Date(job.updatedAt).toISOString(),
-            content: job.result.items,
-          },
-          response: {
-            status: '200',
-            outcome,
+      total: job.result.items.length,
+      data: job.result.items.map((item) => ({
+        type: 'EntityDidDocumentCreate-v1.0',
+        resource: {
+          didDocument: item.didDocument,
+          meta: {
+            createdAt: item.createdAt,
           },
         },
-      ],
+        response: {
+          status: '200',
+          outcome,
+        },
+      })),
     };
     return {
       type: 'succeeded',
-      payload: buildDidcommCredentialRevokeMessage(route, thid, succeededBody, req),
+      payload: buildDidcommCreateDidDocumentMessage(route, thid, succeededBody, req),
     };
   }
 }
