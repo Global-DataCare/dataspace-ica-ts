@@ -16,6 +16,7 @@ import type {
   VerifyRouteContext,
   VerifySubmission,
 } from './types.ts';
+import { getConfiguredSupportedSectorIds } from './supported-sectors.ts';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_FNMT_ROOT_CERT_URL = 'https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Raiz_FNMT-RCM_SHA256.cer';
@@ -86,7 +87,7 @@ function parseCsvList(value: string | undefined): string[] {
 function parseAllowedSectorsList(value: string | undefined, fallback: AllowedSector[]): AllowedSector[] {
   const source = parseCsvList(value);
   if (!source.length) return fallback;
-  const allowed = new Set<AllowedSector>(['animal-care', 'health-care']);
+  const allowed = new Set<AllowedSector>(getConfiguredSupportedSectorIds());
   return source
     .map((entry) => entry.toLowerCase() as AllowedSector)
     .filter((entry) => allowed.has(entry));
@@ -456,6 +457,35 @@ export function selectPrimaryCredentialSignature<T extends { signerVatId?: strin
   return undefined;
 }
 
+export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?: string }>(
+  signatures: T[],
+  verifierVatList: string[],
+): void {
+  const verifierVatSet = new Set(
+    verifierVatList
+      .map((value) => normalizeVatId(value))
+      .filter((value): value is string => Boolean(value)),
+  );
+  if (!verifierVatSet.size) return;
+
+  const signerVatIds = signatures
+    .map((signature) => normalizeVatId(signature.signerVatId))
+    .filter((value): value is string => Boolean(value));
+  const verifierSignerVatIds = signerVatIds.filter((value) => verifierVatSet.has(value));
+  const counterpartSignerVatIds = signerVatIds.filter((value) => !verifierVatSet.has(value));
+
+  if (!verifierSignerVatIds.length) {
+    throw new Error(
+      'PDF must include at least one verifier signature whose VAT is listed in VERIFIERS_VAT_LIST.',
+    );
+  }
+  if (!counterpartSignerVatIds.length) {
+    throw new Error(
+      'PDF must include at least one non-verifier counterparty signature different from VERIFIERS_VAT_LIST.',
+    );
+  }
+}
+
 function extractPdfSignatures(pdfBytes: Buffer): ExtractedPdfSignature[] {
   const pdfAsLatin1 = pdfBytes.toString('latin1');
   const byteRangeRegex = /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g;
@@ -709,7 +739,7 @@ export function loadFnmtVerifierConfigFromEnv(): FnmtVerifierConfig {
   const templatePreloadResourceTypes = parseCsvList(process.env.ICA_TERMS_TEMPLATE_PRELOAD_RESOURCE_TYPES);
   const templatePreloadSectors = parseAllowedSectorsList(
     process.env.ICA_TERMS_TEMPLATE_PRELOAD_SECTORS,
-    ['animal-care', 'health-care'],
+    getConfiguredSupportedSectorIds(),
   );
   const templatePreloadJurisdictions = parseCsvList(process.env.ICA_TERMS_TEMPLATE_PRELOAD_JURISDICTIONS);
   const templatePreloadEnabled = parseBoolean(
@@ -1343,6 +1373,7 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
         notes.push(...verifiedSignature.notes.map((note) => `${label}: ${note}`));
       }
 
+      assertVerifierCounterpartySignaturePair(verifiedSignatures, this.config.verifierVatList);
       const primarySignature = selectPrimaryCredentialSignature(verifiedSignatures, this.config.verifierVatList);
       if (!primarySignature) {
         throw new Error('All PDF signatures belong to verifier organizations listed in VERIFIERS_VAT_LIST.');

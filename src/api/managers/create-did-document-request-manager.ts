@@ -9,9 +9,15 @@ import {
   extractOrganizationDidTaxId,
   validateOrganizationDidInput,
 } from '../tools/organization-did.ts';
-import type { IssuedCredentialRecord } from '../tools/verification-collections-storage.ts';
+import type {
+  DidBindingRecord,
+  DidDocumentRecord,
+  IssuedCredentialRecord,
+} from '../tools/verification-collections-storage.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 import { sameAsValuesEqual } from '../tools/multihash.ts';
+import { stableStringifyJson, type JsonLike } from '../tools/canonical-json.ts';
+import { normalizeControllerPublicKeyJwk } from '../tools/bootstrap-organization-key.ts';
 
 export type CreateDidDocumentSubmitOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -33,6 +39,14 @@ function asObject(value: unknown): JsonObject | undefined {
 
 function asNonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function controllerPublicKeysEqual(left: JsonObject, right: JsonObject): boolean {
+  return stableStringifyJson(left as JsonLike) === stableStringifyJson(right as JsonLike);
+}
+
+function organizationPublicKeysEqual(left: JsonObject, right: JsonObject): boolean {
+  return stableStringifyJson(left as JsonLike) === stableStringifyJson(right as JsonLike);
 }
 
 function equalsIgnoreCase(left: string, right: string): boolean {
@@ -144,6 +158,70 @@ function resolveStoredControllerSameAs(
   return undefined;
 }
 
+function resolveStoredOrganizationPublicKeyJwk(
+  records: DidBindingRecord[],
+  route: CreateDidDocumentRouteContext,
+  taxId: string,
+): { publicKeyJwk: JsonObject; keySource?: 'attachment' | 'generated' } | undefined {
+  const normalizedTaxId = asNonEmptyString(taxId);
+  if (!normalizedTaxId) return undefined;
+
+  for (const record of [...records].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))) {
+    if (!equalsIgnoreCase(record.tenantId, route.tenantId)) continue;
+    if (!equalsIgnoreCase(record.jurisdiction, route.jurisdiction)) continue;
+    if (!equalsIgnoreCase(record.sector, route.sector)) continue;
+    if (!equalsIgnoreCase(record.taxId, normalizedTaxId)) continue;
+    if (record.status === 'removed') return undefined;
+    const publicKeyJwk = asObject(record.organizationPublicKeyJwk);
+    if (publicKeyJwk) {
+      return {
+        publicKeyJwk,
+        ...(record.organizationKeySource ? { keySource: record.organizationKeySource } : {}),
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function resolveStoredControllerPublicKeyJwk(
+  records: DidBindingRecord[],
+  route: CreateDidDocumentRouteContext,
+  taxId: string,
+): JsonObject | undefined {
+  const normalizedTaxId = asNonEmptyString(taxId);
+  if (!normalizedTaxId) return undefined;
+
+  for (const record of [...records].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))) {
+    if (!equalsIgnoreCase(record.tenantId, route.tenantId)) continue;
+    if (!equalsIgnoreCase(record.jurisdiction, route.jurisdiction)) continue;
+    if (!equalsIgnoreCase(record.sector, route.sector)) continue;
+    if (!equalsIgnoreCase(record.taxId, normalizedTaxId)) continue;
+    if (record.status === 'removed') return undefined;
+    const publicKeyJwk = asObject(record.controllerPublicKeyJwk);
+    if (publicKeyJwk) return publicKeyJwk;
+  }
+
+  return undefined;
+}
+
+function resolveLatestDidBindingRecord(
+  records: DidBindingRecord[],
+  route: CreateDidDocumentRouteContext,
+  taxId: string,
+): DidBindingRecord | undefined {
+  const normalizedTaxId = asNonEmptyString(taxId);
+  if (!normalizedTaxId) return undefined;
+
+  return [...records]
+    .filter((record) =>
+      equalsIgnoreCase(record.tenantId, route.tenantId)
+      && equalsIgnoreCase(record.jurisdiction, route.jurisdiction)
+      && equalsIgnoreCase(record.sector, route.sector)
+      && equalsIgnoreCase(record.taxId, normalizedTaxId))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+}
+
 export class CreateDidDocumentRequestManager {
   private readonly jobStore: InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>;
   private readonly collectionsService: VerificationCollectionsService;
@@ -170,7 +248,10 @@ export class CreateDidDocumentRequestManager {
         this.jobStore.markRunning(submission.thid);
         try {
           const issuedRecords = await this.collectionsService.listIssuedCredentials();
+          const didBindingRecords = await this.collectionsService.listDidBindings();
           const createdAt = new Date().toISOString();
+          const confirmedDidBindings: DidBindingRecord[] = [];
+          const confirmedDidDocuments: DidDocumentRecord[] = [];
           const items = submission.items.map((item) => {
             const taxId = asNonEmptyString(item.organization.taxID);
             const did = resolveRequestedOrganizationDid(route, {
@@ -178,6 +259,12 @@ export class CreateDidDocumentRequestManager {
               organization: item.organization,
             });
             const lookupTaxId = taxId || extractOrganizationDidTaxId(did) || '';
+            const latestDidBinding = resolveLatestDidBindingRecord(didBindingRecords, route, lookupTaxId);
+            if (latestDidBinding?.status === 'removed') {
+              throw new Error(
+                `Organization terms were removed for organization.taxID "${lookupTaxId}". Complete _verify again before calling _create.`,
+              );
+            }
             const expectedDid = resolveStoredOrganizationDid(issuedRecords, route, {
               ...(lookupTaxId ? { taxId: lookupTaxId } : {}),
             });
@@ -220,10 +307,98 @@ export class CreateDidDocumentRequestManager {
                 );
               }
             }
+            const storedControllerPublicKeyJwk = resolveStoredControllerPublicKeyJwk(didBindingRecords, route, lookupTaxId);
+            const requestedControllerPublicKeyJwk = item.controller.publicKeyJwk
+              ? normalizeControllerPublicKeyJwk(item.controller.publicKeyJwk, item.controller.alg)
+              : undefined;
+            if (
+              requestedControllerPublicKeyJwk
+              && storedControllerPublicKeyJwk
+              && !controllerPublicKeysEqual(requestedControllerPublicKeyJwk, storedControllerPublicKeyJwk)
+            ) {
+              throw new Error(
+                `controller.publicKeyJwk must match the controller binding stored during _verify for organization.taxID "${lookupTaxId}".`,
+              );
+            }
+            const controllerPublicKeyJwk = requestedControllerPublicKeyJwk || storedControllerPublicKeyJwk;
+            if (!controllerPublicKeyJwk) {
+              throw new Error(
+                `No controller publicKeyJwk found for organization.taxID "${lookupTaxId}". Send controller.publicKeyJwk or complete _verify v2 with controller binding first.`,
+              );
+            }
+            const storedOrganizationKey = resolveStoredOrganizationPublicKeyJwk(didBindingRecords, route, lookupTaxId);
+            const requestedOrganizationPublicKeyJwk = item.organization.publicKeyJwk;
+            if (
+              requestedOrganizationPublicKeyJwk
+              && storedOrganizationKey?.publicKeyJwk
+              && !organizationPublicKeysEqual(requestedOrganizationPublicKeyJwk, storedOrganizationKey.publicKeyJwk)
+            ) {
+              throw new Error(
+                `organization.publicKeyJwk must match the organization key stored during _verify for organization.taxID "${lookupTaxId}".`,
+              );
+            }
+            if (!requestedOrganizationPublicKeyJwk && storedOrganizationKey?.keySource === 'generated') {
+              throw new Error(
+                `organization.publicKeyJwk must be sent to confirm the ICA-generated organization key from _verify for organization.taxID "${lookupTaxId}".`,
+              );
+            }
+            const organizationPublicKeyJwk = requestedOrganizationPublicKeyJwk
+              || storedOrganizationKey?.publicKeyJwk;
+            if (!organizationPublicKeyJwk) {
+              throw new Error(
+                `No organization publicKeyJwk found for organization.taxID "${lookupTaxId}". Send organization.publicKeyJwk or complete _verify v2 with organization key bootstrap first.`,
+              );
+            }
             const built = buildOrganizationDidDocument({
               did,
-              controller: item.controller,
-              organization: item.organization,
+              controller: {
+                ...item.controller,
+                publicKeyJwk: controllerPublicKeyJwk,
+              },
+              organization: {
+                ...item.organization,
+                publicKeyJwk: organizationPublicKeyJwk,
+              },
+            });
+            confirmedDidBindings.push({
+              id: [
+                route.tenantId.trim().toLowerCase(),
+                route.jurisdiction.trim().toLowerCase(),
+                route.sector.trim().toLowerCase(),
+                lookupTaxId.trim().toUpperCase(),
+              ].join('::'),
+              tenantId: route.tenantId,
+              jurisdiction: route.jurisdiction.toUpperCase(),
+              sector: route.sector,
+              resourceType: route.action === '_create' ? 'document' : route.resourceType,
+              thid: submission.thid,
+              taxId: lookupTaxId,
+              did,
+              ...(item.controller.sameAs ? { controllerSameAs: item.controller.sameAs } : {}),
+              controllerPublicKeyJwk,
+              organizationPublicKeyJwk,
+              ...(storedOrganizationKey?.keySource ? { organizationKeySource: storedOrganizationKey.keySource } : {}),
+              status: 'confirmed',
+              createdAt,
+              updatedAt: createdAt,
+              confirmedAt: createdAt,
+            });
+            confirmedDidDocuments.push({
+              id: did,
+              tenantId: route.tenantId,
+              jurisdiction: route.jurisdiction.toUpperCase(),
+              sector: route.sector,
+              resourceType: 'document',
+              thid: submission.thid,
+              did,
+              ...(lookupTaxId ? { taxId: lookupTaxId } : {}),
+              ...(item.controller.sameAs ? { controllerSameAs: item.controller.sameAs } : {}),
+              controllerPublicKeyJwk,
+              organizationPublicKeyJwk,
+              didDocument: built.didDocument,
+              status: 'confirmed',
+              createdAt,
+              updatedAt: createdAt,
             });
             return {
               did,
@@ -236,6 +411,8 @@ export class CreateDidDocumentRequestManager {
               didDocument: built.didDocument,
             };
           });
+          await this.collectionsService.storeDidBindings(confirmedDidBindings);
+          await this.collectionsService.storeDidDocuments(confirmedDidDocuments);
           this.jobStore.markSucceeded(submission.thid, {
             createdCount: items.length,
             items,

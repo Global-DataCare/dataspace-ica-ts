@@ -28,8 +28,10 @@ import {
   parseVerifyRoute,
 } from '../src/api/path.ts';
 import { VerifyRequestManager } from '../src/api/managers/verify-request-manager.ts';
+import { VerifyResponseManager } from '../src/api/managers/verify-response-manager.ts';
 import { buildIcaVerifyOpenApiSpec } from '../src/api/openapi.ts';
 import {
+  assertVerifierCounterpartySignaturePair,
   computePdfLogicalFingerprint,
   FnmtPdfVerificationService,
   parseVatIdFromSubjectDn,
@@ -39,12 +41,17 @@ import {
 import { AuditDocumentStorageService } from '../src/api/tools/audit-document-storage.ts';
 import { buildDidcommMessage } from '../src/api/tools/didcomm-message.ts';
 import { parseSpacesReplaceSubmission } from '../src/api/request-parsing.ts';
+import {
+  VerificationCollectionsService,
+  resetVerificationCollectionsMemStateForTests,
+} from '../src/api/tools/verification-collections-storage.ts';
 import type {
   VerifyResult,
   VerifySubmission,
 } from '../src/api/types.ts';
 
 function buildTestVerifyResult(label: string): VerifyResult {
+  const validSha3_384Hex = 'a'.repeat(96);
   return {
     ok: true,
     verifiedAt: '2026-03-05T00:00:00.000Z',
@@ -55,17 +62,17 @@ function buildTestVerifyResult(label: string): VerifyResult {
     revocationStatus: 'good',
     digest: {
       alg: 'sha3-384',
-      signedPdfHex: 'a',
-      unsignedPdfHex: 'b',
-      templateHex: 'c',
+      signedPdfHex: validSha3_384Hex,
+      unsignedPdfHex: validSha3_384Hex,
+      templateHex: validSha3_384Hex,
     },
     signerCertificateSerialNumber: '00AA11',
     signerSubject: 'CN=Signer',
     signerIssuer: 'CN=FNMT',
     hashes: {
-      signedPdfSha256Hex: 'a',
-      unsignedPdfSha256Hex: 'b',
-      templateSha256Hex: 'c',
+      signedPdfSha256Hex: 'a'.repeat(64),
+      unsignedPdfSha256Hex: 'b'.repeat(64),
+      templateSha256Hex: 'c'.repeat(64),
     },
     notes: [label],
   };
@@ -180,12 +187,13 @@ test('parseVerifyRoute rejects unsupported sector', () => {
   assert.equal(parsed.statusCode, 400);
 });
 
-test('parseVerifyRoute accepts onehealth-prefixed sector variants', () => {
+test('parseVerifyRoute rejects sectors outside configured supported list', () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-veterinary/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
-  assert.equal(parsed?.ok, true);
-  if (!parsed || !parsed.ok) return;
-  assert.equal(parsed.context.sector, 'health-veterinary');
+  assert.equal(parsed?.ok, false);
+  if (!parsed || parsed.ok) return;
+  assert.equal(parsed.statusCode, 400);
+  assert.match(parsed.message, /sector must be one of/i);
 });
 
 test('parseVerifyRoute rejects invalid version token', () => {
@@ -220,6 +228,41 @@ test('selectPrimaryCredentialSignature ignores verifier signatures from VERIFIER
     ['VATES-Z99999999'],
   );
   assert.deepEqual(selected, { signatureIndex: 1, signerVatId: 'VATES-B22222222' });
+});
+
+test('assertVerifierCounterpartySignaturePair requires one verifier VAT and one different counterparty VAT', () => {
+  assert.doesNotThrow(() => {
+    assertVerifierCounterpartySignaturePair(
+      [
+        { signatureIndex: 0, signerVatId: 'VATES-G02793479' },
+        { signatureIndex: 1, signerVatId: 'VATES-B42215152' },
+      ],
+      ['VATES-G02793479', 'VATES-B87617981'],
+    );
+  });
+
+  assert.throws(
+    () => {
+      assertVerifierCounterpartySignaturePair(
+        [{ signatureIndex: 0, signerVatId: 'VATES-B42215152' }],
+        ['VATES-G02793479', 'VATES-B87617981'],
+      );
+    },
+    /at least one verifier signature/i,
+  );
+
+  assert.throws(
+    () => {
+      assertVerifierCounterpartySignaturePair(
+        [
+          { signatureIndex: 0, signerVatId: 'VATES-G02793479' },
+          { signatureIndex: 1, signerVatId: 'VATES-B87617981' },
+        ],
+        ['VATES-G02793479', 'VATES-B87617981'],
+      );
+    },
+    /at least one non-verifier counterparty signature/i,
+  );
 });
 
 test(
@@ -825,6 +868,146 @@ test('VerifyRequestManager accepts DIDComm plaintext attachment payload', async 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(capturedSubmission?.thid, 'thid-didcomm-attach-001');
   assert.equal(capturedSubmission?.pdfBytes.toString('utf8'), 'pdf-bytes-didcomm');
+});
+
+test('VerifyRequestManager captures controller meta.jws key and organization JWK attachment', async () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const store = new InMemoryVerificationJobStore(60);
+  let capturedSubmission: VerifySubmission | undefined;
+  const manager = new VerifyRequestManager(store, {
+    verify: async (_route, submission) => {
+      capturedSubmission = submission;
+      return buildTestVerifyResult('fnmt-es');
+    },
+  });
+
+  const payload = Buffer.from(JSON.stringify({
+    jti: 'didcomm-message-keys-001',
+    thid: 'thid-didcomm-keys-001',
+    type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
+    meta: {
+      jws: {
+        protected: {
+          alg: 'ES384',
+          kid: 'controller-es384-001',
+          jwk: {
+            kty: 'EC',
+            crv: 'P-384',
+            x: 'controller-x',
+            y: 'controller-y',
+          },
+        },
+      },
+    },
+    attachments: [
+      {
+        id: 'pdf-1',
+        media_type: 'application/pdf',
+        data: {
+          base64: Buffer.from('pdf-bytes-didcomm').toString('base64'),
+        },
+      },
+      {
+        id: 'org-jwk-1',
+        media_type: 'application/jwk+json',
+        filename: 'organization-public-key.jwk.json',
+        data: {
+          json: {
+            kty: 'EC',
+            crv: 'P-384',
+            x: 'org-x',
+            y: 'org-y',
+          },
+        },
+      },
+    ],
+  }));
+  const req = Readable.from([payload]) as unknown as IncomingMessage;
+  (req as any).method = 'POST';
+  (req as any).url = '/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify';
+  (req as any).headers = {
+    host: 'localhost:3310',
+    'content-type': 'application/didcomm-plain+json',
+    'content-length': String(payload.length),
+  };
+
+  const outcome = await manager.submit(parsed.context, req);
+  assert.equal(outcome.type, 'accepted');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(capturedSubmission?.controllerPublicKeyJwk?.kid, 'controller-es384-001');
+  assert.equal(capturedSubmission?.organizationPublicKeyJwk?.alg, 'ES384');
+  assert.equal(capturedSubmission?.organizationPublicKeyJwk?.x, 'org-x');
+});
+
+test('VerifyResponseManager returns generated organization keypair and controller public key outside resource', async () => {
+  resetVerificationCollectionsMemStateForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const store = new InMemoryVerificationJobStore(60);
+  store.enqueue('thid-generated-keys-001', parsed.context);
+  store.markSucceeded('thid-generated-keys-001', {
+    ...buildTestVerifyResult('fnmt-es'),
+    signerSubject: 'OID.2.5.4.97=VATES-B00000000, E=controller@example.org, CN=Signer',
+    controllerPublicKeyJwk: {
+      kty: 'EC',
+      crv: 'P-384',
+      x: 'controller-x',
+      y: 'controller-y',
+      alg: 'ES384',
+      kid: 'controller-es384-001',
+    },
+    organizationPublicKeyJwk: {
+      kty: 'EC',
+      crv: 'P-384',
+      x: 'org-x',
+      y: 'org-y',
+      alg: 'ES384',
+      kid: 'org-es384-001',
+    },
+    organizationPrivateKeyJwk: {
+      kty: 'EC',
+      crv: 'P-384',
+      x: 'org-x',
+      y: 'org-y',
+      d: 'org-d',
+      alg: 'ES384',
+      kid: 'org-es384-001',
+    },
+    organizationKeySource: 'generated',
+  });
+
+  const collectionsService = new VerificationCollectionsService();
+  const manager = new VerifyResponseManager(store, collectionsService);
+  const req = { method: 'POST', headers: {} } as unknown as IncomingMessage;
+
+  const outcome = await manager.poll(
+    parsed.context,
+    req,
+    new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-generated-keys-001'),
+  );
+  assert.equal(outcome.type, 'succeeded');
+  if (outcome.type !== 'succeeded') return;
+  const payload = outcome.payload as Record<string, any>;
+  assert.equal(payload.body?.data?.[0]?.publicKeyJwk?.kid, 'org-es384-001');
+  assert.equal(payload.body?.data?.[0]?.privateKeyJwk?.d, 'org-d');
+  assert.equal(payload.body?.data?.[0]?.keySource, 'generated');
+  assert.equal(payload.body?.data?.[1]?.publicKeyJwk?.kid, 'controller-es384-001');
+
+  const didBindings = await collectionsService.listDidBindings();
+  assert.equal(didBindings.length, 1);
+  assert.equal(didBindings[0]?.status, 'draft');
+  assert.equal(didBindings[0]?.taxId, 'VATES-B00000000');
+  assert.equal(didBindings[0]?.organizationKeySource, 'generated');
+  assert.equal(didBindings[0]?.organizationPublicKeyJwk?.kid, 'org-es384-001');
+  assert.equal(didBindings[0]?.controllerPublicKeyJwk?.kid, 'controller-es384-001');
+  resetVerificationCollectionsMemStateForTests();
 });
 
 test('VerifyRequestManager rejects non-DIDComm content types', async () => {

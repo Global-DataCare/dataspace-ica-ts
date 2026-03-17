@@ -1,4 +1,4 @@
-import type { IssuedCredentialRecord } from './verification-collections/types.ts';
+import type { DidDocumentRecord, IssuedCredentialRecord } from './verification-collections/types.ts';
 import { multibase58MultihashSha3_256 } from './multihash.ts';
 
 type JsonObject = Record<string, unknown>;
@@ -215,6 +215,33 @@ export function filterProviderDatasets(
     if (jurisdictionFilter && asNonEmptyString(dataset.jurisdiction).toUpperCase() !== jurisdictionFilter) return false;
     return true;
   });
+}
+
+export function filterProviderDatasetsByActiveDidDocuments(
+  datasets: ProviderDataset[],
+  didDocuments: DidDocumentRecord[],
+  scope: DcatCatalogRouteScope,
+): ProviderDataset[] {
+  const latestByDid = new Map<string, DidDocumentRecord>();
+
+  didDocuments.forEach((record) => {
+    if (!equalsIgnoreCase(record.tenantId, scope.tenantId)) return;
+    if (!equalsIgnoreCase(record.jurisdiction, scope.jurisdiction)) return;
+    if (!equalsIgnoreCase(record.sector, scope.sector)) return;
+    if (!record.did) return;
+    const existing = latestByDid.get(record.did);
+    if (!existing || existing.updatedAt.localeCompare(record.updatedAt) < 0) {
+      latestByDid.set(record.did, record);
+    }
+  });
+
+  const activeDids = new Set(
+    Array.from(latestByDid.values())
+      .filter((record) => record.status === 'confirmed')
+      .map((record) => record.did),
+  );
+
+  return datasets.filter((dataset) => activeDids.has(dataset.publisherDid));
 }
 
 export function buildDcatCatalog(catalogBaseUrl: string, datasets: ProviderDataset[]): JsonObject {

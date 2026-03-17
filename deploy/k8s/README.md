@@ -25,7 +25,16 @@ Deploy the same locally built `dataspace-ica:<package-version>` image to GKE:
 ```bash
 # uses .env.deploy.staging and pushes local image without rebuilding
 ./cloud_deploy.sh staging
+
+# staging-v2 environment with separate K8S resource names and IP
+./cloud_deploy.sh st-v2
 ```
+
+Versioning note:
+- Keep the stable staging v1 Kubernetes names under the `dataspace-ica-*` prefix.
+- Use the package/image tag to represent the release line (`0.4.x` for staging v1, `0.5.x` for v2).
+- Only the coexistence environment gets a suffix in K8S names, for example `dataspace-ica-api-st-v2`.
+- After cutover, v2 can run again under the canonical `dataspace-ica-*` names in staging/production.
 
 `cloud_deploy.sh` always triggers a deployment restart so updated runtime secrets/env are applied even when image tag stays the same.
 
@@ -34,7 +43,7 @@ Deploy the same locally built `dataspace-ica:<package-version>` image to GKE:
 - `DEPLOY_REGION`
 - `DEPLOY_SERVICE_NAME`
 - `ARTIFACT_REGISTRY_NAME`
-- optional: `IMAGE_TAG`, `K8S_NAMESPACE`, `K8S_CONTEXT`, `LOCAL_IMAGE`, `K8S_LOADBALANCER_IP`, `GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT`
+- optional: `IMAGE_TAG`, `K8S_NAMESPACE`, `K8S_CONTEXT`, `LOCAL_IMAGE`, `K8S_LOADBALANCER_IP`, `GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT`, `K8S_APP_NAME`, `K8S_SERVICE_NAME`, `K8S_CONFIGMAP_NAME`, `K8S_SECRET_NAME`, `K8S_SERVICE_ACCOUNT_NAME`
 
 Recommended:
 - Set `IMAGE_TAG` explicitly (for example `0.4.2`) to keep deploys aligned with the package version.
@@ -401,6 +410,66 @@ kubectl -n dataspace-ica describe svc dataspace-ica-api
 ```
 
 Check events for messages like "requested IP is not reserved" or project/region mismatch.
+
+## Optional: GCE Ingress + TLS
+
+`cloud_deploy.sh` also supports a GCE `Ingress` frontend instead of exposing the API directly with `Service` type `LoadBalancer`.
+
+Supported modes:
+- `K8S_MANAGED_CERT_NAME` + `K8S_INGRESS_HOST` for domain-based TLS managed by Google
+- `K8S_PRE_SHARED_CERT_NAME` for IP-first or domain-based TLS using an existing self-managed GCP SSL certificate
+- `K8S_TLS_SECRET_NAME` for a Kubernetes TLS `Secret`
+
+Only one TLS mode can be active at a time.
+
+Useful env vars in `.env.deploy.<env>`:
+
+```env
+K8S_INGRESS_ENABLED=true
+K8S_SERVICE_TYPE=NodePort
+K8S_INGRESS_HOST=
+K8S_INGRESS_STATIC_IP_NAME=ica-st-v2-ip
+K8S_MANAGED_CERT_NAME=
+K8S_PRE_SHARED_CERT_NAME=ica-st-v2-ip-cert
+K8S_TLS_SECRET_NAME=
+K8S_DISABLE_HTTP=false
+```
+
+IP-first staging pattern:
+- leave `K8S_INGRESS_HOST=` empty
+- reserve a **global** static IP in the **cluster project**
+- upload a self-managed SSL certificate in GCP
+- set `K8S_PRE_SHARED_CERT_NAME`
+
+Example:
+
+```bash
+gcloud compute addresses create ica-st-v2-ip --global --project globaldatacare-test
+gcloud compute ssl-certificates create ica-st-v2-ip-cert \
+  --certificate=/path/to/tls.crt \
+  --private-key=/path/to/tls.key \
+  --global \
+  --project globaldatacare-test
+```
+
+Then deploy:
+
+```bash
+./cloud_deploy.sh st-v2 --yes
+```
+
+Check ingress provisioning:
+
+```bash
+kubectl -n dataspace-ica get ingress dataspace-ica-api-st-v2 -w
+kubectl -n dataspace-ica describe ingress dataspace-ica-api-st-v2
+```
+
+Notes:
+- GCE `Ingress` uses a **global** static IP, unlike the regional `LoadBalancer` service IP.
+- `K8S_INGRESS_STATIC_IP_NAME` must belong to the **cluster project**, not necessarily the Firestore/runtime project.
+- If you want a browser-trusted certificate for an IP, provision that certificate separately and upload it as a GCP self-managed SSL certificate, or switch to a domain-based managed certificate flow.
+- For the full list of real staging failures seen in `st-v2` and how they were fixed, see [`docs/troubleshooting-gke-ip-staging.md`](../../docs/troubleshooting-gke-ip-staging.md).
 
 ## Optional: deploy same image to Cloud Run (`*.run.app`)
 

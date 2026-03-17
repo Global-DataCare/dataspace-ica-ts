@@ -6,6 +6,8 @@ import {
 } from './verification-collections/adapters.ts';
 import { DataspaceSyncService } from './dataspace-sync.ts';
 import type {
+  DidBindingRecord,
+  DidDocumentRecord,
   EvidenceRecord,
   IssuedCredentialRecord,
   JsonObject,
@@ -15,6 +17,8 @@ import type {
 } from './verification-collections/types.ts';
 
 export type {
+  DidBindingRecord,
+  DidDocumentRecord,
   EvidenceRecord,
   IssuedCredentialRecord,
   JsonObject,
@@ -35,6 +39,8 @@ export type IssuedCredentialLookup = {
 
 const ISSUED_CREDENTIALS_COLLECTION_LEAF = 'issued_credentials';
 const EVIDENCE_COLLECTION_LEAF = 'evidence_records';
+const DID_BINDINGS_COLLECTION_LEAF = 'did_bindings';
+const DID_DOCUMENTS_COLLECTION_LEAF = 'did_documents';
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
@@ -97,6 +103,23 @@ export function resolveEvidenceCollectionName(prefix: string): string {
   return buildCollectionName(prefix, EVIDENCE_COLLECTION_LEAF);
 }
 
+export function resolveDidBindingsCollectionName(prefix: string): string {
+  return buildCollectionName(prefix, DID_BINDINGS_COLLECTION_LEAF);
+}
+
+export function resolveDidDocumentsCollectionName(prefix: string): string {
+  return buildCollectionName(prefix, DID_DOCUMENTS_COLLECTION_LEAF);
+}
+
+function bindingRecordId(route: VerifyRouteContext, taxId: string): string {
+  return [
+    route.tenantId.trim().toLowerCase(),
+    route.jurisdiction.trim().toLowerCase(),
+    route.sector.trim().toLowerCase(),
+    taxId.trim().toUpperCase(),
+  ].join('::');
+}
+
 function extractCredentialRecords(
   route: VerifyRouteContext,
   thid: string,
@@ -132,6 +155,8 @@ function extractCredentialRecords(
       subjectId,
       issuerId,
       credential: resource,
+      ...(asJsonObject(entry.publicKeyJwk) ? { publicKeyJwk: asJsonObject(entry.publicKeyJwk) } : {}),
+      ...(asNonEmptyString(entry.keySource) ? { keySource: asNonEmptyString(entry.keySource) as 'attachment' | 'generated' } : {}),
       originDataspaceDid: issuerId || undefined,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -161,6 +186,48 @@ function extractCredentialRecords(
   return { issued, evidence };
 }
 
+function extractDidBindingRecords(
+  route: VerifyRouteContext,
+  thid: string,
+  bundle: VerifyBundleResponse,
+  nowIso: string,
+): DidBindingRecord[] {
+  const data = Array.isArray(bundle.data) ? bundle.data : [];
+  const organizationEntry = data.find((entry) => entry?.type === 'Organization-verification-v1.0');
+  const personEntry = data.find((entry) => entry?.type === 'LegalRepresentative-verification-v1.0');
+  const organizationResource = asJsonObject(organizationEntry?.resource);
+  const personResource = asJsonObject(personEntry?.resource);
+  const organizationSubject = asJsonObject(organizationResource?.credentialSubject);
+  const personSubject = asJsonObject(personResource?.credentialSubject);
+  const memberOf = asJsonObject(personSubject?.memberOf);
+  const organizationTaxId = asNonEmptyString(organizationSubject?.taxID || organizationSubject?.taxId || memberOf?.taxID || memberOf?.taxId);
+  if (!organizationTaxId) return [];
+
+  const organizationPublicKeyJwk = asJsonObject(organizationEntry?.publicKeyJwk);
+  const controllerPublicKeyJwk = asJsonObject(personEntry?.publicKeyJwk);
+  if (!organizationPublicKeyJwk && !controllerPublicKeyJwk) return [];
+
+  return [
+    {
+      id: bindingRecordId(route, organizationTaxId),
+      tenantId: route.tenantId,
+      jurisdiction: route.jurisdiction.toUpperCase(),
+      sector: route.sector,
+      resourceType: route.resourceType,
+      thid,
+      taxId: organizationTaxId,
+      did: asNonEmptyString(organizationSubject?.id) || undefined,
+      controllerSameAs: asNonEmptyString(personSubject?.sameAs) || undefined,
+      ...(controllerPublicKeyJwk ? { controllerPublicKeyJwk } : {}),
+      ...(organizationPublicKeyJwk ? { organizationPublicKeyJwk } : {}),
+      ...(asNonEmptyString(organizationEntry?.keySource) ? { organizationKeySource: asNonEmptyString(organizationEntry?.keySource) as 'attachment' | 'generated' } : {}),
+      status: 'draft',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+  ];
+}
+
 export class VerificationCollectionsService {
   private readonly config: VerificationCollectionsConfig;
   private readonly adapter: VerificationCollectionsAdapter;
@@ -182,7 +249,8 @@ export class VerificationCollectionsService {
   ): Promise<void> {
     const nowIso = new Date().toISOString();
     const extracted = extractCredentialRecords(route, thid, bundle, nowIso);
-    if (!extracted.issued.length && !extracted.evidence.length) {
+    const didBindings = extractDidBindingRecords(route, thid, bundle, nowIso);
+    if (!extracted.issued.length && !extracted.evidence.length && !didBindings.length) {
       return;
     }
     const scope = {
@@ -202,6 +270,8 @@ export class VerificationCollectionsService {
     await this.persistRecords(
       extracted.issued,
       extracted.evidence,
+      didBindings,
+      [],
       'Verification collections persistence failed',
     );
 
@@ -214,7 +284,7 @@ export class VerificationCollectionsService {
         extracted.evidence.map((record) =>
           this.dataspaceSyncService.syncEvidenceRecord(record, { event: 'added', status: 'active' })),
       );
-      await this.persistRecords(syncedIssued, syncedEvidence, 'Dataspace sync persistence failed');
+      await this.persistRecords(syncedIssued, syncedEvidence, [], [], 'Dataspace sync persistence failed');
     } catch (error: unknown) {
       const message = `Dataspace sync failed after verification persistence: ${(error as Error)?.message || String(error)}`;
       if (this.config.required) {
@@ -225,7 +295,7 @@ export class VerificationCollectionsService {
   }
 
   async storeIssuedCredentials(records: IssuedCredentialRecord[]): Promise<void> {
-    await this.persistRecords(records, [], 'Issued credentials persistence failed');
+    await this.persistRecords(records, [], [], [], 'Issued credentials persistence failed');
   }
 
   async upsertIssuedCredential(record: IssuedCredentialRecord): Promise<void> {
@@ -233,21 +303,33 @@ export class VerificationCollectionsService {
   }
 
   async storeEvidenceRecords(records: EvidenceRecord[]): Promise<void> {
-    await this.persistRecords([], records, 'Evidence records persistence failed');
+    await this.persistRecords([], records, [], [], 'Evidence records persistence failed');
+  }
+
+  async storeDidBindings(records: DidBindingRecord[]): Promise<void> {
+    await this.persistRecords([], [], records, [], 'DID bindings persistence failed');
+  }
+
+  async storeDidDocuments(records: DidDocumentRecord[]): Promise<void> {
+    await this.persistRecords([], [], [], records, 'DID documents persistence failed');
   }
 
   private async persistRecords(
     issuedRecords: IssuedCredentialRecord[],
     evidenceRecords: EvidenceRecord[],
+    didBindingRecords: DidBindingRecord[],
+    didDocumentRecords: DidDocumentRecord[],
     errorPrefix: string,
   ): Promise<void> {
-    if (!issuedRecords.length && !evidenceRecords.length) {
+    if (!issuedRecords.length && !evidenceRecords.length && !didBindingRecords.length && !didDocumentRecords.length) {
       return;
     }
 
     try {
       await this.adapter.storeIssuedCredentials(issuedRecords);
       await this.adapter.storeEvidenceRecords(evidenceRecords);
+      await this.adapter.storeDidBindings(didBindingRecords);
+      await this.adapter.storeDidDocuments(didDocumentRecords);
     } catch (error: unknown) {
       const message = `${errorPrefix}: ${(error as Error)?.message || String(error)}`;
       if (this.config.required) {
@@ -263,6 +345,14 @@ export class VerificationCollectionsService {
 
   async listEvidenceRecords(): Promise<EvidenceRecord[]> {
     return this.adapter.listEvidenceRecords();
+  }
+
+  async listDidBindings(): Promise<DidBindingRecord[]> {
+    return this.adapter.listDidBindings();
+  }
+
+  async listDidDocuments(): Promise<DidDocumentRecord[]> {
+    return this.adapter.listDidDocuments();
   }
 
   async findIssuedCredential(lookup: IssuedCredentialLookup): Promise<IssuedCredentialRecord | undefined> {

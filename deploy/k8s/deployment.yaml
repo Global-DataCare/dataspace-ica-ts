@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dataspace-ica-api
+  name: ${K8S_APP_NAME}
   labels:
-    app: dataspace-ica-api
+    app: ${K8S_APP_NAME}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: dataspace-ica-api
+      app: ${K8S_APP_NAME}
   template:
     metadata:
       labels:
-        app: dataspace-ica-api
+        app: ${K8S_APP_NAME}
     spec:
-      serviceAccountName: dataspace-ica-runtime
+      serviceAccountName: ${K8S_SERVICE_ACCOUNT_NAME}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -29,9 +29,9 @@ spec:
               containerPort: 3310
           envFrom:
             - configMapRef:
-                name: dataspace-ica-config
+                name: ${K8S_CONFIGMAP_NAME}
             - secretRef:
-                name: dataspace-ica-secrets
+                name: ${K8S_SECRET_NAME}
                 optional: true
           readinessProbe:
             httpGet:

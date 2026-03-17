@@ -45,6 +45,13 @@ cp env.example .env.deploy.dev
 npm run dev
 ```
 
+Jurisdiction and sector allowlists are environment-driven:
+
+```bash
+echo 'ICA_SUPPORTED_JURISDICTIONS=ES' >> .env.deploy.dev
+echo 'ICA_SUPPORTED_SECTORS=animal-care' >> .env.deploy.dev
+```
+
 Self-signed ICA mode (no external CA required):
 
 ```bash
@@ -66,6 +73,34 @@ npm run dev
 ```
 
 In production, disable self-sign mode and use `_activate` (or `ICA_VC_SIGNING_PRIVATE_KEY_PEM`) with CA-issued material.
+
+If the ICA already has an active `ES384` signing key with `x5c`, `_create` can issue the organization leaf certificate from that active ICA key and return inline `x5c` for the organization's primary `publicKeyJwk`.
+
+For local/staging demos, `_create` can instead attach deterministic `x5c` using the internal self-CA helper when the frontend only sends the key:
+
+```bash
+echo 'ICA_CREATE_DID_SELF_CA_STAGING=true' >> .env.deploy.dev
+echo 'ICA_CREATE_DID_SELF_CA_PASSPHRASE=replace-with-strong-passphrase' >> .env.deploy.dev
+echo 'ICA_CREATE_DID_SELF_CA_DOMAIN=ca.staging.example.org' >> .env.deploy.dev
+echo 'ICA_CREATE_DID_SELF_CA_NOT_BEFORE=20240101000000Z' >> .env.deploy.dev
+```
+
+That self-CA mode is only for local/staging demos. The v2 onboarding design that binds the controller message-signing key during `_verify` and bootstraps the organization credential key is documented in [`docs/organization-key-binding-v2.md`](./docs/organization-key-binding-v2.md).
+The current key-management policy for organization DID documents is summarized in [`docs/organization-key-management.md`](./docs/organization-key-management.md).
+Planned terms-removal semantics for offboarding an organization are documented in [`docs/organization-terms-remove-v2.md`](./docs/organization-terms-remove-v2.md).
+
+Deployment naming rule:
+- Release version and Kubernetes resource names are separate concerns.
+- Keep canonical staging/production resources under `dataspace-ica-*`.
+- Use a coexistence suffix only for parallel environments like `st-v2`, for example `dataspace-ica-api-st-v2`.
+- The image tag carries the release line (`0.4.x` for current staging v1, `0.5.x` for v2).
+
+For Kubernetes frontdoor options:
+- direct public IP via `Service` type `LoadBalancer`
+- or GCE `Ingress` with TLS (`ManagedCertificate`, pre-shared GCP SSL cert, or Kubernetes TLS `Secret`)
+
+The current `st-v2` profile is prepared for IP-first staging via GCE `Ingress` + pre-shared SSL cert. See [`deploy/k8s/README.md`](./deploy/k8s/README.md).
+Operational troubleshooting for this IP-first staging pattern is documented in [`docs/troubleshooting-gke-ip-staging.md`](./docs/troubleshooting-gke-ip-staging.md).
 
 Bootstrap details (seed/direct key + CA transition): [`bootstrap.md`](./bootstrap.md)
 
@@ -143,20 +178,25 @@ Swagger UI tip:
 - `_*-response` polling endpoints are not auto-modified.
 - In Swagger UI for `_verify`, direct-link normalization is applied to known share URLs:
   - Dropbox: `dl=0` -> `dl=1` (recommended and tested)
-  - Google Drive viewer/share links: converted best-effort to direct download
 - Outside Swagger (curl/scripts), use a direct PDF URL.
 - Manual Dropbox conversion:
   - From: `https://www.dropbox.com/s/<id>/<file>.pdf?dl=0`
   - To: `https://www.dropbox.com/s/<id>/<file>.pdf?dl=1`
-- Manual Google Drive conversion (best effort):
-  - From: `https://drive.google.com/file/d/<FILE_ID>/view?usp=sharing`
-  - To: `https://drive.google.com/uc?export=download&id=<FILE_ID>`
-  - Also valid from: `https://drive.google.com/open?id=<FILE_ID>` -> same `uc?export=download&id=...`
-  - The file must be publicly readable (or served by a URL accessible by this API process).
+
+Deployment tip:
+
+- new line / second IP: `./cloud_deploy.sh st-v2 --yes`
+- protected legacy staging: `./cloud_deploy.sh staging --yes --allow-staging`
+- `staging` is blocked by default to reduce accidental deploys while `st-v2` is active
 
 ### 1) Submit verification job (`_verify`)
 
-`_verify` accepts only DIDComm plaintext (`application/didcomm-plain+json`) with PDF in `attachments[].data.base64`.
+`_verify` accepts DIDComm plaintext (`application/didcomm-plain+json`) with:
+- the signed PDF in `attachments[].data.base64` or `attachments[].data.links`
+- optional controller binding key in `meta.jws.protected.jwk`
+- optional organization public key attachment as `application/jwk+json`
+
+If the organization JWK attachment is omitted, ICA autogenerates an `ES384` organization credential-signing keypair and returns the public/private JWK outside `body.data[].resource` in `_verify-response`.
 
 ```bash
 PDF_B64=$(base64 < "$PDF_FILE" | tr -d '\n')
@@ -172,8 +212,35 @@ VERIFY_PAYLOAD=$(cat <<JSON
       "data": {
         "base64": "$PDF_B64"
       }
+    },
+    {
+      "id": "org-jwk-1",
+      "media_type": "application/jwk+json",
+      "filename": "organization-public-key.jwk.json",
+      "data": {
+        "json": {
+          "kty": "EC",
+          "crv": "P-384",
+          "x": "<org-x>",
+          "y": "<org-y>"
+        }
+      }
     }
-  ]
+  ],
+  "meta": {
+    "jws": {
+      "protected": {
+        "alg": "ES384",
+        "kid": "controller-es384-001",
+        "jwk": {
+          "kty": "EC",
+          "crv": "P-384",
+          "x": "<controller-x>",
+          "y": "<controller-y>"
+        }
+      }
+    }
+  }
 }
 JSON
 )
@@ -898,6 +965,12 @@ Verification and keys:
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate-response` (stub)
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response`
+  - explicit v1 mode still accepts `organization.publicKeyJwk` and `controller.publicKeyJwk` directly in `_create`.
+  - v2 bootstrap can omit `organization.publicKeyJwk` and/or `controller.publicKeyJwk` in `_create` if ICA already stored them from `_verify`.
+  - optional `organization.jwks` and `controller.jwks` can carry additional keys for communications or future capabilities using `purposes` such as `vc-sign`, `didcomm-sign`, and `didcomm-enc`.
+  - if the ICA already has an active `ES384` key imported through `entity/keys/credentials/_activate` with `x5c`, `_create` signs the organization leaf certificate with that active ICA key and returns inline `x5c` on the primary organization signing key.
+  - if `ICA_CREATE_DID_SELF_CA_STAGING=true` and `organization.publicKeyJwk` arrives without `x5c/x5u`, `_create` injects deterministic inline `x5c` for the primary organization signing key.
+  - for SMART-on-FHIR / EUDI compatibility, prefer `ES384` as the primary VC-signing key and publish `ES256K` only as an additional key when needed for Pontus-X.
 
 `_rotate` submit endpoints validate controller authorization signature (`body.signature.data`) before returning `202`.
 
@@ -1131,9 +1204,14 @@ Verification behavior:
 - `ICA_VERIFY_STRICT_TEMPLATE_MATCH` (default `true`)
 - `ICA_VERIFY_TEMPLATE_MATCH_MODE` (`strict-bytes` | `logical-content`)
 - `ICA_VERIFY_DIGEST_ALGORITHM` (default `sha3-384`)
-- `VERIFIERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures are still validated but ignored when choosing the signer used for credential extraction in multi-signed PDFs)
+- `VERIFIERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify verifier organizations such as Accuro/UNID)
 
-For multi-signed contract PDFs, every detected signature is still CMS/chain/revocation validated. `VERIFIERS_VAT_LIST` only affects which signer is used to populate the organization/person credentials.
+For multi-signed contract PDFs, every detected signature is still CMS/chain/revocation validated. When `VERIFIERS_VAT_LIST` is configured, `_verify` only accepts the PDF if:
+
+- at least one detected signer VAT belongs to `VERIFIERS_VAT_LIST`
+- at least one other detected signer VAT is different and does not belong to `VERIFIERS_VAT_LIST`
+
+After that validation, matching verifier signatures are ignored when choosing the signer used to populate the organization/person credentials.
 
 Audit document persistence:
 

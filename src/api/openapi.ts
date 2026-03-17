@@ -1,4 +1,12 @@
 import { readFileSync } from 'node:fs';
+import {
+  getConfiguredSupportedJurisdictionIds,
+} from './supported-jurisdictions.ts';
+import {
+  getConfiguredSupportedSectorIds,
+  getSupportedSectorCodings,
+  getSupportedSectorsLanguage,
+} from './supported-sectors.ts';
 
 const OPERATION_OUTCOME_SCHEMA = {
   type: 'object',
@@ -2026,6 +2034,20 @@ export function buildIcaVerifyOpenApiSpec(
 ) {
   const configuredServerUrl = (process.env.ICA_OPENAPI_SERVER_URL || options.serverUrl || '').trim();
   const serverUrl = configuredServerUrl || 'http://localhost:3310';
+  const supportedJurisdictionIds = getConfiguredSupportedJurisdictionIds();
+  const supportedJurisdictionSchema = {
+    type: 'string',
+    enum: supportedJurisdictionIds,
+    example: supportedJurisdictionIds[0] || 'ES',
+  } as const;
+  const supportedSectorIds = getConfiguredSupportedSectorIds();
+  const supportedSectorSchema = {
+    type: 'string',
+    enum: supportedSectorIds,
+    example: supportedSectorIds[0] || 'health-care',
+  } as const;
+  const supportedSectorCodings = getSupportedSectorCodings();
+  const supportedSectorsLanguage = getSupportedSectorsLanguage();
   return {
     openapi: '3.1.0',
     info: {
@@ -2080,6 +2102,54 @@ export function buildIcaVerifyOpenApiSpec(
       },
     ],
     paths: {
+      '/.well-known/ica-configuration': {
+        get: {
+          tags: ['discovery'],
+          summary: 'Get ICA public configuration',
+          description:
+            'Returns public discovery configuration for this ICA deployment, including the jurisdictions and sectors currently supported by the ICA. Values are resolved from ICA_SUPPORTED_JURISDICTIONS and ICA_SUPPORTED_SECTORS or fall back to the built-in defaults.',
+          responses: {
+            '200': {
+              description: 'Public ICA discovery configuration.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['language', 'jurisdictions', 'sectors'],
+                    properties: {
+                      language: { type: 'string', example: supportedSectorsLanguage },
+                      jurisdictions: {
+                        type: 'array',
+                        items: supportedJurisdictionSchema,
+                      },
+                      sectors: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['code', 'display'],
+                          properties: {
+                            code: supportedSectorSchema,
+                            display: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                  examples: {
+                    icaConfiguration: {
+                      value: {
+                        language: supportedSectorsLanguage,
+                        jurisdictions: supportedJurisdictionIds,
+                        sectors: supportedSectorCodings,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       '/.well-known/did.json': {
         get: {
           tags: ['discovery'],
@@ -2174,6 +2244,7 @@ export function buildIcaVerifyOpenApiSpec(
                         version: '1',
                         did: '/.well-known/did.json',
                         openapi: '/openapi.json',
+                        icaConfiguration: '/.well-known/ica-configuration',
                       },
                     },
                   },
@@ -2194,7 +2265,7 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
@@ -2262,19 +2333,44 @@ export function buildIcaVerifyOpenApiSpec(
           tags: ['entity/did/document'],
           summary: 'Create organization did:web document asynchronously',
           description:
-            'Starts async creation of one or more organization did:web documents. `organization.publicKeyJwk` is the organization signing key used in the DID document `verificationMethod`. `controller.publicKeyJwk` is a different key used only to derive the top-level `controller` as `did:key:...`; the two keys must be different. Minimal explicit mode: send `organization.identifier` plus `organization.publicKeyJwk`, and the identifier must match a stored organization VC `credentialSubject.id`. Minimal derived mode: send `organization.url`, `organization.taxID`, and `organization.publicKeyJwk`; backend derives `did:web:<organization.url>:<sector>:organization:taxid:<VATES-NIF>`, and that derived DID must match the stored organization VC `credentialSubject.id` for the same `organization.taxID`. Optional runtime flag `ICA_CREATE_DID_REQUIRE_CONTROLLER_SAMEAS_MATCH=true` enforces that `controller.sameAs` matches the stored Person credential `credentialSubject.sameAs` for the same organization. Poll `_create-response` with the same `thid`.',
+            'Starts async creation of an organization `did:web` document.\n\n'
+            + 'Private keys are never created or retained by the infrastructure operator, except when ICA-generated bootstrap is explicitly used; in that case the private key is returned once and must be stored by the organization.\n\n'
+            + '**Key inputs**\n'
+            + '- `organization.publicKeyJwk`: primary organization credential-signing key used in `verificationMethod`\n'
+            + '- `controller.publicKeyJwk`: different key used to derive the top-level `controller` as `did:key:...`\n'
+            + '- optional `organization.jwks` / `controller.jwks`: extra public keys for `vc-sign`, `didcomm-sign`, `didcomm-enc`, etc.\n\n'
+            + '**V2 bootstrap**\n'
+            + '- controller key may already be stored from `_verify` via `meta.jws.protected.jwk`\n'
+            + '- organization key may already be stored from `_verify` via an `application/jwk+json` attachment or an ICA-generated ES384 bootstrap key\n'
+            + '- for v1 compatibility, `_create` still accepts explicit `controller.publicKeyJwk` and `organization.publicKeyJwk` when no stored binding/bootstrap key exists yet\n'
+            + '- if a controller binding already exists, any explicit `controller.publicKeyJwk` sent to `_create` must match the stored binding and cannot override it\n'
+            + '- if an organization key already exists from `_verify`, any explicit `organization.publicKeyJwk` sent to `_create` must match the stored key and cannot override it\n'
+            + '- if the organization key was ICA-generated during `_verify` (`keySource=generated`), `_create` requires `organization.publicKeyJwk` to be sent again as explicit confirmation\n\n'
+            + '**SDK v2**\n'
+            + '- `setControllerMessageSigningPublicKey()` helps `_verify` bind the controller key\n'
+            + '- `setOrgCredentialSigningPublicKey()` sends the organization credential key attachment during `_verify`\n'
+            + '- `createOrgDidDocument()` and `createOrgDidDocumentFromVcs()` can then call this endpoint reusing the stored keys\n\n'
+            + '**Input modes**\n'
+            + '- Minimal explicit mode: send `organization.identifier` plus `organization.publicKeyJwk`; the identifier must match a stored organization VC `credentialSubject.id`\n'
+            + '- Minimal derived mode: send `organization.url`, `organization.taxID`, and optionally `organization.publicKeyJwk`\n'
+            + '  Backend derives `did:web:<organization.url>:<sector>:organization:taxid:<VATES-NIF>` and it must match the stored organization VC `credentialSubject.id` for the same `organization.taxID`\n\n'
+            + '**Controller check**\n'
+            + '- optional runtime flag `ICA_CREATE_DID_REQUIRE_CONTROLLER_SAMEAS_MATCH=true` enforces that `controller.sameAs` matches the stored Person credential `credentialSubject.sameAs` for the same organization\n\n'
+            + '**Polling**\n'
+            + '- poll `_create-response` with the same `thid`\n'
+            + '- or use `pollCreateOrgDidDocumentResponse()` from the SDK',
           parameters: [
             {
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -2303,6 +2399,20 @@ export function buildIcaVerifyOpenApiSpec(
                                   x: '<org-x-coordinate>',
                                   y: '<org-y-coordinate>',
                                 },
+                                jwks: {
+                                  keys: [
+                                    {
+                                      kid: 'org-didcomm-enc-p384-001',
+                                      kty: 'EC',
+                                      crv: 'P-384',
+                                      x: '<org-didcomm-enc-x-coordinate>',
+                                      y: '<org-didcomm-enc-y-coordinate>',
+                                      use: 'enc',
+                                      alg: 'ECDH-ES+A256KW',
+                                      purposes: ['didcomm-enc'],
+                                    },
+                                  ],
+                                },
                               },
                               controller: {
                                 sameAs: 'urn:multibase:zControllerHash',
@@ -2311,6 +2421,20 @@ export function buildIcaVerifyOpenApiSpec(
                                   crv: 'P-384',
                                   x: '<controller-x-coordinate>',
                                   y: '<controller-y-coordinate>',
+                                },
+                                jwks: {
+                                  keys: [
+                                    {
+                                      kid: 'controller-didcomm-sign-p384-001',
+                                      kty: 'EC',
+                                      crv: 'P-384',
+                                      x: '<controller-didcomm-sign-x-coordinate>',
+                                      y: '<controller-didcomm-sign-y-coordinate>',
+                                      use: 'sig',
+                                      alg: 'ES384',
+                                      purposes: ['didcomm-sign'],
+                                    },
+                                  ],
                                 },
                               },
                             },
@@ -2337,6 +2461,20 @@ export function buildIcaVerifyOpenApiSpec(
                                   x: '<org-x-coordinate>',
                                   y: '<org-y-coordinate>',
                                 },
+                                jwks: {
+                                  keys: [
+                                    {
+                                      kid: 'org-didcomm-enc-p384-001',
+                                      kty: 'EC',
+                                      crv: 'P-384',
+                                      x: '<org-didcomm-enc-x-coordinate>',
+                                      y: '<org-didcomm-enc-y-coordinate>',
+                                      use: 'enc',
+                                      alg: 'ECDH-ES+A256KW',
+                                      purposes: ['didcomm-enc'],
+                                    },
+                                  ],
+                                },
                               },
                               controller: {
                                 sameAs: 'urn:multibase:zControllerHash',
@@ -2346,6 +2484,42 @@ export function buildIcaVerifyOpenApiSpec(
                                   x: '<controller-x-coordinate>',
                                   y: '<controller-y-coordinate>',
                                 },
+                                jwks: {
+                                  keys: [
+                                    {
+                                      kid: 'controller-didcomm-sign-p384-001',
+                                      kty: 'EC',
+                                      crv: 'P-384',
+                                      x: '<controller-didcomm-sign-x-coordinate>',
+                                      y: '<controller-didcomm-sign-y-coordinate>',
+                                      use: 'sig',
+                                      alg: 'ES384',
+                                      purposes: ['didcomm-sign'],
+                                    },
+                                  ],
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  createDidDocumentRequestUsingStoredVerifyKeys: {
+                    summary: 'V2 create using keys already stored by _verify',
+                    value: {
+                      jti: 'req-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              organization: {
+                                url: 'globaldatacare.es',
+                                taxID: 'VATES-B00000000',
+                              },
+                              controller: {
+                                sameAs: 'urn:multibase:zControllerHash',
                               },
                             },
                           },
@@ -2402,13 +2576,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'thid',
@@ -2525,12 +2699,50 @@ export function buildIcaVerifyOpenApiSpec(
                                         use: 'sig',
                                       },
                                     },
+                                    {
+                                      id:
+                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#org-didcomm-sign-p384-001',
+                                      type: 'JsonWebKey2020',
+                                      controller:
+                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                      publicKeyJwk: {
+                                        kid: 'org-didcomm-sign-p384-001',
+                                        kty: 'EC',
+                                        crv: 'P-384',
+                                        x: '<org-didcomm-sign-x-coordinate>',
+                                        y: '<org-didcomm-sign-y-coordinate>',
+                                        use: 'sig',
+                                        alg: 'ES384',
+                                        purposes: ['didcomm-sign'],
+                                      },
+                                    },
+                                    {
+                                      id:
+                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#org-didcomm-enc-p384-001',
+                                      type: 'JsonWebKey2020',
+                                      controller:
+                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                      publicKeyJwk: {
+                                        kid: 'org-didcomm-enc-p384-001',
+                                        kty: 'EC',
+                                        crv: 'P-384',
+                                        x: '<org-didcomm-enc-x-coordinate>',
+                                        y: '<org-didcomm-enc-y-coordinate>',
+                                        use: 'enc',
+                                        alg: 'ECDH-ES+A256KW',
+                                        purposes: ['didcomm-enc'],
+                                      },
+                                    },
                                   ],
                                   assertionMethod: [
                                     'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#<jwk-rfc7638-thumbprint>',
                                   ],
                                   authentication: [
                                     'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#<jwk-rfc7638-thumbprint>',
+                                    'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#org-didcomm-sign-p384-001',
+                                  ],
+                                  keyAgreement: [
+                                    'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#org-didcomm-enc-p384-001',
                                   ],
                                 },
                                 meta: {
@@ -2584,13 +2796,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -2665,13 +2877,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'id',
@@ -2722,13 +2934,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -2788,13 +3000,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'id',
@@ -2836,13 +3048,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -2969,13 +3181,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'evidenceType',
@@ -3192,19 +3404,19 @@ export function buildIcaVerifyOpenApiSpec(
           tags: ['network/policies'],
           summary: 'Upsert ICA delegation policy (ODRL)',
           description:
-            'Starts async upsert of ICA delegation policies using body.data[] batch. Policies are ODRL resources (with optional Gaia-X OVC constraints) that delegate who can add/verify evidence for member organizations. OneHealth umbrella scope is mapped to API sectors by prefix: animal* and health*.',
+            'Starts async upsert of ICA delegation policies using body.data[] batch. Policies are ODRL resources (with optional Gaia-X OVC constraints) that delegate who can add/verify evidence for member organizations. Sector values must match the configured ICA supported sectors list.',
           parameters: [
             {
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -3324,13 +3536,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'credentialType',
@@ -3453,13 +3665,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'credentialType',
@@ -3545,13 +3757,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'credentialType',
@@ -3639,13 +3851,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'credentialType',
@@ -3731,13 +3943,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -3789,13 +4001,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -3851,19 +4063,32 @@ export function buildIcaVerifyOpenApiSpec(
           tags: ['terms/pdf'],
           summary: 'Submit PDF verification job',
           description:
-            'Starts an async verification job and returns polling location in headers. In Swagger UI, known share links in attachments[].data.links are normalized to direct-download URLs before sending (Dropbox dl=0->dl=1 and Google Drive best-effort conversion).',
+            'Starts an async PDF verification job and returns polling location in headers.\n\n'
+            + '**Required input**\n'
+            + '- DIDComm plaintext request must carry the signed PDF in `attachments[]`\n\n'
+            + '**V2 bootstrap**\n'
+            + '- controller message-signing key travels in `meta.jws.protected.jwk`\n'
+            + '- organization credential-signing public key travels as a separate `application/jwk+json` attachment\n'
+            + '- if the organization JWK attachment is omitted, ICA autogenerates an ES384 organization credential-signing keypair\n'
+            + '- the generated `publicKeyJwk` and `privateKeyJwk` are returned in `_verify-response` outside `body.data[].resource`\n\n'
+            + '**SDK v2**\n'
+            + '- `setControllerMessageSigningPublicKey()` fills `meta.jws.protected.jwk`\n'
+            + '- `setOrgCredentialSigningPublicKey()` adds the organization JWK attachment\n'
+            + '- `verifyTerms()` builds the request envelope for you\n\n'
+            + '**Swagger UI**\n'
+            + '- known Dropbox share links in `attachments[].data.links` are normalized from `dl=0` to `dl=1` before sending',
           parameters: [
             {
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'resourceType',
@@ -3915,24 +4140,6 @@ export function buildIcaVerifyOpenApiSpec(
                       ],
                     },
                   },
-                  viaGoogleDriveViewerUrl: {
-                    summary: 'DIDComm con URL viewer de Google Drive (conversión best-effort en Swagger)',
-                    value: {
-                      jti: 'req-auto',
-                      thid: 'thid-auto',
-                      type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
-                      body: {},
-                      attachments: [
-                        {
-                          id: 'signed-terms',
-                          media_type: 'application/pdf',
-                          data: {
-                            links: ['https://drive.google.com/file/d/17AtilZ0hjmfqXUx_2eqnjmQ2IrAzKSyO/view'],
-                          },
-                        },
-                      ],
-                    },
-                  },
                   viaBase64: {
                     summary: 'DIDComm con PDF en base64',
                     value: {
@@ -3951,6 +4158,54 @@ export function buildIcaVerifyOpenApiSpec(
                       ],
                     },
                   },
+                  viaBase64WithSdkV2Bootstrap: {
+                    summary: 'V2 onboarding con controller key en meta y JWK de organización en attachment',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
+                      meta: {
+                        jws: {
+                          protected: {
+                            alg: 'ES384',
+                            kid: 'controller-msg-es384-001',
+                            jwk: {
+                              kty: 'EC',
+                              crv: 'P-384',
+                              x: '<controller-msg-x-coordinate>',
+                              y: '<controller-msg-y-coordinate>',
+                            },
+                          },
+                        },
+                      },
+                      body: {},
+                      attachments: [
+                        {
+                          id: 'signed-terms',
+                          media_type: 'application/pdf',
+                          data: {
+                            base64: 'JVBERi0xLjQKJcTl8uXr...',
+                          },
+                        },
+                        {
+                          id: 'organization-public-jwk',
+                          media_type: 'application/jwk+json',
+                          filename: 'organization-public-key.jwk.json',
+                          data: {
+                            json: {
+                              kid: 'org-cred-es384-001',
+                              kty: 'EC',
+                              crv: 'P-384',
+                              x: '<org-cred-x-coordinate>',
+                              y: '<org-cred-y-coordinate>',
+                              use: 'sig',
+                              alg: 'ES384',
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
                 },
                 schema: {
                   type: 'object',
@@ -3959,6 +4214,12 @@ export function buildIcaVerifyOpenApiSpec(
                     jti: { type: 'string' },
                     thid: { type: 'string' },
                     type: { type: 'string' },
+                    meta: {
+                      type: 'object',
+                      additionalProperties: true,
+                      description:
+                        'Optional DIDComm metadata. In v2, `meta.jws.protected.jwk` carries the controller message-signing public key. `ica-client-sdk-ts@2.x` fills this automatically when `setControllerMessageSigningPublicKey()` is configured.',
+                    },
                     body: { type: 'object', additionalProperties: true },
                     attachments: {
                       type: 'array',
@@ -3966,13 +4227,25 @@ export function buildIcaVerifyOpenApiSpec(
                         type: 'object',
                         properties: {
                           id: { type: 'string' },
-                          media_type: { type: 'string', example: 'application/pdf' },
+                          filename: { type: 'string' },
+                          media_type: {
+                            type: 'string',
+                            example: 'application/pdf',
+                            description:
+                              'Use `application/pdf` for the signed terms PDF or `application/jwk+json` for the optional organization credential public key attachment.',
+                          },
                           data: {
                             type: 'object',
                             properties: {
                               base64: {
                                 type: 'string',
                                 description: 'PDF codificado en base64.',
+                              },
+                              json: {
+                                type: 'object',
+                                additionalProperties: true,
+                                description:
+                                  'JSON payload for non-PDF attachments. In v2, `application/jwk+json` uses `data.json` to transport the organization credential public JWK. `ica-client-sdk-ts@2.x` adds this attachment automatically when `setOrgCredentialSigningPublicKey()` is configured.',
                               },
                               links: {
                                 type: 'array',
@@ -4023,6 +4296,133 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
+      '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove': {
+        post: {
+          tags: ['terms/pdf'],
+          summary: 'Remove accepted organization terms asynchronously',
+          description:
+            'Starts async removal of accepted organization terms for an onboarded organization.\n\n'
+            + '**Business effect**\n'
+            + '- organization stops being accepted for the selected dataspace scope\n'
+            + '- active DID document is removed from publication\n'
+            + '- organization is removed from catalog publication\n'
+            + '- organization keys are treated as revoked for that onboarding cycle\n'
+            + '- a later return requires a fresh `_verify` and `_create`\n\n'
+            + '**Authorization**\n'
+            + '- `controller.publicKeyJwk` must match the stored controller binding for the organization\n'
+            + '- in didactic/plain mode this may travel in `meta.jws.protected.jwk`\n'
+            + '- hardened production mode should use signed DIDComm so the controller key is actually proven, not just claimed\n\n'
+            + '**SDK**\n'
+            + '- `ica-client-sdk-ts@2.x` documents this flow, but does not yet provide a dedicated `_remove` helper\n\n'
+            + '**Polling**\n'
+            + '- poll `_remove-response` with the same `thid`',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: supportedJurisdictionSchema,
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: supportedSectorSchema,
+            },
+            {
+              name: 'resourceType',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:contract|\\d{12}|test-\\d{12})$', example: 'contract' },
+              description:
+                'Use the same `resourceType` used during terms verification for the onboarding cycle being removed.',
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: true,
+                },
+                examples: {
+                  removeAcceptedTerms: {
+                    summary: 'Remove accepted terms for one organization',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/terms/remove-request/v1',
+                      meta: {
+                        jws: {
+                          protected: {
+                            alg: 'ES384',
+                            kid: 'controller-msg-es384-001',
+                            jwk: {
+                              kty: 'EC',
+                              crv: 'P-384',
+                              x: '<controller-msg-x-coordinate>',
+                              y: '<controller-msg-y-coordinate>',
+                            },
+                          },
+                        },
+                      },
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              organization: {
+                                taxID: 'VATES-B00000000',
+                                identifier: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                              },
+                              controller: {
+                                sameAs: 'urn:multibase:zControllerHash',
+                              },
+                              reason: 'organization-requested-removal',
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted. Poll _remove-response endpoint using Location header.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Polling endpoint URL including the generated `thid` query parameter, for example `/ica/cds-ES/v1/animal-care/terms/pdf/contract/_remove-response?thid=thid-remove-001`.',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate-response': {
         post: {
           tags: ['entity/keys/credentials'],
@@ -4032,13 +4432,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'thid',
@@ -4113,13 +4513,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'evidenceType',
@@ -4200,13 +4600,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'thid',
@@ -4281,13 +4681,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'credentialType',
@@ -4368,13 +4768,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'credentialType',
@@ -4455,13 +4855,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'credentialType',
@@ -4533,6 +4933,87 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
+      '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove-response': {
+        post: {
+          tags: ['terms/pdf'],
+          summary: 'Poll organization terms removal result',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: supportedJurisdictionSchema,
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: supportedSectorSchema,
+            },
+            {
+              name: 'resourceType',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^(?:contract|\\d{12}|test-\\d{12})$', example: 'contract' },
+            },
+            {
+              name: 'thid',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Terms remove thread id. Can also be sent in body as thid.',
+            },
+          ],
+          responses: {
+            '202': {
+              description: 'Still pending.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Same `_remove-response` endpoint path; continue polling with the same `thid`.',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '200': {
+              description: 'Terms removal completed (success or handled failure payload).',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '400': {
+              description: 'Missing or invalid thread id.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '404': {
+              description: 'Terms remove job not found.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search-response': {
         post: {
           tags: ['network/credentials'],
@@ -4542,13 +5023,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'credentialType',
@@ -4625,13 +5106,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -4711,13 +5192,13 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
           ],
           requestBody: {
@@ -4790,18 +5271,29 @@ export function buildIcaVerifyOpenApiSpec(
         post: {
           tags: ['terms/pdf'],
           summary: 'Poll async verification result',
+          description:
+            'Returns the verification result.\n\n'
+            + '**Organization entry**\n'
+            + '- may include `publicKeyJwk`, `privateKeyJwk`, and `keySource` outside `resource`\n'
+            + '- `privateKeyJwk` is present only when ICA generated the organization keypair during `_verify`\n\n'
+            + '**Legal-representative / controller entry**\n'
+            + '- may include only `publicKeyJwk` for the controller binding key\n\n'
+            + '**SDK v2**\n'
+            + '- `pollVerifyTermsResponse()` polls this endpoint\n'
+            + '- `getOrganizationKeyMaterialFromVerifyResponse()` reads organization bootstrap keys\n'
+            + '- `getControllerBindingPublicKeyFromVerifyResponse()` reads the controller binding key',
           parameters: [
             {
               name: 'jurisdiction',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: 'ES' },
+              schema: supportedJurisdictionSchema,
             },
             {
               name: 'sector',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^(?:animal|health)[a-z0-9-]*', example: 'animal-care' },
+              schema: supportedSectorSchema,
             },
             {
               name: 'resourceType',

@@ -4,6 +4,7 @@ import { parseVerifySubmission } from '../request-parsing.ts';
 import { InMemoryVerificationJobStore } from '../job-store.ts';
 import type { PdfVerificationService, VerificationErrorDetails, VerifyRouteContext } from '../types.ts';
 import { AuditDocumentStorageService } from '../tools/audit-document-storage.ts';
+import { generateOrganizationCredentialKeyPair } from '../tools/bootstrap-organization-key.ts';
 
 export type VerifySubmitOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -47,6 +48,9 @@ export class VerifyRequestManager {
         try {
           const verificationResult = await this.verifier.verify(route, submission);
           const enrichedResult = await this.auditStorage.persistVerifiedPdf(route, submission, verificationResult);
+          const generatedOrganizationKeyPair = submission.organizationPublicKeyJwk
+            ? undefined
+            : generateOrganizationCredentialKeyPair();
           const mergedNotes = [
             ...(Array.isArray(enrichedResult.notes) ? enrichedResult.notes : []),
             ...((submission.annexExtractionWarnings || []).filter(Boolean)),
@@ -54,6 +58,19 @@ export class VerifyRequestManager {
           this.jobStore.markSucceeded(submission.thid, {
             ...enrichedResult,
             notes: mergedNotes,
+            ...(submission.controllerPublicKeyJwk ? { controllerPublicKeyJwk: submission.controllerPublicKeyJwk } : {}),
+            ...(submission.organizationPublicKeyJwk
+              ? {
+                  organizationPublicKeyJwk: submission.organizationPublicKeyJwk,
+                  organizationKeySource: 'attachment' as const,
+                }
+              : generatedOrganizationKeyPair
+                ? {
+                    organizationPublicKeyJwk: generatedOrganizationKeyPair.publicKeyJwk,
+                    organizationPrivateKeyJwk: generatedOrganizationKeyPair.privateKeyJwk,
+                    organizationKeySource: 'generated' as const,
+                  }
+                : {}),
             ...(submission.annexFormFields && Object.keys(submission.annexFormFields).length
               ? { annexFormFields: submission.annexFormFields }
               : {}),
