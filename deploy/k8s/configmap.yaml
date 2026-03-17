@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: dataspace-ica-config
+  name: ${K8S_CONFIGMAP_NAME}
 data:
   ICA_API_HOST: "0.0.0.0"
   ICA_API_PORT: "3310"

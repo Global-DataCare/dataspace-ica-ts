@@ -19,6 +19,7 @@ import {
   parseCredentialStatusRoute,
   parseIssueCredentialRoute,
   parseRotateRoute,
+  parseTermsRemoveRoute,
   parseVerifyRoute,
 } from './path.ts';
 import { ActivateRequestManager } from './managers/activate-request-manager.ts';
@@ -37,6 +38,8 @@ import { CredentialStatusRequestManager } from './managers/credential-status-req
 import { CredentialStatusResponseManager } from './managers/credential-status-response-manager.ts';
 import { IssueCredentialRequestManager } from './managers/issue-credential-request-manager.ts';
 import { IssueCredentialResponseManager } from './managers/issue-credential-response-manager.ts';
+import { TermsRemoveRequestManager } from './managers/terms-remove-request-manager.ts';
+import { TermsRemoveResponseManager } from './managers/terms-remove-response-manager.ts';
 import { VerifyRequestManager } from './managers/verify-request-manager.ts';
 import { VerifyResponseManager } from './managers/verify-response-manager.ts';
 import { buildIcaVerifyOpenApiSpec } from './openapi.ts';
@@ -55,6 +58,7 @@ import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from './tools/didcomm-messag
 import {
   buildDcatCatalog,
   buildProviderDatasetsFromIssuedCredentials,
+  filterProviderDatasetsByActiveDidDocuments,
   filterProviderDatasets,
   findProviderDatasetById,
 } from './tools/dcat-catalog.ts';
@@ -65,6 +69,8 @@ import {
   resolveControllerDidDocumentPath,
 } from './tools/ica-identity.ts';
 import { bootstrapSelfSigningKey } from './tools/self-signing.ts';
+import { getConfiguredSupportedJurisdictionIds } from './supported-jurisdictions.ts';
+import { getSupportedSectorCodings, getSupportedSectorsLanguage } from './supported-sectors.ts';
 import type {
   OperationOutcomeIssue,
   OperationOutcomeResource,
@@ -87,6 +93,8 @@ import type {
   IssueCredentialResult,
   IssueCredentialRouteContext,
   RotateRouteContext,
+  TermsRemoveResult,
+  TermsRemoveRouteContext,
   VerifyRouteContext,
 } from './types.ts';
 export { buildVerificationVcBundle } from './tools/vc-bundle.ts';
@@ -189,6 +197,7 @@ function sendError(
     | CredentialStatusRouteContext
     | CredentialRevokeRouteContext
     | CredentialSearchRouteContext
+    | TermsRemoveRouteContext
     | SpacesRouteContext,
 ): void {
   const payload = buildDidcommMessage(req, buildErrorBundle(statusCode, message), {
@@ -209,6 +218,44 @@ function sendMethodNotAllowed(res: ServerResponse, allow: string): void {
 function firstHeaderValue(header: string | string[] | undefined): string {
   if (Array.isArray(header)) return (header.find((value) => value && value.trim()) || '').trim();
   return (header || '').trim();
+}
+
+function parseAllowedCorsOrigins(): string[] {
+  const configured = process.env.ICA_CORS_ALLOW_ORIGINS || process.env.ICA_CORS_ALLOW_ORIGIN;
+  if (configured && configured.trim()) {
+    return configured
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  const environment = (process.env.NODE_ENV || '').trim().toLowerCase();
+  if (environment === 'production') {
+    return [];
+  }
+
+  return ['*'];
+}
+
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+  const requestOrigin = firstHeaderValue(req.headers.origin);
+  const allowedOrigins = parseAllowedCorsOrigins();
+  const allowAnyOrigin = allowedOrigins.includes('*');
+  const allowOrigin = allowAnyOrigin
+    ? '*'
+    : (requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : allowedOrigins[0]);
+  const requestedHeaders = firstHeaderValue(req.headers['access-control-request-headers']);
+
+  if (allowOrigin && requestOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    requestedHeaders || 'Content-Type, Authorization',
+  );
+  res.setHeader('Access-Control-Max-Age', '600');
 }
 
 function normalizeContentType(headerValue: string): string {
@@ -345,31 +392,6 @@ function buildApiDocsHtml(): string {
         return String(headers[key] || '').trim();
       }
 
-      function normalizeGoogleDriveDirectDownloadUrl(inputUrl) {
-        try {
-          var url = new URL(String(inputUrl || '').trim());
-          var host = String(url.hostname || '').toLowerCase();
-          var isGoogleDriveHost = host === 'drive.google.com' || host === 'docs.google.com';
-          if (!isGoogleDriveHost) return String(inputUrl || '');
-
-          var segments = String(url.pathname || '').split('/').filter(Boolean);
-          var fileDIndex = segments.indexOf('d');
-          var fileId = '';
-          if (fileDIndex >= 0 && segments.length > fileDIndex + 1) {
-            fileId = segments[fileDIndex + 1] || '';
-          }
-          if (!fileId) {
-            fileId = url.searchParams.get('id') || '';
-          }
-          if (!fileId) {
-            return String(inputUrl || '');
-          }
-          return 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(fileId);
-        } catch {
-          return String(inputUrl || '');
-        }
-      }
-
       function normalizeDropboxDirectDownloadUrl(inputUrl) {
         try {
           var url = new URL(String(inputUrl || '').trim());
@@ -387,8 +409,7 @@ function buildApiDocsHtml(): string {
       }
 
       function normalizeAttachmentDirectDownloadUrl(inputUrl) {
-        var dropboxNormalized = normalizeDropboxDirectDownloadUrl(inputUrl);
-        return normalizeGoogleDriveDirectDownloadUrl(dropboxNormalized);
+        return normalizeDropboxDirectDownloadUrl(inputUrl);
       }
 
       function normalizeVerifyAttachmentLinks(payload) {
@@ -475,6 +496,9 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const credentialSearchJobStore = new InMemoryEntityJobStore<CredentialSearchRouteContext, CredentialSearchResult>(
     options.jobResultTtlSeconds || 3600,
   );
+  const termsRemoveJobStore = new InMemoryEntityJobStore<TermsRemoveRouteContext, TermsRemoveResult>(
+    options.jobResultTtlSeconds || 3600,
+  );
   const auditStorageService = createAuditDocumentStorageServiceFromEnv();
   const spacesRegistry = new SpacesRegistry();
   const dataspaceSyncService = new DataspaceSyncService({
@@ -501,6 +525,11 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
     dataspaceSyncService,
   );
   const issueCredentialResponseManager = new IssueCredentialResponseManager(issueCredentialJobStore);
+  const termsRemoveRequestManager = new TermsRemoveRequestManager(
+    termsRemoveJobStore,
+    verificationCollectionsService,
+  );
+  const termsRemoveResponseManager = new TermsRemoveResponseManager(termsRemoveJobStore);
   const credentialStatusRequestManager = new CredentialStatusRequestManager(
     credentialStatusJobStore,
     verificationCollectionsService,
@@ -519,11 +548,30 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const credentialSearchResponseManager = new CredentialSearchResponseManager(credentialSearchJobStore);
   const apiDocsHtml = buildApiDocsHtml();
 
+  async function buildActiveProviderDatasets(route: {
+    tenantId: string;
+    jurisdiction: string;
+    sector: string;
+  }) {
+    const issuedCredentials = await verificationCollectionsService.listIssuedCredentials();
+    const didDocuments = await verificationCollectionsService.listDidDocuments();
+    const datasets = buildProviderDatasetsFromIssuedCredentials(issuedCredentials, route);
+    return filterProviderDatasetsByActiveDidDocuments(datasets, didDocuments, route);
+  }
+
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const requestUrl = new URL(req.url || '/', 'http://localhost');
       const method = req.method?.toUpperCase() || 'GET';
       const pathname = requestUrl.pathname;
+
+      setCorsHeaders(req, res);
+
+      if (method === 'OPTIONS') {
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
 
       if (pathname === '/') {
         if (method !== 'GET') {
@@ -537,6 +585,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           status: 'ok',
           docs: '/api-docs',
           openapi: '/openapi.json',
+          icaConfiguration: '/.well-known/ica-configuration',
           did: '/.well-known/did.json',
           dspaceVersion: '/.well-known/dspace-version',
           controllerDid: controllerDidDocument?.id || undefined,
@@ -545,6 +594,10 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
             verify: 'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify',
             verifyResponse:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response',
+            removeTerms:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove',
+            removeTermsResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove-response',
             activate:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate',
             activateResponse:
@@ -597,7 +650,22 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
               'POST /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request',
             dcatCatalogDdoDataset:
               'GET /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/datasets/{id}',
+            icaConfiguration:
+              'GET /.well-known/ica-configuration',
           },
+        });
+        return;
+      }
+
+      if (pathname === '/.well-known/ica-configuration') {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        sendJson(res, 200, {
+          language: getSupportedSectorsLanguage(),
+          jurisdictions: getConfiguredSupportedJurisdictionIds(),
+          sectors: getSupportedSectorCodings(),
         });
         return;
       }
@@ -630,6 +698,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           version: '1',
           did: '/.well-known/did.json',
           openapi: '/openapi.json',
+          icaConfiguration: '/.well-known/ica-configuration',
         });
         return;
       }
@@ -679,10 +748,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         const route = parsedDcatCatalogRequestRoute.context;
         const catalogBasePath = `/${route.tenantId}/cds-${route.jurisdiction}/v1/${route.sector}/dcat3/catalog`;
         const catalogBaseUrl = `${resolveRequestOrigin(req)}${catalogBasePath}`;
-        const datasets = buildProviderDatasetsFromIssuedCredentials(
-          await verificationCollectionsService.listIssuedCredentials(),
-          route,
-        );
+        const datasets = await buildActiveProviderDatasets(route);
         const filters = (body.filters && typeof body.filters === 'object')
           ? (body.filters as Record<string, unknown>)
           : undefined;
@@ -722,10 +788,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         const route = parsedDcatCatalogDatasetRoute.context;
         const catalogBasePath = `/${route.tenantId}/cds-${route.jurisdiction}/v1/${route.sector}/dcat3/catalog`;
         const catalogBaseUrl = `${resolveRequestOrigin(req)}${catalogBasePath}`;
-        const datasets = buildProviderDatasetsFromIssuedCredentials(
-          await verificationCollectionsService.listIssuedCredentials(),
-          route,
-        );
+        const datasets = await buildActiveProviderDatasets(route);
         const dataset = findProviderDatasetById(datasets, route.datasetId);
         if (!dataset) {
           res.statusCode = 404;
@@ -762,10 +825,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         const route = parsedDcatCatalogDdoRequestRoute.context;
         const catalogBasePath = `/${route.tenantId}/cds-${route.jurisdiction}/v1/${route.sector}/dcat3/catalog`;
         const catalogBaseUrl = `${resolveRequestOrigin(req)}${catalogBasePath}`;
-        const datasets = buildProviderDatasetsFromIssuedCredentials(
-          await verificationCollectionsService.listIssuedCredentials(),
-          route,
-        );
+        const datasets = await buildActiveProviderDatasets(route);
         const filters = (body.filters && typeof body.filters === 'object')
           ? (body.filters as Record<string, unknown>)
           : undefined;
@@ -791,10 +851,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         const route = parsedDcatCatalogDdoDatasetRoute.context;
         const catalogBasePath = `/${route.tenantId}/cds-${route.jurisdiction}/v1/${route.sector}/dcat3/catalog`;
         const catalogBaseUrl = `${resolveRequestOrigin(req)}${catalogBasePath}`;
-        const datasets = buildProviderDatasetsFromIssuedCredentials(
-          await verificationCollectionsService.listIssuedCredentials(),
-          route,
-        );
+        const datasets = await buildActiveProviderDatasets(route);
         const dataset = findProviderDatasetById(datasets, route.datasetId);
         if (!dataset) {
           res.statusCode = 404;
@@ -967,6 +1024,48 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         }
 
         const outcome = await verifyResponseManager.poll(route, req, requestUrl);
+        if (outcome.type === 'error') {
+          sendError(req, res, outcome.statusCode, outcome.message, route);
+          return;
+        }
+        if (outcome.type === 'pending') {
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        sendDidcommJson(res, 200, outcome.payload);
+        return;
+      }
+
+      const parsedTermsRemoveRoute = parseTermsRemoveRoute(requestUrl.pathname);
+      if (parsedTermsRemoveRoute) {
+        if (!parsedTermsRemoveRoute.ok) {
+          sendError(req, res, parsedTermsRemoveRoute.statusCode, parsedTermsRemoveRoute.message);
+          return;
+        }
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', parsedTermsRemoveRoute.context);
+          return;
+        }
+
+        const route = parsedTermsRemoveRoute.context;
+        if (route.action === '_remove') {
+          const outcome = await termsRemoveRequestManager.submit(route, req);
+          if (outcome.type === 'error') {
+            sendError(req, res, outcome.statusCode, outcome.message, route);
+            return;
+          }
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+
+        const outcome = await termsRemoveResponseManager.poll(route, req, requestUrl);
         if (outcome.type === 'error') {
           sendError(req, res, outcome.statusCode, outcome.message, route);
           return;

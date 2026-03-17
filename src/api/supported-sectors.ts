@@ -1,0 +1,89 @@
+import type { AllowedSector } from './types.ts';
+
+export const DEFAULT_ICA_SUPPORTED_SECTORS_LANGUAGE = 'es-ES';
+
+export const DEFAULT_ICA_SUPPORTED_SECTORS = [
+  'health-care',
+  'animal-care',
+  'onehealth-care',
+  'onehealth-research',
+  'onehealth-insurance',
+] as const satisfies readonly AllowedSector[];
+
+const DEFAULT_SECTOR_LABELS: Record<string, string> = {
+  'health-care': 'Salud humana',
+  'animal-care': 'Salud animal',
+  'onehealth-care': 'Salud del entorno (One Health)',
+  'onehealth-research': 'Investigación en salud (One Health)',
+  'onehealth-insurance': 'Seguros de salud y entorno (One Health)',
+};
+
+export type SupportedSectorCoding = {
+  code: AllowedSector;
+  display: string;
+};
+
+function parseCsvList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function dedupe(values: string[]): string[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    if (seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
+function buildSectorDisplay(sectorId: string): string {
+  const knownLabel = DEFAULT_SECTOR_LABELS[sectorId];
+  if (knownLabel) return knownLabel;
+  return sectorId
+    .split('-')
+    .filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(' ');
+}
+
+export function getConfiguredSupportedSectorIds(
+  env: NodeJS.ProcessEnv = process.env,
+): AllowedSector[] {
+  const configured = dedupe(parseCsvList(env.ICA_SUPPORTED_SECTORS));
+  if (configured.length) {
+    return configured as AllowedSector[];
+  }
+  return [...DEFAULT_ICA_SUPPORTED_SECTORS];
+}
+
+export function getSupportedSectorsLanguage(): string {
+  return DEFAULT_ICA_SUPPORTED_SECTORS_LANGUAGE;
+}
+
+export function getSupportedSectorCodings(
+  env: NodeJS.ProcessEnv = process.env,
+): SupportedSectorCoding[] {
+  return getConfiguredSupportedSectorIds(env).map((code) => ({
+    code,
+    display: buildSectorDisplay(code),
+  }));
+}
+
+export function isSupportedSector(
+  rawSector: string,
+  env: NodeJS.ProcessEnv = process.env,
+): rawSector is AllowedSector {
+  const normalized = rawSector.trim().toLowerCase();
+  if (!normalized) return false;
+  return getConfiguredSupportedSectorIds(env).includes(normalized as AllowedSector);
+}
+
+export function getSupportedSectorErrorMessage(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return `sector must be one of: ${getConfiguredSupportedSectorIds(env).join(', ')}.`;
+}

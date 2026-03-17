@@ -3,6 +3,7 @@ import type { IDecodedDidcommPayload } from 'gdc-common-utils-ts/models/confiden
 export type AllowedSector = string;
 
 export type VerifyAction = '_verify' | '_verify-response';
+export type TermsRemoveAction = '_remove' | '_remove-response';
 export type ActivateAction = '_activate' | '_activate-response';
 export type RotateAction = '_rotate' | '_rotate-response';
 export type CreateDidDocumentAction = '_create' | '_create-response';
@@ -57,6 +58,16 @@ export interface VerifyRouteContext {
   format: 'pdf';
   resourceType: string;
   action: VerifyAction;
+}
+
+export interface TermsRemoveRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'terms';
+  format: 'pdf';
+  resourceType: string;
+  action: TermsRemoveAction;
 }
 
 export interface ActivateRouteContext {
@@ -202,6 +213,25 @@ export interface VerifySubmission {
   contentType: string;
   annexFormFields?: Record<string, string>;
   annexExtractionWarnings?: string[];
+  controllerPublicKeyJwk?: Record<string, unknown>;
+  organizationPublicKeyJwk?: Record<string, unknown>;
+}
+
+export interface TermsRemoveInput {
+  organization: {
+    taxID: string;
+    identifier?: string;
+  };
+  controller: {
+    sameAs?: string;
+    publicKeyJwk?: Record<string, unknown>;
+  };
+  reason?: string;
+}
+
+export interface TermsRemoveSubmission {
+  thid: string;
+  items: TermsRemoveInput[];
 }
 
 export type SupportedSigningAlgorithm = 'ES384' | 'ES256K' | 'RS256' | 'PS256' | 'EdDSA';
@@ -235,10 +265,15 @@ export interface RotateSubmission {
   controllerAuthorizationPayloadBase64Url?: string;
 }
 
+export interface CreateDidDocumentJwkSet {
+  keys: Array<Record<string, unknown> & { purposes?: string[] }>;
+}
+
 export interface CreateDidDocumentControllerInput {
   sameAs?: string;
   alg?: SupportedSigningAlgorithm;
-  publicKeyJwk: Record<string, unknown>;
+  publicKeyJwk?: Record<string, unknown>;
+  jwks?: CreateDidDocumentJwkSet;
 }
 
 export interface CreateDidDocumentOrganizationInput {
@@ -250,7 +285,8 @@ export interface CreateDidDocumentOrganizationInput {
   alternateName?: string;
   additionalType?: string;
   alg?: SupportedSigningAlgorithm;
-  publicKeyJwk: Record<string, unknown>;
+  publicKeyJwk?: Record<string, unknown>;
+  jwks?: CreateDidDocumentJwkSet;
 }
 
 export interface CreateDidDocumentInput {
@@ -399,6 +435,10 @@ export interface VerifyResult {
   annexFormFields?: Record<string, string>;
   revocationDebug?: RevocationDebugInfo;
   auditDocument?: AuditDocumentReference;
+  controllerPublicKeyJwk?: Record<string, unknown>;
+  organizationPublicKeyJwk?: Record<string, unknown>;
+  organizationPrivateKeyJwk?: Record<string, unknown>;
+  organizationKeySource?: 'attachment' | 'generated';
 }
 
 export interface VerificationJob {
@@ -606,6 +646,34 @@ export interface CreateDidDocumentJob {
   error?: string;
 }
 
+export interface TermsRemoveResult {
+  removedCount: number;
+  items: TermsRemoveResultItem[];
+}
+
+export interface TermsRemoveResultItem {
+  organizationTaxId: string;
+  did: string;
+  removedAt: string;
+  reason?: string;
+  effects: {
+    didBindings: 'removed';
+    didDocument: 'removed';
+    catalogMembership: 'removed';
+    organizationKeys: 'revoked';
+  };
+}
+
+export interface TermsRemoveJob {
+  thid: string;
+  route: TermsRemoveRouteContext;
+  status: EntityJobStatus;
+  createdAt: number;
+  updatedAt: number;
+  result?: TermsRemoveResult;
+  error?: string;
+}
+
 export interface PdfVerificationService {
   verify(route: VerifyRouteContext, submission: VerifySubmission): Promise<VerifyResult>;
 }
@@ -629,6 +697,9 @@ export interface OperationOutcomeResource {
 export interface VerifyBundleDataEntry {
   type: string;
   resource: unknown;
+  publicKeyJwk?: Record<string, unknown>;
+  privateKeyJwk?: Record<string, unknown>;
+  keySource?: 'attachment' | 'generated';
   response: {
     status: string;
     outcome: OperationOutcomeResource;

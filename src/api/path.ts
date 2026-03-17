@@ -6,6 +6,8 @@ import type {
   AllowedSector,
   CreateDidDocumentAction,
   CreateDidDocumentRouteContext,
+  TermsRemoveAction,
+  TermsRemoveRouteContext,
   DelegationPolicyAction,
   DelegationPolicyRouteContext,
   CredentialRevokeAction,
@@ -27,9 +29,16 @@ import type {
   VerifyAction,
   VerifyRouteContext,
 } from './types.ts';
+import {
+  getSupportedJurisdictionErrorMessage,
+  isSupportedJurisdiction,
+} from './supported-jurisdictions.ts';
+import { getSupportedSectorErrorMessage, isSupportedSector } from './supported-sectors.ts';
 
 const VERIFY_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/terms\/pdf\/(?<resourceType>[^/]+)\/(?<action>_verify(?:-response)?)$/i;
+const TERMS_REMOVE_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/terms\/pdf\/(?<resourceType>[^/]+)\/(?<action>_remove(?:-response)?)$/i;
 const ENTITY_KEYS_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/entity\/keys\/(?<resourceType>credentials|communications)\/(?<action>_(?:activate(?:-response)?|rotate(?:-response)?))$/i;
 const ENTITY_DID_DOCUMENT_ROUTE_REGEX =
@@ -57,18 +66,12 @@ const DCAT_CATALOG_DDO_REQUEST_ROUTE_REGEX =
 const DCAT_CATALOG_DDO_DATASET_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/dcat3\/catalog\/ddo\/datasets\/(?<datasetId>[^/]+)$/i;
 
-const ONEHEALTH_SECTOR_PREFIXES = ['animal', 'health'] as const;
-const ALLOWED_SECTOR_ERROR =
-  'sector must start with "animal" or "health" (onehealth-compatible sector namespaces).';
-
-function isAllowedSector(rawSector: string): rawSector is AllowedSector {
-  const normalized = rawSector.trim().toLowerCase();
-  if (!normalized) return false;
-  return ONEHEALTH_SECTOR_PREFIXES.some((prefix) => normalized.startsWith(prefix));
-}
-
 function asAction(raw: string): VerifyAction {
   return raw.toLowerCase() === '_verify-response' ? '_verify-response' : '_verify';
+}
+
+function asTermsRemoveAction(raw: string): TermsRemoveAction {
+  return raw.toLowerCase() === '_remove-response' ? '_remove-response' : '_remove';
 }
 
 function asActivateAction(raw: string): ActivateAction {
@@ -157,6 +160,22 @@ function configuredActiveResourceTypes(): Set<string> | null {
   return new Set(values.map((value) => value.toLowerCase()));
 }
 
+function validateJurisdiction(jurisdiction: string):
+  | { ok: false; statusCode: number; message: string }
+  | null {
+  if (!jurisdiction) {
+    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
+  }
+  if (!isSupportedJurisdiction(jurisdiction)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: getSupportedJurisdictionErrorMessage(),
+    };
+  }
+  return null;
+}
+
 function parseResourceType(rawResourceType: string):
   | { ok: true; normalized: string }
   | { ok: false; statusCode: number; message: string } {
@@ -235,14 +254,13 @@ export function parseVerifyRoute(pathname: string): ParsedRoute | null {
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
   const parsedResourceType = parseResourceType(rawResourceType);
@@ -268,6 +286,73 @@ export function parseVerifyRoute(pathname: string): ParsedRoute | null {
       action,
     },
   };
+}
+
+export type ParsedTermsRemoveRoute =
+  | { ok: true; context: TermsRemoveRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseTermsRemoveRoute(pathname: string): ParsedTermsRemoveRoute | null {
+  const match = TERMS_REMOVE_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+
+  const tenantId = match.groups.tenantId.trim();
+  const jurisdiction = match.groups.jurisdiction.trim();
+  const sector = match.groups.sector.trim().toLowerCase() as AllowedSector;
+  const rawResourceType = match.groups.resourceType.trim();
+  const action = asTermsRemoveAction(match.groups.action.trim());
+
+  if (!tenantId) {
+    return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
+  }
+  const localTenantId = configuredLocalTenantId();
+  if (localTenantId && tenantId.toLowerCase() !== localTenantId.toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
+    };
+  }
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: getSupportedSectorErrorMessage(),
+    };
+  }
+  const parsedResourceType = parseResourceType(rawResourceType);
+  if (!parsedResourceType.ok) return parsedResourceType;
+
+  return {
+    ok: true,
+    context: {
+      tenantId,
+      jurisdiction,
+      sector,
+      section: 'terms',
+      format: 'pdf',
+      resourceType: parsedResourceType.normalized,
+      action,
+    },
+  };
+}
+
+export function buildTermsRemoveResponseLocation(
+  context: TermsRemoveRouteContext,
+  params?: Record<string, string | undefined>,
+): string {
+  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/terms/pdf/${context.resourceType}/_remove-response`;
+  if (!params) return base;
+  const entries = Object.entries(params).filter(([, value]) => value && value.trim());
+  if (!entries.length) return base;
+  const search = new URLSearchParams();
+  for (const [key, value] of entries) {
+    if (value) search.set(key, value);
+  }
+  const suffix = search.toString();
+  return suffix ? `${base}?${suffix}` : base;
 }
 
 export function buildVerifyResponseLocation(
@@ -324,14 +409,13 @@ function parseEntityKeysRoute(pathname: string): ParsedEntityKeysRoute | null {
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
 
@@ -432,14 +516,13 @@ export function parseCreateDidDocumentRoute(pathname: string): ParsedCreateDidDo
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
 
@@ -498,14 +581,13 @@ export function parseAddEvidenceRoute(pathname: string): ParsedAddEvidenceRoute 
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
   if (!evidenceType) {
@@ -554,14 +636,13 @@ export function parseDelegationPolicyRoute(pathname: string): ParsedDelegationPo
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
 
@@ -608,14 +689,13 @@ export function parseIssueCredentialRoute(pathname: string): ParsedIssueCredenti
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
   if (!credentialType) {
@@ -665,14 +745,13 @@ export function parseCredentialStatusRoute(pathname: string): ParsedCredentialSt
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
   if (!credentialType) {
@@ -722,14 +801,13 @@ export function parseCredentialRevokeRoute(pathname: string): ParsedCredentialRe
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
   if (!credentialType) {
@@ -779,14 +857,13 @@ export function parseCredentialSearchRoute(pathname: string): ParsedCredentialSe
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
   if (!credentialType) {
@@ -835,14 +912,13 @@ export function parseSpacesRoute(pathname: string): ParsedSpacesRoute | null {
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
 
@@ -886,14 +962,13 @@ function parseDcatRouteBase(groups: Record<string, string>): ParsedDcatRouteBase
       message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
     };
   }
-  if (!jurisdiction) {
-    return { ok: false, statusCode: 400, message: 'jurisdiction is required in path.' };
-  }
-  if (!isAllowedSector(sector)) {
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
     return {
       ok: false,
       statusCode: 400,
-      message: ALLOWED_SECTOR_ERROR,
+      message: getSupportedSectorErrorMessage(),
     };
   }
 

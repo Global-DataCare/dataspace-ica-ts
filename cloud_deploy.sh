@@ -34,21 +34,128 @@ process.stdout.write(String(parsed.project_id || '').trim());
 EOF
 }
 
+normalize_env_name() {
+  local raw_name="$1"
+  case "$raw_name" in
+    st-v2|stv2|staging-v2)
+      printf '%s\n' "st-v2"
+      ;;
+    *)
+      printf '%s\n' "$raw_name"
+      ;;
+  esac
+}
+
+render_manifest() {
+  local manifest_path="$1"
+  sed \
+    -e "s|\${K8S_APP_NAME}|$K8S_APP_NAME|g" \
+    -e "s|\${K8S_SERVICE_NAME}|$K8S_SERVICE_NAME|g" \
+    -e "s|\${K8S_CONFIGMAP_NAME}|$K8S_CONFIGMAP_NAME|g" \
+    -e "s|\${K8S_SECRET_NAME}|$K8S_SECRET_NAME|g" \
+    -e "s|\${K8S_SERVICE_ACCOUNT_NAME}|$K8S_SERVICE_ACCOUNT_NAME|g" \
+    -e "s|\${K8S_SERVICE_TYPE}|$K8S_SERVICE_TYPE|g" \
+    -e "s|\${K8S_MANAGED_CERT_NAME}|$K8S_MANAGED_CERT_NAME|g" \
+    -e "s|\${K8S_INGRESS_HOST}|$K8S_INGRESS_HOST|g" \
+    "$manifest_path"
+}
+
+render_ingress_manifest() {
+  cat <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${K8S_APP_NAME}
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+EOF
+
+  if [[ -n "$K8S_INGRESS_STATIC_IP_NAME" ]]; then
+    echo "    kubernetes.io/ingress.global-static-ip-name: \"${K8S_INGRESS_STATIC_IP_NAME}\""
+  fi
+
+  if [[ -n "$K8S_MANAGED_CERT_NAME" ]]; then
+    echo "    networking.gke.io/managed-certificates: \"${K8S_MANAGED_CERT_NAME}\""
+  fi
+
+  if [[ -n "$K8S_PRE_SHARED_CERT_NAME" ]]; then
+    echo "    ingress.gcp.kubernetes.io/pre-shared-cert: \"${K8S_PRE_SHARED_CERT_NAME}\""
+  fi
+
+  if [[ "$K8S_DISABLE_HTTP" == "true" ]]; then
+    echo "    kubernetes.io/ingress.allow-http: \"false\""
+  fi
+
+  cat <<EOF
+spec:
+EOF
+
+  if [[ -n "$K8S_TLS_SECRET_NAME" ]]; then
+    cat <<EOF
+  tls:
+    - secretName: ${K8S_TLS_SECRET_NAME}
+EOF
+  fi
+
+  cat <<EOF
+  rules:
+    -
+EOF
+
+  if [[ -n "$K8S_INGRESS_HOST" ]]; then
+    echo "      host: ${K8S_INGRESS_HOST}"
+  fi
+
+  cat <<EOF
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${K8S_SERVICE_NAME}
+                port:
+                  number: 80
+EOF
+}
+
 if [[ -z "${1:-}" ]]; then
   echo "ERROR: Missing environment name."
-  echo "Usage: ./cloud_deploy.sh <demo|dev|staging|prod> [--yes]"
+  echo "Usage: ./cloud_deploy.sh <demo|dev|staging|st-v2|prod> [--yes] [--allow-staging]"
   exit 1
 fi
 
-ENV_NAME="$1"
+RAW_ENV_NAME="$1"
+ENV_NAME="$(normalize_env_name "$RAW_ENV_NAME")"
 CONFIRM="true"
-if [[ "${2:-}" == "--yes" || "${2:-}" == "-y" ]]; then
-  CONFIRM="false"
-fi
+ALLOW_STAGING="false"
+shift
+for arg in "$@"; do
+  case "$arg" in
+    --yes|-y)
+      CONFIRM="false"
+      ;;
+    --allow-staging)
+      ALLOW_STAGING="true"
+      ;;
+    *)
+      echo "ERROR: Unknown argument: $arg"
+      echo "Usage: ./cloud_deploy.sh <demo|dev|staging|st-v2|prod> [--yes] [--allow-staging]"
+      exit 1
+      ;;
+  esac
+done
 
 ENV_FILE="$SCRIPT_DIR/.env.deploy.$ENV_NAME"
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "ERROR: Env file not found: $ENV_FILE"
+  exit 1
+fi
+
+if [[ "$ENV_NAME" == "staging" && "$ALLOW_STAGING" != "true" ]]; then
+  echo "ERROR: staging deploy is protected."
+  echo "Use st-v2 for the new line, or re-run with --allow-staging if you really want staging."
   exit 1
 fi
 
@@ -108,9 +215,28 @@ LOCAL_IMAGE="${LOCAL_IMAGE:-dataspace-ica:${DEFAULT_IMAGE_TAG}}"
 IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_IMAGE_TAG}"
 NAMESPACE="${K8S_NAMESPACE:-dataspace-ica}"
 K8S_CONTEXT="${K8S_CONTEXT:-}"
-K8S_SERVICE_ACCOUNT_NAME="dataspace-ica-runtime"
+K8S_APP_NAME="${K8S_APP_NAME:-dataspace-ica-api}"
+K8S_SERVICE_NAME="${K8S_SERVICE_NAME:-$K8S_APP_NAME}"
+K8S_CONFIGMAP_NAME="${K8S_CONFIGMAP_NAME:-${K8S_APP_NAME}-config}"
+K8S_SECRET_NAME="${K8S_SECRET_NAME:-${K8S_APP_NAME}-secrets}"
+K8S_SERVICE_ACCOUNT_NAME="${K8S_SERVICE_ACCOUNT_NAME:-dataspace-ica-runtime}"
 GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT="${GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT:-}"
 STATIC_LB_IP="${K8S_LOADBALANCER_IP:-}"
+K8S_INGRESS_ENABLED="${K8S_INGRESS_ENABLED:-false}"
+K8S_INGRESS_HOST="${K8S_INGRESS_HOST:-}"
+K8S_INGRESS_STATIC_IP_NAME="${K8S_INGRESS_STATIC_IP_NAME:-}"
+K8S_MANAGED_CERT_NAME="${K8S_MANAGED_CERT_NAME:-}"
+K8S_PRE_SHARED_CERT_NAME="${K8S_PRE_SHARED_CERT_NAME:-}"
+K8S_TLS_SECRET_NAME="${K8S_TLS_SECRET_NAME:-}"
+K8S_DISABLE_HTTP="${K8S_DISABLE_HTTP:-false}"
+K8S_SERVICE_TYPE="${K8S_SERVICE_TYPE:-}"
+if [[ -z "$K8S_SERVICE_TYPE" ]]; then
+  if [[ "$K8S_INGRESS_ENABLED" == "true" ]]; then
+    K8S_SERVICE_TYPE="NodePort"
+  else
+    K8S_SERVICE_TYPE="LoadBalancer"
+  fi
+fi
 IMAGE_URI="${DEPLOY_REGION}-docker.pkg.dev/${FIRESTORE_PROJECT_ID}/${ARTIFACT_REGISTRY_NAME}/${DEPLOY_SERVICE_NAME}:${IMAGE_TAG}"
 LOCAL_CREDENTIALS_PATH=""
 if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
@@ -126,6 +252,10 @@ echo "  Region:         $DEPLOY_REGION"
 echo "  Service/Image:  $DEPLOY_SERVICE_NAME"
 echo "  Image URI:      $IMAGE_URI"
 echo "  Namespace:      $NAMESPACE"
+echo "  K8S App:        $K8S_APP_NAME"
+echo "  K8S Service:    $K8S_SERVICE_NAME"
+echo "  K8S ConfigMap:  $K8S_CONFIGMAP_NAME"
+echo "  K8S Secret:     $K8S_SECRET_NAME"
 echo "  Local image:    $LOCAL_IMAGE"
 echo "  K8S SA:         $K8S_SERVICE_ACCOUNT_NAME"
 if [[ -n "$GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT" ]]; then
@@ -133,6 +263,22 @@ if [[ -n "$GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT" ]]; then
 fi
 if [[ -n "$STATIC_LB_IP" ]]; then
   echo "  Static LB IP:   $STATIC_LB_IP"
+fi
+echo "  Ingress:        $K8S_INGRESS_ENABLED"
+if [[ "$K8S_INGRESS_ENABLED" == "true" ]]; then
+  echo "  Ingress Host:   ${K8S_INGRESS_HOST:-<none>}"
+  if [[ -n "$K8S_INGRESS_STATIC_IP_NAME" ]]; then
+    echo "  Ingress IP:     $K8S_INGRESS_STATIC_IP_NAME"
+  fi
+  if [[ -n "$K8S_MANAGED_CERT_NAME" ]]; then
+    echo "  Managed Cert:   $K8S_MANAGED_CERT_NAME"
+  fi
+  if [[ -n "$K8S_PRE_SHARED_CERT_NAME" ]]; then
+    echo "  Pre-shared SSL: $K8S_PRE_SHARED_CERT_NAME"
+  fi
+  if [[ -n "$K8S_TLS_SECRET_NAME" ]]; then
+    echo "  TLS Secret:     $K8S_TLS_SECRET_NAME"
+  fi
 fi
 if [[ -n "$LOCAL_CREDENTIALS_PATH" ]]; then
   echo "  Local SA JSON:  $LOCAL_CREDENTIALS_PATH"
@@ -172,6 +318,31 @@ if [[ -n "$LOCAL_CREDENTIALS_PATH" ]]; then
   fi
 fi
 
+tls_mode_count=0
+[[ -n "$K8S_MANAGED_CERT_NAME" ]] && tls_mode_count=$((tls_mode_count + 1))
+[[ -n "$K8S_PRE_SHARED_CERT_NAME" ]] && tls_mode_count=$((tls_mode_count + 1))
+[[ -n "$K8S_TLS_SECRET_NAME" ]] && tls_mode_count=$((tls_mode_count + 1))
+
+if [[ "$tls_mode_count" -gt 1 ]]; then
+  echo "ERROR: choose only one TLS mode: K8S_MANAGED_CERT_NAME, K8S_PRE_SHARED_CERT_NAME or K8S_TLS_SECRET_NAME."
+  exit 1
+fi
+
+if [[ "$K8S_DISABLE_HTTP" == "true" && "$tls_mode_count" -eq 0 ]]; then
+  echo "ERROR: K8S_DISABLE_HTTP=true requires a TLS mode."
+  exit 1
+fi
+
+if [[ -n "$K8S_MANAGED_CERT_NAME" && -z "$K8S_INGRESS_HOST" ]]; then
+  echo "ERROR: K8S_MANAGED_CERT_NAME requires K8S_INGRESS_HOST."
+  exit 1
+fi
+
+if [[ "$K8S_INGRESS_ENABLED" == "true" && "$K8S_SERVICE_TYPE" == "LoadBalancer" ]]; then
+  echo "WARNING: Ingress is enabled while service type is LoadBalancer."
+  echo "         This works, but usually NodePort is cleaner behind GCE Ingress."
+fi
+
 echo "Configuring gcloud..."
 gcloud config set project "$FIRESTORE_PROJECT_ID" >/dev/null
 gcloud services enable artifactregistry.googleapis.com >/dev/null
@@ -206,42 +377,56 @@ fi
 
 echo "Applying Kubernetes manifests..."
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -n "$NAMESPACE" -f "$SCRIPT_DIR/deploy/k8s/serviceaccount.yaml"
+render_manifest "$SCRIPT_DIR/deploy/k8s/serviceaccount.yaml" | kubectl apply -n "$NAMESPACE" -f -
 if [[ -n "$GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT" ]]; then
   kubectl annotate -n "$NAMESPACE" serviceaccount/"$K8S_SERVICE_ACCOUNT_NAME" \
     iam.gke.io/gcp-service-account="$GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT" \
     --overwrite
 fi
-kubectl apply -n "$NAMESPACE" -f "$SCRIPT_DIR/deploy/k8s/configmap.yaml"
-kubectl apply -n "$NAMESPACE" -f "$SCRIPT_DIR/deploy/k8s/service.yaml"
+render_manifest "$SCRIPT_DIR/deploy/k8s/configmap.yaml" | kubectl apply -n "$NAMESPACE" -f -
+render_manifest "$SCRIPT_DIR/deploy/k8s/service.yaml" | kubectl apply -n "$NAMESPACE" -f -
 if [[ -n "$STATIC_LB_IP" ]]; then
   echo "Pinning LoadBalancer static IP: $STATIC_LB_IP"
-  kubectl patch -n "$NAMESPACE" service/dataspace-ica-api \
+  kubectl patch -n "$NAMESPACE" service/"$K8S_SERVICE_NAME" \
     --type=merge \
     -p "{\"spec\":{\"type\":\"LoadBalancer\",\"loadBalancerIP\":\"$STATIC_LB_IP\"}}"
 fi
-kubectl apply -n "$NAMESPACE" -f "$SCRIPT_DIR/deploy/k8s/deployment.yaml"
+render_manifest "$SCRIPT_DIR/deploy/k8s/deployment.yaml" | kubectl apply -n "$NAMESPACE" -f -
+
+if [[ "$K8S_INGRESS_ENABLED" == "true" ]]; then
+  if [[ -n "$K8S_MANAGED_CERT_NAME" ]]; then
+    render_manifest "$SCRIPT_DIR/deploy/k8s/managed-certificate.yaml" | kubectl apply -n "$NAMESPACE" -f -
+  fi
+  render_ingress_manifest | kubectl apply -n "$NAMESPACE" -f -
+fi
 
 echo "Applying runtime env secret from $ENV_FILE"
-kubectl create secret generic dataspace-ica-secrets \
+kubectl create secret generic "$K8S_SECRET_NAME" \
   --from-env-file="$ENV_FILE" \
   --dry-run=client -o yaml | kubectl apply -n "$NAMESPACE" -f -
 
-kubectl set image -n "$NAMESPACE" deployment/dataspace-ica-api api="$IMAGE_URI"
+kubectl set image -n "$NAMESPACE" deployment/"$K8S_APP_NAME" api="$IMAGE_URI"
 echo "Restarting deployment to apply secret/env changes..."
-kubectl rollout restart -n "$NAMESPACE" deployment/dataspace-ica-api
-kubectl rollout status -n "$NAMESPACE" deployment/dataspace-ica-api --timeout=240s
+kubectl rollout restart -n "$NAMESPACE" deployment/"$K8S_APP_NAME"
+kubectl rollout status -n "$NAMESPACE" deployment/"$K8S_APP_NAME" --timeout=240s
 
 echo "Deployment completed."
 kubectl get pods -n "$NAMESPACE" -o wide
-kubectl get svc -n "$NAMESPACE" dataspace-ica-api -o wide
+kubectl get svc -n "$NAMESPACE" "$K8S_SERVICE_NAME" -o wide
+if [[ "$K8S_INGRESS_ENABLED" == "true" ]]; then
+  kubectl get ingress -n "$NAMESPACE" "$K8S_APP_NAME" -o wide || true
+fi
 
-CURRENT_IMAGE="$(kubectl get -n "$NAMESPACE" deployment/dataspace-ica-api -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+CURRENT_IMAGE="$(kubectl get -n "$NAMESPACE" deployment/"$K8S_APP_NAME" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 if [[ -n "$CURRENT_IMAGE" ]]; then
   echo "Deployed image: $CURRENT_IMAGE"
 fi
 
-EXTERNAL_IP="$(kubectl get -n "$NAMESPACE" svc/dataspace-ica-api -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+EXTERNAL_IP="$(kubectl get -n "$NAMESPACE" svc/"$K8S_SERVICE_NAME" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+INGRESS_IP=""
+if [[ "$K8S_INGRESS_ENABLED" == "true" ]]; then
+  INGRESS_IP="$(kubectl get -n "$NAMESPACE" ingress/"$K8S_APP_NAME" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+fi
 if [[ -n "$EXTERNAL_IP" ]]; then
   echo "Public endpoints:"
   echo "  http://$EXTERNAL_IP/"
@@ -251,5 +436,29 @@ if [[ -n "$EXTERNAL_IP" ]]; then
 else
   echo "Public EXTERNAL-IP is pending."
   echo "Watch with:"
-  echo "  kubectl -n $NAMESPACE get svc dataspace-ica-api -w"
+  echo "  kubectl -n $NAMESPACE get svc $K8S_SERVICE_NAME -w"
+fi
+
+if [[ "$K8S_INGRESS_ENABLED" == "true" ]]; then
+  if [[ -n "$INGRESS_IP" ]]; then
+    echo "Ingress endpoints:"
+    if [[ "$K8S_DISABLE_HTTP" != "true" ]]; then
+      echo "  http://$INGRESS_IP/"
+    fi
+    if [[ "$tls_mode_count" -gt 0 ]]; then
+      echo "  https://$INGRESS_IP/"
+    fi
+    if [[ -n "$K8S_INGRESS_HOST" ]]; then
+      if [[ "$K8S_DISABLE_HTTP" != "true" ]]; then
+        echo "  http://$K8S_INGRESS_HOST/"
+      fi
+      if [[ "$tls_mode_count" -gt 0 ]]; then
+        echo "  https://$K8S_INGRESS_HOST/"
+      fi
+    fi
+  else
+    echo "Ingress EXTERNAL-IP is pending."
+    echo "Watch with:"
+    echo "  kubectl -n $NAMESPACE get ingress $K8S_APP_NAME -w"
+  fi
 fi

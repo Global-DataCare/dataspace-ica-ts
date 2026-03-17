@@ -102,6 +102,29 @@ function buildControllerChangedIssue(): OperationOutcomeIssue {
   };
 }
 
+function attachBootstrapKeysToVerificationEntries(
+  result: VerifyResult,
+  bundle: VerifyBundleResponse,
+): void {
+  const data = Array.isArray(bundle.data) ? bundle.data : [];
+  const organizationEntry = data.find((entry) => entry?.type === 'Organization-verification-v1.0');
+  const personEntry = data.find((entry) => entry?.type === 'LegalRepresentative-verification-v1.0');
+
+  if (organizationEntry && result.organizationPublicKeyJwk) {
+    organizationEntry.publicKeyJwk = { ...result.organizationPublicKeyJwk };
+    if (result.organizationPrivateKeyJwk) {
+      organizationEntry.privateKeyJwk = { ...result.organizationPrivateKeyJwk };
+    }
+    if (result.organizationKeySource) {
+      organizationEntry.keySource = result.organizationKeySource;
+    }
+  }
+
+  if (personEntry && result.controllerPublicKeyJwk) {
+    personEntry.publicKeyJwk = { ...result.controllerPublicKeyJwk };
+  }
+}
+
 async function enrichVerificationBundleWithStoredVersionState(
   route: VerifyRouteContext,
   result: VerifyResult,
@@ -320,6 +343,7 @@ export class VerifyResponseManager {
 
     const issuerDid = resolveIcaIssuerDid(req);
     const body = buildVerificationVcBundle(route, verificationResult, issuerDid) as VerifyBundleResponse;
+    attachBootstrapKeysToVerificationEntries(verificationResult, body);
 
     try {
       await enrichVerificationBundleWithStoredVersionState(route, verificationResult, body, this.collectionsService);

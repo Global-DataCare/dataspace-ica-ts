@@ -1,6 +1,6 @@
 {
   "name": "dataspace-ica",
-  "version": "0.4.2",
+  "version": "0.5.2",
   "private": true,
   "type": "module",
   "description": "Private ICA CLI for onboarding validation, CSR signing and DCAT publication",
@@ -20,6 +20,7 @@
     "api:dev": "node --env-file-if-exists=.env.deploy.dev --watch-path=./src ./src/api/server.ts",
     "api:local": "node --env-file-if-exists=.env.local ./src/api/server.ts",
     "api:local:gcloud": "node --env-file-if-exists=.env.local.gcloud ./src/api/server.ts",
+    "remote:fullcycle:st-v2": "API_BASE_URL=https://34.36.211.126 CURL_INSECURE=true bash ./scripts/run-org-lifecycle-local.sh",
     "api:start:deploy:demo": "node --env-file-if-exists=.env.deploy.demo ./src/api/server.ts",
     "api:start:deploy:dev": "node --env-file-if-exists=.env.deploy.dev ./src/api/server.ts",
     "api:start:deploy:prod": "node --env-file-if-exists=.env.deploy.prod ./src/api/server.ts",

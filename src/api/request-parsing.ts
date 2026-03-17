@@ -9,7 +9,10 @@ import type {
   AddEvidenceInput,
   AddEvidenceSubmission,
   CreateDidDocumentInput,
+  CreateDidDocumentJwkSet,
   CreateDidDocumentSubmission,
+  TermsRemoveInput,
+  TermsRemoveSubmission,
   ControllerDidcommProof,
   CredentialRevokeSubmission,
   DelegationPolicyInput,
@@ -38,9 +41,14 @@ import { computeControllerAuthorizationPayloadBase64Url } from './tools/controll
 import { extractVerifiedVcJwtAttachmentEvidence } from './tools/vc-jwt-evidence.ts';
 import { extractTermsAnnexFormFieldsFromPdf } from './tools/terms-annex-form.ts';
 import { normalizeSameAsHash } from './tools/multihash.ts';
+import {
+  normalizeControllerPublicKeyJwk,
+  normalizeOrganizationPublicKeyJwk,
+} from './tools/bootstrap-organization-key.ts';
 
 type ParsedThreadPayload = {
   thid?: string;
+  id?: string;
   jti?: string;
 };
 
@@ -48,6 +56,7 @@ type ParsedObject = Record<string, unknown>;
 
 type DidcommAttachmentData = {
   base64?: string;
+  json?: unknown;
   links?: string[];
 };
 
@@ -115,11 +124,15 @@ async function readIncomingBuffer(req: IncomingMessage): Promise<Buffer<ArrayBuf
 
 function extractThid(payload: ParsedThreadPayload): string {
   const fromThid = String(payload.thid || '').trim();
+  const fromId = String(payload.id || '').trim();
   const fromJti = String(payload.jti || '').trim();
   if (fromThid) {
     return isAutoToken(fromThid, 'thid')
       ? `thid-${buildThreadTimestamp()}`
       : fromThid;
+  }
+  if (fromId) {
+    return fromId;
   }
   if (fromJti) {
     return isAutoToken(fromJti, 'req')
@@ -176,7 +189,7 @@ function looksLikePdf(bytes: Buffer<ArrayBufferLike>): boolean {
 
 function invalidPdfAttachmentError(): Error {
   return new Error(
-    'Attachment does not contain a valid PDF. For Google Drive use a direct download URL (not /file/d/... viewer URL) or send attachments[].data.base64.',
+    'Attachment does not contain a valid PDF. Use a direct PDF URL, a tested Dropbox direct-download link (`dl=1`), or send attachments[].data.base64.',
   );
 }
 
@@ -219,6 +232,48 @@ async function resolvePdfFromDidcommAttachments(
     }
   }
   return Buffer.alloc(0);
+}
+
+function resolveControllerPublicKeyFromMeta(parsed: ParsedObject): Record<string, unknown> | undefined {
+  const meta = asObject(parsed.meta);
+  const jws = asObject(meta?.jws);
+  const protectedHeader = asObject(jws?.protected);
+  return normalizeControllerPublicKeyJwk(
+    protectedHeader?.jwk,
+    asNonEmptyString(protectedHeader?.alg) || undefined,
+    asNonEmptyString(protectedHeader?.kid) || undefined,
+  );
+}
+
+function resolveOrganizationPublicKeyFromDidcommAttachments(
+  attachments: DidcommAttachment[],
+): Record<string, unknown> | undefined {
+  for (const attachment of attachments) {
+    const mediaType = asNonEmptyString(attachment.media_type).toLowerCase();
+    const format = asNonEmptyString((attachment as ParsedObject).format).toLowerCase();
+    const filename = asNonEmptyString((attachment as ParsedObject).filename).toLowerCase();
+    const data = asObject(attachment?.data);
+    if (!data) continue;
+    const couldBeJwk =
+      mediaType === 'application/jwk+json'
+      || mediaType === 'application/json'
+      || format === 'jwk'
+      || filename.endsWith('.jwk.json')
+      || filename.endsWith('.jwk')
+      || filename.includes('organization-key');
+    if (!couldBeJwk) continue;
+    const jsonPayload = normalizeOrganizationPublicKeyJwk(data.json);
+    if (jsonPayload) return jsonPayload;
+    const base64Payload = asNonEmptyString(data.base64);
+    if (!base64Payload) continue;
+    const raw = decodeBase64Payload(base64Payload).toString('utf8');
+    try {
+      return normalizeOrganizationPublicKeyJwk(JSON.parse(raw));
+    } catch (error: unknown) {
+      throw new Error(`Invalid organization JWK attachment JSON: ${(error as Error).message}`);
+    }
+  }
+  return undefined;
 }
 
 export async function parseVerifySubmission(req: IncomingMessage): Promise<VerifySubmission> {
@@ -271,13 +326,18 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
 
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   const annex = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
+  const controllerPublicKeyJwk = resolveControllerPublicKeyFromMeta(parsed);
+  const organizationPublicKeyJwk = resolveOrganizationPublicKeyFromDidcommAttachments(attachments);
   return {
     thid,
     pdfBytes,
     contentType,
+    ...(controllerPublicKeyJwk ? { controllerPublicKeyJwk } : {}),
+    ...(organizationPublicKeyJwk ? { organizationPublicKeyJwk } : {}),
     ...(Object.keys(annex.fields).length ? { annexFormFields: annex.fields } : {}),
     ...(annex.warnings.length ? { annexExtractionWarnings: annex.warnings } : {}),
   };
@@ -449,6 +509,7 @@ export async function parseActivateSigningKeySubmission(
 
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   const jti = asNonEmptyString(parsed.jti || parsedBody.jti) || undefined;
@@ -465,7 +526,7 @@ export async function parseActivateSigningKeySubmission(
 
 async function parseDidcommPlainObject(
   req: IncomingMessage,
-  action: '_add' | '_issue' | '_status' | '_revoke' | '_rotate' | '_upsert' | '_search' | '_list' | '_replace' | '_create',
+  action: '_add' | '_issue' | '_status' | '_revoke' | '_rotate' | '_upsert' | '_search' | '_list' | '_replace' | '_create' | '_remove',
 ): Promise<{ parsed: ParsedObject; parsedBody: ParsedObject }> {
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
@@ -510,6 +571,7 @@ export async function parseRotateSubmission(req: IncomingMessage): Promise<Rotat
   const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_rotate');
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   const jti = asNonEmptyString(parsed.jti || parsedBody.jti) || undefined;
@@ -523,21 +585,46 @@ export async function parseRotateSubmission(req: IncomingMessage): Promise<Rotat
   };
 }
 
+
+function parseOptionalDidDocumentJwks(rawValue: unknown, label: string): CreateDidDocumentJwkSet | undefined {
+  const jwks = asObject(rawValue);
+  if (!jwks) return undefined;
+  const keys = Array.isArray(jwks.keys)
+    ? jwks.keys
+      .map((entry, index) => {
+        const key = asObject(entry);
+        if (!key) {
+          throw new Error(`${label}.keys[${index}] must be an object.`);
+        }
+        const purposes = Array.isArray(key.purposes)
+          ? key.purposes.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : undefined;
+        return {
+          ...key,
+          ...(purposes?.length ? { purposes } : {}),
+        };
+      })
+    : undefined;
+  if (!keys || !keys.length) {
+    throw new Error(`${label}.keys[] must contain at least one key when jwks is provided.`);
+  }
+  return { keys };
+}
+
 function parseCreateDidDocumentController(
   rawValue: unknown,
   indexLabel: string,
 ): CreateDidDocumentInput['controller'] {
   const controller = asObject(rawValue) || {};
   const publicKeyJwk = asObject(controller.publicKeyJwk);
-  if (!publicKeyJwk) {
-    throw new Error(`${indexLabel}.controller.publicKeyJwk is required.`);
-  }
-  const alg = asNonEmptyString(controller.alg) || asNonEmptyString(publicKeyJwk.alg) || undefined;
+  const alg = asNonEmptyString(controller.alg) || asNonEmptyString(publicKeyJwk?.alg) || undefined;
   const sameAs = normalizeSameAsHash(asNonEmptyString(controller.sameAs)) || undefined;
+  const jwks = parseOptionalDidDocumentJwks(controller.jwks, `${indexLabel}.controller.jwks`);
   return {
     ...(sameAs ? { sameAs } : {}),
     ...(alg ? { alg: alg as SupportedSigningAlgorithm } : {}),
-    publicKeyJwk: { ...publicKeyJwk },
+    ...(publicKeyJwk ? { publicKeyJwk: { ...publicKeyJwk } } : {}),
+    ...(jwks ? { jwks } : {}),
   };
 }
 
@@ -547,9 +634,6 @@ function parseCreateDidDocumentOrganization(
 ): CreateDidDocumentInput['organization'] {
   const organization = asObject(rawValue) || {};
   const publicKeyJwk = asObject(organization.publicKeyJwk);
-  if (!publicKeyJwk) {
-    throw new Error(`${indexLabel}.organization.publicKeyJwk is required.`);
-  }
   const identifier =
     asNonEmptyString(organization.identifier)
     || asNonEmptyString(organization.id)
@@ -563,7 +647,8 @@ function parseCreateDidDocumentOrganization(
   const url = asNonEmptyString(organization.url) || undefined;
   const alternateName = asNonEmptyString(organization.alternateName) || undefined;
   const additionalType = asNonEmptyString(organization.additionalType) || undefined;
-  const alg = asNonEmptyString(organization.alg) || asNonEmptyString(publicKeyJwk.alg) || undefined;
+  const alg = asNonEmptyString(organization.alg) || asNonEmptyString(publicKeyJwk?.alg) || undefined;
+  const jwks = parseOptionalDidDocumentJwks(organization.jwks, `${indexLabel}.organization.jwks`);
   if (!identifier && !url) {
     throw new Error(
       `${indexLabel}.organization.identifier is required unless ${indexLabel}.organization.url is provided.`,
@@ -583,7 +668,8 @@ function parseCreateDidDocumentOrganization(
     ...(alternateName ? { alternateName } : {}),
     ...(additionalType ? { additionalType } : {}),
     ...(alg ? { alg: alg as SupportedSigningAlgorithm } : {}),
-    publicKeyJwk: { ...publicKeyJwk },
+    ...(publicKeyJwk ? { publicKeyJwk: { ...publicKeyJwk } } : {}),
+    ...(jwks ? { jwks } : {}),
   };
 }
 
@@ -617,6 +703,7 @@ export async function parseCreateDidDocumentSubmission(req: IncomingMessage): Pr
   const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_create');
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   const jti = asNonEmptyString(parsed.jti || parsedBody.jti) || undefined;
@@ -636,6 +723,79 @@ export async function parseCreateDidDocumentSubmission(req: IncomingMessage): Pr
     thid,
     ...(jti ? { jti } : {}),
     items,
+  };
+}
+
+function parseTermsRemoveInput(
+  rawEntry: unknown,
+  fallback: ParsedObject,
+  indexLabel: string,
+): TermsRemoveInput {
+  const entry = asObject(rawEntry) || {};
+  const resource = asObject(entry.resource) || {};
+  const rawOrganization = asObject(resource.organization) || asObject(entry.organization) || {};
+  const rawController = asObject(resource.controller) || asObject(entry.controller) || {};
+
+  const taxID = asNonEmptyString(
+    rawOrganization.taxID || rawOrganization.taxId || entry.taxID || entry.taxId || fallback.taxID || fallback.taxId,
+  );
+  if (!taxID) {
+    throw new Error(`${indexLabel}.organization.taxID is required.`);
+  }
+
+  const identifier = asNonEmptyString(
+    rawOrganization.identifier || rawOrganization.id || entry.identifier || entry.id || fallback.identifier || fallback.id,
+  ) || undefined;
+  const sameAs = normalizeSameAsHash(asNonEmptyString(
+    rawController.sameAs || entry.sameAs || fallback.sameAs,
+  )) || undefined;
+  const publicKeyJwk = normalizeControllerPublicKeyJwk(
+    rawController.publicKeyJwk || entry.publicKeyJwk,
+    asNonEmptyString(rawController.alg || entry.alg) || undefined,
+  );
+  const reason = asNonEmptyString(
+    resource.reason || entry.reason || fallback.reason,
+  ) || undefined;
+
+  return {
+    organization: {
+      taxID,
+      ...(identifier ? { identifier } : {}),
+    },
+    controller: {
+      ...(sameAs ? { sameAs } : {}),
+      ...(publicKeyJwk ? { publicKeyJwk } : {}),
+    },
+    ...(reason ? { reason } : {}),
+  };
+}
+
+export async function parseTermsRemoveSubmission(req: IncomingMessage): Promise<TermsRemoveSubmission> {
+  const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_remove');
+  const fallback: ParsedObject = { ...parsed, ...parsedBody };
+  const rawBatchEntries = Array.isArray(parsedBody.data)
+    ? parsedBody.data
+    : Array.isArray(parsed.data)
+      ? parsed.data
+      : [];
+  const items = rawBatchEntries.length
+    ? rawBatchEntries.map((entry, index) => parseTermsRemoveInput(entry, fallback, `body.data[${index}]`))
+    : [parseTermsRemoveInput(parsedBody, fallback, 'body')];
+  const thid = extractThid({
+    thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
+    jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+  });
+  const controllerPublicKeyJwk = resolveControllerPublicKeyFromMeta(parsed);
+  return {
+    thid,
+    items: items.map((item) => ({
+      ...item,
+      controller: {
+        ...item.controller,
+        ...(item.controller.publicKeyJwk ? {} : controllerPublicKeyJwk ? { publicKeyJwk: controllerPublicKeyJwk } : {}),
+      },
+    })),
   };
 }
 
@@ -701,6 +861,7 @@ export async function parseAddEvidenceSubmission(req: IncomingMessage): Promise<
 
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
 
@@ -779,6 +940,7 @@ export async function parseDelegationPolicySubmission(req: IncomingMessage): Pro
 
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
 
@@ -805,6 +967,7 @@ export async function parseIssueCredentialSubmission(req: IncomingMessage): Prom
 
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
 
@@ -959,6 +1122,7 @@ export async function parseCredentialStatusSubmission(req: IncomingMessage): Pro
   const lookups = parseCredentialLookupBatch(parsed, parsedBody);
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   return {
@@ -980,6 +1144,7 @@ export async function parseCredentialRevokeSubmission(req: IncomingMessage): Pro
     : [parseCredentialRevokeInput(parsedBody, fallback, 'body')];
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   return {
@@ -1103,6 +1268,7 @@ export async function parseCredentialSearchSubmission(
       : [parseCredentialSearchInput(parsedBody, fallback, 'body')];
     const thid = extractThid({
       thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+      id: asNonEmptyString(parsed.id || parsedBody.id),
       jti: asNonEmptyString(parsed.jti || parsedBody.jti),
     });
     return {
@@ -1126,6 +1292,7 @@ export async function parseCredentialSearchSubmission(
     const query = parseSearchInputFromParams(merged, credentialType);
     const thid = extractThid({
       thid: merged.get('thid') || undefined,
+      id: merged.get('id') || undefined,
       jti: merged.get('jti') || undefined,
     });
     return {
@@ -1151,6 +1318,7 @@ export async function parseCredentialSearchSubmission(
     const query = parseSearchInputFromParams(merged, credentialType);
     const thid = extractThid({
       thid: asNonEmptyString(bodyJson.thid || merged.get('thid') || ''),
+      id: asNonEmptyString(bodyJson.id || merged.get('id') || ''),
       jti: asNonEmptyString(bodyJson.jti || merged.get('jti') || ''),
     });
     return {
@@ -1162,6 +1330,7 @@ export async function parseCredentialSearchSubmission(
   const query = parseSearchInputFromParams(urlParams, credentialType);
   const thid = extractThid({
     thid: urlParams.get('thid') || undefined,
+    id: urlParams.get('id') || undefined,
     jti: urlParams.get('jti') || undefined,
   });
   return {
@@ -1176,6 +1345,7 @@ export async function parseSpacesListSubmission(
   const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_list');
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   return { thid };
@@ -1257,6 +1427,7 @@ export async function parseSpacesReplaceSubmission(
     parseSpacesTarget(entry, `body.data[${index}]`));
   const thid = extractThid({
     thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+    id: asNonEmptyString(parsed.id || parsedBody.id),
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   return {
@@ -1269,8 +1440,12 @@ export async function parsePollingThreadId(
   req: IncomingMessage,
   requestUrl: URL,
 ): Promise<string | undefined> {
-  const queryValue = requestUrl.searchParams.get('thid');
-  if (queryValue?.trim()) return queryValue.trim();
+  const queryValue = extractPollingThreadId({
+    thid: requestUrl.searchParams.get('thid') || undefined,
+    id: requestUrl.searchParams.get('id') || undefined,
+    jti: requestUrl.searchParams.get('jti') || undefined,
+  });
+  if (queryValue) return queryValue;
 
   if (req.method?.toUpperCase() !== 'POST') {
     return undefined;
@@ -1282,8 +1457,11 @@ export async function parsePollingThreadId(
   if (contentType === 'multipart/form-data') {
     const webReq = buildWebRequest(req);
     const formData = await webReq.formData();
-    const thid = String(formData.get('thid') || '').trim();
-    return thid || undefined;
+    return extractPollingThreadId({
+      thid: String(formData.get('thid') || '').trim() || undefined,
+      id: String(formData.get('id') || '').trim() || undefined,
+      jti: String(formData.get('jti') || '').trim() || undefined,
+    });
   }
 
   const raw = await readIncomingBuffer(req);
@@ -1291,19 +1469,34 @@ export async function parsePollingThreadId(
 
   if (contentType === 'application/x-www-form-urlencoded') {
     const params = new URLSearchParams(raw.toString('utf8'));
-    const thid = params.get('thid');
-    return thid?.trim() || undefined;
+    return extractPollingThreadId({
+      thid: params.get('thid') || undefined,
+      id: params.get('id') || undefined,
+      jti: params.get('jti') || undefined,
+    });
   }
 
   if (contentType === 'application/json' || contentType === 'application/didcomm-plain+json' || !contentType) {
     try {
       const body = JSON.parse(raw.toString('utf8')) as ParsedThreadPayload;
-      const thid = String(body.thid || '').trim();
-      return thid || undefined;
+      return extractPollingThreadId(body);
     } catch {
       return undefined;
     }
   }
+
+  return undefined;
+}
+
+function extractPollingThreadId(payload: ParsedThreadPayload): string | undefined {
+  const fromThid = String(payload.thid || '').trim();
+  if (fromThid) return fromThid;
+
+  const fromId = String(payload.id || '').trim();
+  if (fromId) return fromId;
+
+  const fromJti = String(payload.jti || '').trim();
+  if (fromJti) return fromJti;
 
   return undefined;
 }
