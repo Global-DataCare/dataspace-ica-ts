@@ -120,6 +120,7 @@ artifacts/**/ca-key.pem
 artifacts/**/ca-key.der
 artifacts/**/fabric-ca-server-root/ca-key.pem
 artifacts/**/fabric-ca-server-ica/ca-key.pem
+artifacts/smoke/
 
 # Local Fabric toolchain downloads
 tools/
