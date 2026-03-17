@@ -87,7 +87,7 @@ echo 'ICA_CREATE_DID_SELF_CA_NOT_BEFORE=20240101000000Z' >> .env.deploy.dev
 
 That self-CA mode is only for local/staging demos. The v2 onboarding design that binds the controller message-signing key during `_verify` and bootstraps the organization credential key is documented in [`docs/organization-key-binding-v2.md`](./docs/organization-key-binding-v2.md).
 The current key-management policy for organization DID documents is summarized in [`docs/organization-key-management.md`](./docs/organization-key-management.md).
-Planned terms-removal semantics for offboarding an organization are documented in [`docs/organization-terms-remove-v2.md`](./docs/organization-terms-remove-v2.md).
+Organization offboarding via accepted-terms removal is documented in [`docs/organization-terms-remove-v2.md`](./docs/organization-terms-remove-v2.md).
 
 Deployment naming rule:
 - Release version and Kubernetes resource names are separate concerns.
