@@ -15,7 +15,7 @@ It is not a generic hard-delete endpoint. It means:
 - the organization is no longer active in that dataspace scope
 - the organization must complete onboarding again before it can become active again
 
-## Planned Endpoint
+## Endpoint
 
 ```text
 POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove
@@ -49,7 +49,7 @@ Minimal request:
       {
         "resource": {
           "organization": {
-            "taxID": "VATES-B00000000"
+            "identifier": "did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000"
           },
           "controller": {
             "sameAs": "urn:multibase:zControllerHash"
@@ -78,18 +78,18 @@ Minimal request:
 
 Recommended lookup fields:
 
-- `organization.taxID` required
+- `organization.identifier` required
+- `organization.taxID` optional
 - `controller.sameAs` recommended
-- optional `organization.identifier` if the caller wants to pin the expected DID
 - optional `reason`
 
 Validation rules:
 
-1. a confirmed organization DID document must exist for that `taxID`
-2. a confirmed controller binding must exist for that `taxID`
+1. a confirmed organization DID document must exist for that `identifier`
+2. a confirmed controller binding must exist for that `identifier`
 3. if `meta.jws.protected.jwk` is present, it must match the stored controller binding
 4. if `controller.sameAs` is present, it must match the stored controller identity for that organization
-5. if `organization.identifier` is present, it must match the confirmed DID document being removed
+5. if `organization.taxID` is also sent, it must match the active organization tax ID bound to that DID
 
 ## Response Contract
 
@@ -126,7 +126,7 @@ Succeeded response resource:
 
 ### did_bindings
 
-Planned effect:
+Effect:
 
 - mark organization/controller binding state as revoked or removed
 - preserve validity window:
@@ -136,21 +136,21 @@ Planned effect:
 
 ### did_documents
 
-Planned effect:
+Effect:
 
 - remove the active published DID document snapshot from normal resolution
 - optionally keep a non-public tombstone record for audit/legal retention
 
 ### Catalog / DCAT
 
-Planned effect:
+Effect:
 
 - the organization must no longer appear in the active ICA catalog
 - datasets/DDOs depending on active membership should no longer be published as active
 
 ### Keys
 
-Planned effect:
+Effect:
 
 - revoke all organization public keys that were active for that confirmed DID state
 - the organization leaf certificates should be treated as no longer active from `removedAt`
@@ -183,3 +183,28 @@ In other words, removal closes one lifecycle. A later return starts a new lifecy
 - active dataspace participation ends
 
 It avoids implying that every historical record is physically erased everywhere, which would be false for immutable logs or legally retained audit records.
+
+## Temporary Relaxed Removal Evidence
+
+Current temporary rule for staging/demo implementations:
+
+- `organization.identifier` is enough to target the organization lifecycle in one sector
+- `organization.taxID` is optional
+- a future organization-removal PDF may be accepted as supporting evidence
+
+TODO for the next hardening step:
+
+- support a dedicated organization-offboarding PDF template
+- verify that the document content matches the organization DID being removed
+- validate form/table values extracted from the PDF, not only the digital signatures
+- support the three-signature model:
+  - one verifier signature
+  - one verification-partner signature
+  - one member-organization signature
+- add a dedicated partner allowlist env, for example `VERIFICATION_PARTNERS_VAT_LIST`
+
+Temporary relaxed acceptance for offboarding PDF evidence:
+
+- accept a PDF if it contains at least one valid digital signature from a verifier organization listed in `VERIFIERS_VAT_LIST`
+- do not yet require partner/member signatures in this temporary mode
+- do not yet require full template/form validation in this temporary mode

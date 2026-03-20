@@ -42,28 +42,34 @@ function controllerPublicKeysEqual(left: JsonObject, right: JsonObject): boolean
 function resolveLatestDidBindingRecord(
   records: DidBindingRecord[],
   route: TermsRemoveRouteContext,
-  taxId: string,
+  lookup: { did?: string; taxId?: string },
 ): DidBindingRecord | undefined {
   return [...records]
     .filter((record) =>
       equalsIgnoreCase(record.tenantId, route.tenantId)
       && equalsIgnoreCase(record.jurisdiction, route.jurisdiction)
       && equalsIgnoreCase(record.sector, route.sector)
-      && equalsIgnoreCase(record.taxId, taxId))
+      && (
+        (lookup.did ? equalsIgnoreCase(asNonEmptyString(record.did), lookup.did) : false)
+        || (lookup.taxId ? equalsIgnoreCase(record.taxId, lookup.taxId) : false)
+      ))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
 }
 
 function resolveLatestDidDocumentRecord(
   records: DidDocumentRecord[],
   route: TermsRemoveRouteContext,
-  taxId: string,
+  lookup: { did?: string; taxId?: string },
 ): DidDocumentRecord | undefined {
   return [...records]
     .filter((record) =>
       equalsIgnoreCase(record.tenantId, route.tenantId)
       && equalsIgnoreCase(record.jurisdiction, route.jurisdiction)
       && equalsIgnoreCase(record.sector, route.sector)
-      && equalsIgnoreCase(asNonEmptyString(record.taxId), taxId))
+      && (
+        (lookup.did ? equalsIgnoreCase(record.did, lookup.did) : false)
+        || (lookup.taxId ? equalsIgnoreCase(asNonEmptyString(record.taxId), lookup.taxId) : false)
+      ))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
 }
 
@@ -95,24 +101,41 @@ export class TermsRemoveRequestManager {
           const resultItems = [];
 
           for (const item of submission.items) {
-            const taxId = item.organization.taxID.trim().toUpperCase();
-            const latestDidBinding = resolveLatestDidBindingRecord(didBindings, route, taxId);
-            const latestDidDocument = resolveLatestDidDocumentRecord(didDocuments, route, taxId);
+            const taxId = asNonEmptyString(item.organization.taxID).toUpperCase() || undefined;
+            const requestedDid = asNonEmptyString(item.organization.identifier) || undefined;
+            const latestDidBinding = resolveLatestDidBindingRecord(didBindings, route, {
+              ...(requestedDid ? { did: requestedDid } : {}),
+              ...(taxId ? { taxId } : {}),
+            });
+            const latestDidDocument = resolveLatestDidDocumentRecord(didDocuments, route, {
+              ...(requestedDid ? { did: requestedDid } : {}),
+              ...(taxId ? { taxId } : {}),
+            });
+            const lookupLabel = requestedDid
+              ? `organization.identifier "${requestedDid}"`
+              : `organization.taxID "${taxId}"`
+            ;
 
             if (!latestDidBinding || latestDidBinding.status === 'removed') {
-              throw new Error(`No active organization binding found for organization.taxID "${taxId}".`);
+              throw new Error(`No active organization binding found for ${lookupLabel}.`);
             }
             if (!latestDidDocument || latestDidDocument.status === 'removed') {
-              throw new Error(`No active organization DID document found for organization.taxID "${taxId}".`);
+              throw new Error(`No active organization DID document found for ${lookupLabel}.`);
             }
 
             const did = asNonEmptyString(latestDidDocument.did);
             if (!did) {
-              throw new Error(`Active DID document is missing did for organization.taxID "${taxId}".`);
+              throw new Error(`Active DID document is missing did for ${lookupLabel}.`);
             }
             if (item.organization.identifier && !equalsIgnoreCase(item.organization.identifier, did)) {
               throw new Error(
-                `organization.identifier "${item.organization.identifier}" must match active DID "${did}" for organization.taxID "${taxId}".`,
+                `organization.identifier "${item.organization.identifier}" must match active DID "${did}".`,
+              );
+            }
+            const resolvedTaxId = asNonEmptyString(latestDidBinding.taxId || latestDidDocument.taxId).toUpperCase() || undefined;
+            if (taxId && resolvedTaxId && !equalsIgnoreCase(taxId, resolvedTaxId)) {
+              throw new Error(
+                `organization.taxID "${taxId}" must match active organization taxID "${resolvedTaxId}" for DID "${did}".`,
               );
             }
 
@@ -122,18 +145,18 @@ export class TermsRemoveRequestManager {
               : undefined;
             if (!requestedControllerPublicKeyJwk) {
               throw new Error(
-                `Controller binding public key is required for _remove on organization.taxID "${taxId}".`,
+                `Controller binding public key is required for _remove on DID "${did}".`,
               );
             }
             if (!storedControllerPublicKeyJwk || !controllerPublicKeysEqual(requestedControllerPublicKeyJwk, storedControllerPublicKeyJwk)) {
               throw new Error(
-                `controller public key must match the stored controller binding for organization.taxID "${taxId}".`,
+                `controller public key must match the stored controller binding for DID "${did}".`,
               );
             }
             const storedControllerSameAs = asNonEmptyString(latestDidBinding.controllerSameAs);
             if (item.controller.sameAs && storedControllerSameAs && !sameAsValuesEqual(item.controller.sameAs, storedControllerSameAs)) {
               throw new Error(
-                `controller.sameAs "${item.controller.sameAs}" must match stored controller.sameAs "${storedControllerSameAs}" for organization.taxID "${taxId}".`,
+                `controller.sameAs "${item.controller.sameAs}" must match stored controller.sameAs "${storedControllerSameAs}" for DID "${did}".`,
               );
             }
 
@@ -152,7 +175,7 @@ export class TermsRemoveRequestManager {
               ...(item.reason ? { removeReason: item.reason } : {}),
             });
             resultItems.push({
-              organizationTaxId: taxId,
+              ...(resolvedTaxId ? { organizationTaxId: resolvedTaxId } : {}),
               did,
               removedAt: nowIso,
               ...(item.reason ? { reason: item.reason } : {}),

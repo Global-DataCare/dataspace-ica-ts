@@ -293,9 +293,6 @@ async function parseJsonObjectBody(req: IncomingMessage): Promise<Record<string,
 }
 
 function resolveRequestOrigin(req: IncomingMessage): string {
-  const configured = String(process.env.ICA_OPENAPI_SERVER_URL || '').trim();
-  if (configured) return configured;
-
   const forwardedProtoRaw = firstHeaderValue(req.headers['x-forwarded-proto']);
   const forwardedProto = forwardedProtoRaw.split(',')[0]?.trim().toLowerCase() || '';
   const protocol = forwardedProto === 'https' || forwardedProto === 'http' ? forwardedProto : 'http';
@@ -303,6 +300,13 @@ function resolveRequestOrigin(req: IncomingMessage): string {
   const forwardedHostRaw = firstHeaderValue(req.headers['x-forwarded-host']);
   const forwardedHost = forwardedHostRaw.split(',')[0]?.trim() || '';
   const host = forwardedHost || firstHeaderValue(req.headers.host) || 'localhost';
+  if (host && host !== 'localhost') {
+    return `${protocol}://${host}`;
+  }
+
+  const configured = String(process.env.ICA_OPENAPI_SERVER_URL || '').trim();
+  if (configured) return configured;
+
   return `${protocol}://${host}`;
 }
 

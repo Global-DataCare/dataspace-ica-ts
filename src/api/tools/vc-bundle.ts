@@ -351,28 +351,47 @@ function buildOidc4IdaEvidence(
   ];
 }
 
+function extractAdditionalOrganizationDataFromPdf(result: VerifyResult): Record<string, unknown> {
+  // TODO: Extract additional schema.org fields (like address, telephone) directly from the PDF fields
+  if (process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS === 'true') {
+    return (result.organizationPayload as Record<string, unknown>) || {};
+  }
+  return {};
+}
+
+function extractAdditionalPersonDataFromPdf(result: VerifyResult): Record<string, unknown> {
+  // TODO: Extract additional schema.org fields directly from the PDF fields
+  if (process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS === 'true') {
+    return (result.legalRepresentativePayload as Record<string, unknown>) || {};
+  }
+  return {};
+}
+
 export function buildVerificationVcBundle(
   route: VerifyRouteContext,
   result: VerifyResult,
   issuerDidInput?: string,
 ): VerifyBundleResponse {
-  const subjectDn = parseDistinguishedName(result.signerSubject);
+  const subjectDn = result.signerSubject ? parseDistinguishedName(result.signerSubject) : {};
   const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
 
-  const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU);
+  const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU) || (result.organizationPayload?.legalName as string | undefined);
   const annexOrganizationDid = getAnnexOrganizationDid(result);
   const organizationAdditionalType = getAnnexField(result, ANNEX_ORGANIZATION_ADDITIONAL_TYPE);
   const organizationAlternateName = getAnnexField(result, ANNEX_ORGANIZATION_ALTERNATE_NAME);
   const organizationRegistrationNumber = getAnnexField(result, ANNEX_ORGANIZATION_REGISTRATION_NUMBER);
   const organizationUrl = normalizeOrganizationUrl(getAnnexField(result, ANNEX_ORGANIZATION_URL));
-  const organizationTaxId = parseOrganizationTaxId(subjectDn);
+  const organizationTaxId = parseOrganizationTaxId(subjectDn) || (result.organizationPayload?.taxID as string | undefined) || (result.organizationPayload?.taxId as string | undefined);
+  
+  const givenName = subjectDn.GN || subjectDn.GIVENNAME || (result.legalRepresentativePayload?.givenName as string | undefined);
+  const familyName = subjectDn.SN || subjectDn.SURNAME || (result.legalRepresentativePayload?.familyName as string | undefined);
   const representativeName =
-    [subjectDn.GN || subjectDn.GIVENNAME, subjectDn.SN || subjectDn.SURNAME]
+    [givenName, familyName]
       .filter(Boolean)
       .join(' ')
     || subjectDn.CN
-    || 'Representative from certificate';
-  const personIdentifier = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']);
+    || 'Representative from certificate or payload';
+  const personIdentifier = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']) || (result.legalRepresentativePayload?.identifier as string | undefined);
   const personEmail = firstDefined(
     getAnnexField(result, ANNEX_PERSON_EMAIL),
     subjectDn.EMAILADDRESS,
@@ -397,6 +416,7 @@ export function buildVerificationVcBundle(
   const organizationIdentifiers = resolveOrganizationSubjectIdentifiers(route, organizationTaxId, annexOrganizationDid);
 
   const organizationSubject: Record<string, unknown> = {
+    ...extractAdditionalOrganizationDataFromPdf(result),
     id: organizationIdentifiers.id,
     '@type': 'Organization',
   };
@@ -444,8 +464,8 @@ export function buildVerificationVcBundle(
   if (organizationTaxId) {
     organizationRef.taxID = organizationTaxId;
   }
-
   const personSubject: Record<string, unknown> = {
+    ...extractAdditionalPersonDataFromPdf(result),
     id: personIdentifier
       ? `urn:person:identifier:${personIdentifier}`
       : `urn:person:identifier:${route.tenantId}`,
@@ -458,15 +478,15 @@ export function buildVerificationVcBundle(
     },
     memberOf: organizationRef,
   };
-    if (subjectDn.GN || subjectDn.GIVENNAME) {
-      personSubject.givenName = subjectDn.GN || subjectDn.GIVENNAME;
-    }
-    if (subjectDn.SN || subjectDn.SURNAME) {
-      personSubject.familyName = subjectDn.SN || subjectDn.SURNAME;
-    }
-    if (personIdentifier) {
-      personSubject.identifier = personIdentifier;
-    }
+  if (givenName) {
+    personSubject.givenName = givenName;
+  }
+  if (familyName) {
+    personSubject.familyName = familyName;
+  }
+  if (personIdentifier) {
+    personSubject.identifier = personIdentifier;
+  }
   if (country) {
     personSubject.nationality = country;
   }

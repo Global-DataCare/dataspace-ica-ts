@@ -60,6 +60,41 @@ export interface VerifyRouteContext {
   action: VerifyAction;
 }
 
+export type TemplateMatchMode = 'strict-bytes' | 'logical-content';
+
+export type FnmtVerifierConfig = {
+  fnmtRootCertPath: string;
+  fnmtIntermediateCertPath: string;
+  fnmtRootCertPem?: string;
+  fnmtIntermediateCertPem?: string;
+  fnmtRootCertUrl?: string;
+  fnmtIntermediateCertUrl?: string;
+  fnmtIntermediateCertUrls: string[];
+  fnmtRootCertPinSha256?: string;
+  fnmtRootCertPinSha1?: string;
+  fnmtIntermediateCertPinSha256?: string;
+  fnmtIntermediateCertPinSha1?: string;
+  fnmtIntermediateCertPinsSha256: string[];
+  fnmtIntermediateCertPinsSha1: string[];
+  fnmtAutoDownload: boolean;
+  templateUrlPattern: string;
+  strictRevocation: boolean;
+  strictTemplateMatch: boolean;
+  templateMatchMode: TemplateMatchMode;
+  verifierVatList: string[];
+  allowVerificationPartners: boolean;
+  verificationPartnersVatList: string[];
+  digestAlgorithm: string;
+  templateCacheTtlSeconds: number;
+  templateCacheMaxEntries: number;
+  templatePreloadEnabled: boolean;
+  templatePreloadTenantId: string;
+  templatePreloadJurisdictions: string[];
+  templatePreloadSectors: AllowedSector[];
+  templatePreloadResourceTypes: string[];
+  templateUseTestPrefix: boolean;
+};
+
 export interface TermsRemoveRouteContext {
   tenantId: string;
   jurisdiction: string;
@@ -119,7 +154,6 @@ export interface DelegationPolicyRouteContext {
   policyType: 'delegations';
   action: DelegationPolicyAction;
 }
-
 export interface IssueCredentialRouteContext {
   tenantId: string;
   jurisdiction: string;
@@ -215,11 +249,13 @@ export interface VerifySubmission {
   annexExtractionWarnings?: string[];
   controllerPublicKeyJwk?: Record<string, unknown>;
   organizationPublicKeyJwk?: Record<string, unknown>;
+  organizationPayload?: Record<string, unknown>;
+  legalRepresentativePayload?: Record<string, unknown>;
 }
 
 export interface TermsRemoveInput {
   organization: {
-    taxID: string;
+    taxID?: string;
     identifier?: string;
   };
   controller: {
@@ -427,9 +463,9 @@ export interface VerifyResult {
   chainValid: boolean;
   revocationStatus: RevocationStatus;
   digest: VerifyDigest;
-  signerCertificateSerialNumber: string;
-  signerSubject: string;
-  signerIssuer: string;
+  signerCertificateSerialNumber?: string;
+  signerSubject?: string;
+  signerIssuer?: string;
   hashes: VerifyHashes;
   notes: string[];
   annexFormFields?: Record<string, string>;
@@ -439,6 +475,8 @@ export interface VerifyResult {
   organizationPublicKeyJwk?: Record<string, unknown>;
   organizationPrivateKeyJwk?: Record<string, unknown>;
   organizationKeySource?: 'attachment' | 'generated';
+  organizationPayload?: Record<string, unknown>;
+  legalRepresentativePayload?: Record<string, unknown>;
 }
 
 export interface VerificationJob {
@@ -652,7 +690,7 @@ export interface TermsRemoveResult {
 }
 
 export interface TermsRemoveResultItem {
-  organizationTaxId: string;
+  organizationTaxId?: string;
   did: string;
   removedAt: string;
   reason?: string;
@@ -730,3 +768,4 @@ export interface DidcommAttachment {
 
 export type DidcommPlaintextMessage<TBody = unknown> =
   Omit<IDecodedDidcommPayload, 'body'> & { body: TBody; attachments?: DidcommAttachment[] };
+

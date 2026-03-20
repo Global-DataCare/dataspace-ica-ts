@@ -685,7 +685,7 @@ function cmdPublishClient(args) {
 }
 
 async function main() {
-  const [, , command, ...rest] = process.argv;
+  const  []; , command, ...rest] = process.argv;
   if (!command || command === '--help' || command === '-h' || command === 'help') {
     printHelp();
     return;

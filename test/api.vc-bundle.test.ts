@@ -428,3 +428,113 @@ test('buildVerificationVcBundle filters intermediate CA URLs to signer issuer pr
   assert.equal(intermediates.length, 1);
   assert.equal(intermediates[0].includes('AC_Representacion.cer'), true);
 });
+
+test('buildVerificationVcBundle ignores arbitrary payload fields not extracted from PDF', () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const bundle = buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('cert-vs-payload'),
+    signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+    organizationPayload: {
+      legalName: 'Payload Org Name',
+      taxID: 'VATES-PAYLOADTAX',
+      address: {
+        '@type': 'PostalAddress',
+        addressLine: '123 Fake St',
+      },
+      telephone: '+34000000000'
+    },
+    legalRepresentativePayload: {
+      givenName: 'Payload Given Name',
+      familyName: 'Payload Family Name',
+      identifier: 'PAYLOAD-ID',
+      jobTitle: 'Payload Job Title'
+    },
+  });
+
+  const organizationResource = bundle.data[0].resource as Record<string, any>;
+  const personResource = bundle.data[1].resource as Record<string, any>;
+  
+  const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+  const personSubject = personResource.credentialSubject as Record<string, any>;
+
+  assert.equal(organizationSubject.taxID, 'VATES-A12345678');
+  assert.equal(organizationSubject.legalName, 'Acme Health SL');
+  assert.equal(organizationSubject.telephone, undefined);
+  assert.equal(organizationSubject.address?.addressLine, undefined);
+
+  assert.equal(personSubject.name, 'Jane Doe');
+  assert.equal(personSubject.identifier, '12345678Z');
+  assert.equal(personSubject.jobTitle, undefined);
+
+  const orgEvidence = organizationResource.evidence as Array<Record<string, any>>;
+  assert.ok(orgEvidence);
+  assert.equal(orgEvidence.length, 2);
+  assert.equal(orgEvidence[0]?.type, 'electronic_signature');
+  assert.equal(orgEvidence[1]?.type, 'document');
+});
+
+test('buildVerificationVcBundle allows payload merge when environment variable is set', () => {
+  const previousFlag = process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+  process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = 'true';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const bundle = buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult('cert-vs-payload'),
+      signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+      organizationPayload: {
+        legalName: 'Payload Org Name',
+        taxID: 'VATES-PAYLOADTAX',
+        address: {
+          '@type': 'PostalAddress',
+          addressLine: '123 Fake St',
+        },
+        telephone: '+34000000000'
+      },
+      legalRepresentativePayload: {
+        givenName: 'Payload Given Name',
+        familyName: 'Payload Family Name',
+        identifier: 'PAYLOAD-ID',
+        jobTitle: 'Payload Job Title'
+      },
+    });
+
+    const organizationResource = bundle.data[0].resource as Record<string, any>;
+    const personResource = bundle.data[1].resource as Record<string, any>;
+    
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+
+    assert.equal(organizationSubject.taxID, 'VATES-A12345678');
+    assert.equal(organizationSubject.legalName, 'Acme Health SL');
+    assert.equal(organizationSubject.telephone, '+34000000000');
+    assert.deepEqual(organizationSubject.address, {
+      '@type': 'PostalAddress',
+      addressCountry: 'ES',
+      addressLine: '123 Fake St'
+    });
+
+    assert.equal(personSubject.name, 'Jane Doe');
+    assert.equal(personSubject.identifier, '12345678Z');
+    assert.equal(personSubject.jobTitle, 'Payload Job Title');
+
+    const orgEvidence = organizationResource.evidence as Array<Record<string, any>>;
+    assert.ok(orgEvidence);
+    assert.equal(orgEvidence.length, 2);
+    assert.equal(orgEvidence[0]?.type, 'electronic_signature');
+    assert.equal(orgEvidence[1]?.type, 'document');
+  } finally {
+    if (previousFlag === undefined) {
+      delete process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+    } else {
+      process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = previousFlag;
+    }
+  }
+});

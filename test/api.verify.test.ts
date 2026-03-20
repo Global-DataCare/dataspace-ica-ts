@@ -109,6 +109,7 @@ function buildMinimalPdf(contentStream: string, pageExtra = '', extraObjects = '
 }
 
 const REAL_MULTISIGN_PDF_PATH = '/Users/fernando/GITS/gdc-workspace/TEST-A4-multisign-fnmt.pdf';
+const REAL_THREE_SIGN_PDF_PATH = '/Users/fernando/GITS/gdc-workspace/TEST-A4-firmas-3-fnmt.pdf';
 
 function splitPemCertificates(rawPem: string): string[] {
   return rawPem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
@@ -226,6 +227,7 @@ test('selectPrimaryCredentialSignature ignores verifier signatures from VERIFIER
       { signatureIndex: 2, signerVatId: 'VATES-Z99999999' },
     ],
     ['VATES-Z99999999'],
+    [],
   );
   assert.deepEqual(selected, { signatureIndex: 1, signerVatId: 'VATES-B22222222' });
 });
@@ -238,6 +240,7 @@ test('assertVerifierCounterpartySignaturePair requires one verifier VAT and one 
         { signatureIndex: 1, signerVatId: 'VATES-B42215152' },
       ],
       ['VATES-G02793479', 'VATES-B87617981'],
+      [],
     );
   });
 
@@ -246,6 +249,7 @@ test('assertVerifierCounterpartySignaturePair requires one verifier VAT and one 
       assertVerifierCounterpartySignaturePair(
         [{ signatureIndex: 0, signerVatId: 'VATES-B42215152' }],
         ['VATES-G02793479', 'VATES-B87617981'],
+        [],
       );
     },
     /at least one verifier signature/i,
@@ -259,11 +263,65 @@ test('assertVerifierCounterpartySignaturePair requires one verifier VAT and one 
           { signatureIndex: 1, signerVatId: 'VATES-B87617981' },
         ],
         ['VATES-G02793479', 'VATES-B87617981'],
+        [],
       );
     },
     /at least one non-verifier counterparty signature/i,
   );
 });
+
+test('assertVerifierCounterpartySignaturePair handles verification partners correctly', () => {
+  assert.doesNotThrow(() => {
+    assertVerifierCounterpartySignaturePair(
+      [
+        { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
+        { signatureIndex: 1, signerVatId: 'VATES-PARTNER' },
+        { signatureIndex: 2, signerVatId: 'VATES-MEMBER' },
+      ],
+      ['VATES-VERIFIER'],
+      ['VATES-PARTNER'],
+    );
+  });
+
+  assert.doesNotThrow(() => {
+    assertVerifierCounterpartySignaturePair(
+      [
+        { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
+        { signatureIndex: 1, signerVatId: 'VATES-PARTNER' },
+      ],
+      ['VATES-VERIFIER'],
+      [],
+    );
+  });
+
+  assert.throws(
+    () => {
+      assertVerifierCounterpartySignaturePair(
+        [
+          { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
+          { signatureIndex: 1, signerVatId: 'VATES-MEMBER' },
+        ],
+        ['VATES-VERIFIER'],
+        ['VATES-PARTNER'],
+      );
+    },
+    /at least one verification partner signature/i,
+  );
+});
+
+test(
+  'selectPrimaryCredentialSignature handles the real FNMT three-signature PDF regardless of which verifier/partner VAT is configured',
+  { skip: !existsSync(REAL_THREE_SIGN_PDF_PATH) },
+  () => {
+    const signerVatIds = extractSignerVatIdsFromRealPdf(REAL_THREE_SIGN_PDF_PATH);
+    assert.deepEqual(signerVatIds, ['VATES-B42215152', 'VATES-G02793479', 'VATES-N0377833I']);
+
+    const signatures = signerVatIds.map((signerVatId, signatureIndex) => ({ signatureIndex, signerVatId }));
+
+    const primarySignature = selectPrimaryCredentialSignature(signatures, ['VATES-G02793479'], ['VATES-B42215152']);
+    assert.deepEqual(primarySignature, { signatureIndex: 2, signerVatId: 'VATES-N0377833I' });
+  },
+);
 
 test(
   'selectPrimaryCredentialSignature handles the real FNMT multisign PDF regardless of which verifier VAT is configured',
@@ -274,10 +332,10 @@ test(
 
     const signatures = signerVatIds.map((signerVatId, signatureIndex) => ({ signatureIndex, signerVatId }));
 
-    const verifierIsUnid = selectPrimaryCredentialSignature(signatures, ['VATES-G02793479']);
+    const verifierIsUnid = selectPrimaryCredentialSignature(signatures, ['VATES-G02793479'], []);
     assert.deepEqual(verifierIsUnid, { signatureIndex: 0, signerVatId: 'VATES-B42215152' });
 
-    const verifierIsConectate = selectPrimaryCredentialSignature(signatures, ['VATES-B42215152']);
+    const verifierIsConectate = selectPrimaryCredentialSignature(signatures, ['VATES-B42215152'], []);
     assert.deepEqual(verifierIsConectate, { signatureIndex: 1, signerVatId: 'VATES-G02793479' });
   },
 );
@@ -296,6 +354,8 @@ test(
       strictTemplateMatch: true,
       templateMatchMode: 'strict-bytes',
       verifierVatList: ['VATES-G02793479'],
+      allowVerificationPartners: false,
+      verificationPartnersVatList: [],
       digestAlgorithm: 'sha256',
       templateCacheTtlSeconds: 0,
       templateCacheMaxEntries: 0,

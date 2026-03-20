@@ -2032,7 +2032,7 @@ export function buildIcaVerifyOpenApiSpec(
     serverUrl?: string;
   } = {},
 ) {
-  const configuredServerUrl = (process.env.ICA_OPENAPI_SERVER_URL || options.serverUrl || '').trim();
+  const configuredServerUrl = (options.serverUrl || process.env.ICA_OPENAPI_SERVER_URL || '').trim();
   const serverUrl = configuredServerUrl || 'http://localhost:3310';
   const supportedJurisdictionIds = getConfiguredSupportedJurisdictionIds();
   const supportedJurisdictionSchema = {
@@ -4308,12 +4308,18 @@ export function buildIcaVerifyOpenApiSpec(
             + '- organization is removed from catalog publication\n'
             + '- organization keys are treated as revoked for that onboarding cycle\n'
             + '- a later return requires a fresh `_verify` and `_create`\n\n'
+            + '**Lookup**\n'
+            + '- `organization.identifier` (the organization DID) is the primary lookup key\n'
+            + '- `organization.taxID` is optional and, if sent, must match the active tax ID bound to that DID\n\n'
             + '**Authorization**\n'
             + '- `controller.publicKeyJwk` must match the stored controller binding for the organization\n'
             + '- in didactic/plain mode this may travel in `meta.jws.protected.jwk`\n'
             + '- hardened production mode should use signed DIDComm so the controller key is actually proven, not just claimed\n\n'
             + '**SDK**\n'
-            + '- `ica-client-sdk-ts@2.x` documents this flow, but does not yet provide a dedicated `_remove` helper\n\n'
+            + '- `ica-client-sdk-ts@2.x` provides `removeOrganizationTerms()` and `pollRemoveOrganizationTermsResponse()`\n\n'
+            + '**Temporary evidence mode**\n'
+            + '- future hardening may add a dedicated signed offboarding PDF template\n'
+            + '- for now, DID-driven removal is the primary mechanism; verifier/verification-partner/member PDF signature combinations remain a TODO\n\n'
             + '**Polling**\n'
             + '- poll `_remove-response` with the same `thid`',
           parameters: [

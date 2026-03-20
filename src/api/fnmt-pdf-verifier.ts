@@ -7,10 +7,12 @@ import { promisify } from 'node:util';
 import { inflateSync } from 'node:zlib';
 import type {
   AllowedSector,
+  FnmtVerifierConfig,
   PdfVerificationService,
   RevocationDebugCheck,
   RevocationDebugInfo,
   RevocationStatus,
+  TemplateMatchMode,
   VerificationErrorDetails,
   VerifyResult,
   VerifyRouteContext,
@@ -58,8 +60,6 @@ function parseDigestAlgorithm(value: string | undefined, fallback: string): stri
   }
   return normalized;
 }
-
-type TemplateMatchMode = 'strict-bytes' | 'logical-content';
 
 function parseTemplateMatchMode(value: string | undefined, fallback: TemplateMatchMode): TemplateMatchMode {
   const normalized = (value || fallback).trim().toLowerCase();
@@ -433,23 +433,29 @@ function normalizeVatId(value: string | undefined): string | undefined {
 }
 
 export function parseVatIdFromSubjectDn(subjectDn: string): string | undefined {
-  const match = /\bVATES-[A-Z0-9]+\b/i.exec(subjectDn);
+  const match = /\bVATES-[A-Z0-9]+/i.exec(subjectDn);
   return normalizeVatId(match?.[0]);
 }
 
 export function selectPrimaryCredentialSignature<T extends { signerVatId?: string }>(
   signatures: T[],
   verifierVatList: string[],
+  verificationPartnersVatList: string[],
 ): T | undefined {
   const verifierVatSet = new Set(
     verifierVatList
       .map((value) => normalizeVatId(value))
       .filter((value): value is string => Boolean(value)),
   );
+  const partnerVatSet = new Set(
+    verificationPartnersVatList
+      .map((value) => normalizeVatId(value))
+      .filter((value): value is string => Boolean(value)),
+  );
   for (let index = signatures.length - 1; index >= 0; index -= 1) {
     const signature = signatures[index];
     const signerVatId = normalizeVatId(signature.signerVatId);
-    if (signerVatId && verifierVatSet.has(signerVatId)) {
+    if (signerVatId && (verifierVatSet.has(signerVatId) || partnerVatSet.has(signerVatId))) {
       continue;
     }
     return signature;
@@ -460,6 +466,8 @@ export function selectPrimaryCredentialSignature<T extends { signerVatId?: strin
 export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?: string }>(
   signatures: T[],
   verifierVatList: string[],
+  verificationPartnersVatList: string[],
+  organizationPayload?: Record<string, unknown>,
 ): void {
   const verifierVatSet = new Set(
     verifierVatList
@@ -468,21 +476,37 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
   );
   if (!verifierVatSet.size) return;
 
+  const partnerVatSet = new Set(
+    verificationPartnersVatList
+      .map((value) => normalizeVatId(value))
+      .filter((value): value is string => Boolean(value)),
+  );
+
   const signerVatIds = signatures
     .map((signature) => normalizeVatId(signature.signerVatId))
     .filter((value): value is string => Boolean(value));
   const verifierSignerVatIds = signerVatIds.filter((value) => verifierVatSet.has(value));
-  const counterpartSignerVatIds = signerVatIds.filter((value) => !verifierVatSet.has(value));
+  const partnerSignerVatIds = signerVatIds.filter((value) => partnerVatSet.has(value));
+  const counterpartSignerVatIds = signerVatIds.filter((value) => !verifierVatSet.has(value) && !partnerVatSet.has(value));
 
   if (!verifierSignerVatIds.length) {
     throw new Error(
       'PDF must include at least one verifier signature whose VAT is listed in VERIFIERS_VAT_LIST.',
     );
   }
-  if (!counterpartSignerVatIds.length) {
-    throw new Error(
-      'PDF must include at least one non-verifier counterparty signature different from VERIFIERS_VAT_LIST.',
-    );
+
+  if (partnerVatSet.size > 0 && counterpartSignerVatIds.length > 0) {
+    if (!partnerSignerVatIds.length) {
+      throw new Error(
+        'PDF must include at least one verification partner signature whose VAT is listed in VERIFICATION_PARTNERS_VAT_LIST.',
+      );
+    }
+  } else if (!counterpartSignerVatIds.length && !partnerSignerVatIds.length) {
+    if (!organizationPayload?.taxID && !organizationPayload?.taxId) {
+      throw new Error(
+        'PDF must include at least one non-verifier counterparty signature different from VERIFIERS_VAT_LIST, or provide organization taxID in the payload.',
+      );
+    }
   }
 }
 
@@ -548,7 +572,7 @@ async function extractCrlUrls(certPemPath: string): Promise<string[]> {
   const output = await runOpenSsl(['x509', '-in', certPemPath, '-noout', '-text']);
   const urls = new Set<string>();
   const crlSectionMatch =
-    output.stdout.match(/X509v3 CRL Distribution Points:[\s\S]*?(?:X509v3 [^\n]+:|Signature Algorithm:|$)/);
+    output.stdout.match(/X509v3 CRL Distribution Points:[\s\S]*?(?:X509v3 [^\n:]+|Signature Algorithm:|$)/);
   const section = crlSectionMatch ? crlSectionMatch[0] : output.stdout;
   const regex = /URI:([^\s,\n]+)/g;
   let match: RegExpExecArray | null;
@@ -686,50 +710,19 @@ async function downloadPemCertificate(url: string, label: string): Promise<strin
   }
 }
 
-export type FnmtVerifierConfig = {
-  fnmtRootCertPath: string;
-  fnmtIntermediateCertPath: string;
-  fnmtRootCertPem?: string;
-  fnmtIntermediateCertPem?: string;
-  fnmtRootCertUrl?: string;
-  fnmtIntermediateCertUrl?: string;
-  fnmtIntermediateCertUrls: string[];
-  fnmtRootCertPinSha256?: string;
-  fnmtRootCertPinSha1?: string;
-  fnmtIntermediateCertPinSha256?: string;
-  fnmtIntermediateCertPinSha1?: string;
-  fnmtIntermediateCertPinsSha256: string[];
-  fnmtIntermediateCertPinsSha1: string[];
-  fnmtAutoDownload: boolean;
-  templateUrlPattern: string;
-  strictRevocation: boolean;
-  strictTemplateMatch: boolean;
-  templateMatchMode: TemplateMatchMode;
-  verifierVatList: string[];
-  digestAlgorithm: string;
-  templateCacheTtlSeconds: number;
-  templateCacheMaxEntries: number;
-  templatePreloadEnabled: boolean;
-  templatePreloadTenantId: string;
-  templatePreloadJurisdictions: string[];
-  templatePreloadSectors: AllowedSector[];
-  templatePreloadResourceTypes: string[];
-  templateUseTestPrefix: boolean;
-};
-
 export function loadFnmtVerifierConfigFromEnv(): FnmtVerifierConfig {
   const fnmtAutoDownload = parseBoolean(process.env.ICA_FNMT_AUTO_DOWNLOAD, false);
   const intermediateUrlsFromList = parseCsvList(process.env.ICA_FNMT_INTERMEDIATE_CERT_URLS);
   const legacyIntermediateUrl = parseOptionalString(process.env.ICA_FNMT_INTERMEDIATE_CERT_URL);
   const fnmtIntermediateCertUrls = fnmtAutoDownload
     ? dedupeStrings([
-      ...(intermediateUrlsFromList.length ? intermediateUrlsFromList : DEFAULT_FNMT_INTERMEDIATE_CERT_URLS),
-      ...(legacyIntermediateUrl ? [legacyIntermediateUrl] : []),
-    ])
+        ...(intermediateUrlsFromList.length ? intermediateUrlsFromList : DEFAULT_FNMT_INTERMEDIATE_CERT_URLS),
+        ...(legacyIntermediateUrl ? [legacyIntermediateUrl] : []),
+      ])
     : dedupeStrings([
-      ...intermediateUrlsFromList,
-      ...(legacyIntermediateUrl ? [legacyIntermediateUrl] : []),
-    ]);
+        ...intermediateUrlsFromList,
+        ...(legacyIntermediateUrl ? [legacyIntermediateUrl] : []),
+      ]);
   const fnmtRootCertPinSha256 = parseFingerprintPin(process.env.ICA_FNMT_ROOT_CERT_PIN_SHA256, 64, 'SHA-256');
   const fnmtRootCertPinSha1 = parseFingerprintPin(process.env.ICA_FNMT_ROOT_CERT_PIN_SHA1, 40, 'SHA-1');
   const legacyIntermediatePin = parseFingerprintPin(process.env.ICA_FNMT_INTERMEDIATE_CERT_PIN_SHA256, 64, 'SHA-256');
@@ -786,6 +779,10 @@ export function loadFnmtVerifierConfigFromEnv(): FnmtVerifierConfig {
     verifierVatList: parseCsvList(process.env.VERIFIERS_VAT_LIST)
       .map((value) => normalizeVatId(value))
       .filter((value): value is string => Boolean(value)),
+    allowVerificationPartners: parseBoolean(process.env.ICA_ALLOW_VERIFICATION_PARTNERS, false),
+    verificationPartnersVatList: parseCsvList(process.env.VERIFICATION_PARTNERS_VAT_LIST)
+      .map((value) => normalizeVatId(value))
+      .filter((value): value is string => Boolean(value)),
     digestAlgorithm: parseDigestAlgorithm(process.env.ICA_VERIFY_DIGEST_ALGORITHM, 'sha3-384'),
     templateCacheTtlSeconds: parsePositiveInteger(process.env.ICA_TERMS_TEMPLATE_CACHE_TTL_SECONDS, 900),
     templateCacheMaxEntries: parsePositiveInteger(process.env.ICA_TERMS_TEMPLATE_CACHE_MAX_ENTRIES, 64),
@@ -813,7 +810,10 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
   private readonly templateFetchInFlight = new Map<string, Promise<Buffer>>();
 
   constructor(config: FnmtVerifierConfig = loadFnmtVerifierConfigFromEnv()) {
-    this.config = config;
+    this.config = {
+      ...config,
+      verificationPartnersVatList: config.allowVerificationPartners ? config.verificationPartnersVatList : [],
+    };
     console.log(`Template URL pattern active: ${this.config.templateUrlPattern}`);
     console.log(`Template test-mode prefix active: ${this.config.templateUseTestPrefix}`);
     this.trustAnchorsPromise = this.loadTrustAnchors().catch((error: unknown) => {
@@ -864,7 +864,6 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
     const ttlMs = this.config.templateCacheTtlSeconds * 1000;
     const cached = this.templateCache.get(templateUrl);
     if (cached && now - cached.fetchedAtMs <= ttlMs) {
-      // Refresh insertion order to keep a lightweight LRU behavior.
       this.templateCache.delete(templateUrl);
       this.templateCache.set(templateUrl, cached);
       return { bytes: cached.bytes, source: 'cache' };
@@ -1373,10 +1372,23 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
         notes.push(...verifiedSignature.notes.map((note) => `${label}: ${note}`));
       }
 
-      assertVerifierCounterpartySignaturePair(verifiedSignatures, this.config.verifierVatList);
-      const primarySignature = selectPrimaryCredentialSignature(verifiedSignatures, this.config.verifierVatList);
+      assertVerifierCounterpartySignaturePair(
+        verifiedSignatures,
+        this.config.verifierVatList,
+        this.config.verificationPartnersVatList,
+        submission.organizationPayload,
+      );
+      let primarySignature = selectPrimaryCredentialSignature(
+        verifiedSignatures,
+        this.config.verifierVatList,
+        this.config.verificationPartnersVatList,
+      );
       if (!primarySignature) {
-        throw new Error('All PDF signatures belong to verifier organizations listed in VERIFIERS_VAT_LIST.');
+        if (!submission.organizationPayload?.taxID && !submission.organizationPayload?.taxId) {
+          throw new Error('All PDF signatures belong to verifier or verification partner organizations.');
+        }
+        primarySignature = verifiedSignatures[verifiedSignatures.length - 1];
+        notes.push('No counterparty signature found in PDF. Using organization payload data and substituting last signature for document integrity.');
       }
 
       for (const signature of verifiedSignatures) {
@@ -1385,6 +1397,11 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
           notes.push(
             `Signature ${signature.signatureIndex + 1} ignored for credential extraction because signer VAT ` +
             `${signature.signerVatId} is listed in VERIFIERS_VAT_LIST.`,
+          );
+        } else if (signature.signerVatId && this.config.verificationPartnersVatList.includes(signature.signerVatId)) {
+          notes.push(
+            `Signature ${signature.signatureIndex + 1} ignored for credential extraction because signer VAT ` +
+            `${signature.signerVatId} is listed in VERIFICATION_PARTNERS_VAT_LIST.`,
           );
         }
       }
@@ -1454,7 +1471,6 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
       const signedPdfDigestHex = hashHex(submission.pdfBytes, this.config.digestAlgorithm);
       const unsignedPdfDigestHex = hashHex(primarySignature.signedData, this.config.digestAlgorithm);
 
-      // Legacy sha256 block kept for compatibility in result payload.
       const signedPdfSha256Hex = hashHex(submission.pdfBytes, 'sha256');
       const unsignedPdfSha256Hex = hashHex(primarySignature.signedData, 'sha256');
 
@@ -1482,6 +1498,8 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
         },
         notes,
         revocationDebug: primarySignature.revocationDebug,
+        organizationPayload: submission.organizationPayload,
+        legalRepresentativePayload: submission.legalRepresentativePayload,
       };
     } finally {
       await rm(workspace, { recursive: true, force: true });

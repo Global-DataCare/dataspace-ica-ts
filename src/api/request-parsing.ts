@@ -332,12 +332,20 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
   const annex = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
   const controllerPublicKeyJwk = resolveControllerPublicKeyFromMeta(parsed);
   const organizationPublicKeyJwk = resolveOrganizationPublicKeyFromDidcommAttachments(attachments);
+  
+  const dataArray = Array.isArray(parsedBody.data) ? parsedBody.data : [];
+  const firstResource = dataArray.length > 0 ? asObject((dataArray[0] as Record<string, unknown>)?.resource) : undefined;
+  const organizationPayload = firstResource ? asObject(firstResource.organization) : undefined;
+  const legalRepresentativePayload = firstResource ? asObject(firstResource.legalRepresentative) : undefined;
+
   return {
     thid,
     pdfBytes,
     contentType,
     ...(controllerPublicKeyJwk ? { controllerPublicKeyJwk } : {}),
     ...(organizationPublicKeyJwk ? { organizationPublicKeyJwk } : {}),
+    ...(organizationPayload ? { organizationPayload } : {}),
+    ...(legalRepresentativePayload ? { legalRepresentativePayload } : {}),
     ...(Object.keys(annex.fields).length ? { annexFormFields: annex.fields } : {}),
     ...(annex.warnings.length ? { annexExtractionWarnings: annex.warnings } : {}),
   };
@@ -738,14 +746,14 @@ function parseTermsRemoveInput(
 
   const taxID = asNonEmptyString(
     rawOrganization.taxID || rawOrganization.taxId || entry.taxID || entry.taxId || fallback.taxID || fallback.taxId,
-  );
-  if (!taxID) {
-    throw new Error(`${indexLabel}.organization.taxID is required.`);
-  }
+  ) || undefined;
 
   const identifier = asNonEmptyString(
     rawOrganization.identifier || rawOrganization.id || entry.identifier || entry.id || fallback.identifier || fallback.id,
   ) || undefined;
+  if (!identifier && !taxID) {
+    throw new Error(`${indexLabel}.organization.identifier (did) or ${indexLabel}.organization.taxID is required.`);
+  }
   const sameAs = normalizeSameAsHash(asNonEmptyString(
     rawController.sameAs || entry.sameAs || fallback.sameAs,
   )) || undefined;
@@ -759,7 +767,7 @@ function parseTermsRemoveInput(
 
   return {
     organization: {
-      taxID,
+      ...(taxID ? { taxID } : {}),
       ...(identifier ? { identifier } : {}),
     },
     controller: {

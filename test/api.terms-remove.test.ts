@@ -109,6 +109,43 @@ test('parseTermsRemoveSubmission resolves controller binding key from meta.jws.p
   assert.equal(parsed.items[0]?.reason, 'organization-requested-removal');
 });
 
+test('parseTermsRemoveSubmission accepts identifier-only organization removal', async () => {
+  const req = buildDidcommRequest({
+    thid: 'thid-remove-identifier-only',
+    type: 'https://globaldatacare.es/didcomm/ica/terms/remove-request/v1',
+    meta: {
+      jws: {
+        protected: {
+          alg: 'ES384',
+          kid: 'controller-msg-es384-001',
+          jwk: {
+            kty: 'EC',
+            crv: 'P-384',
+            x: 'controller-x',
+            y: 'controller-y',
+          },
+        },
+      },
+    },
+    body: {
+      data: [
+        {
+          resource: {
+            organization: {
+              identifier: 'did:web:member.example.org',
+            },
+          },
+        },
+      ],
+    },
+  }, '/ica/cds-ES/v1/animal-care/terms/pdf/contract/_remove');
+
+  const parsed = await parseTermsRemoveSubmission(req);
+  assert.equal(parsed.items[0]?.organization.identifier, 'did:web:member.example.org');
+  assert.equal(parsed.items[0]?.organization.taxID, undefined);
+  assert.equal(parsed.items[0]?.controller.publicKeyJwk?.kid, 'controller-msg-es384-001');
+});
+
 test('TermsRemove managers remove active binding and did document, then _create requires fresh _verify', async () => {
   resetVerificationCollectionsMemStateForTests();
   const collectionsService = createCollectionsService();

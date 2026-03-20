@@ -1205,11 +1205,15 @@ Verification behavior:
 - `ICA_VERIFY_TEMPLATE_MATCH_MODE` (`strict-bytes` | `logical-content`)
 - `ICA_VERIFY_DIGEST_ALGORITHM` (default `sha3-384`)
 - `VERIFIERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify verifier organizations such as Accuro/UNID)
+- `VERIFICATION_PARTNERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify verification partners organizations)
 
 For multi-signed contract PDFs, every detected signature is still CMS/chain/revocation validated. When `VERIFIERS_VAT_LIST` is configured, `_verify` only accepts the PDF if:
 
 - at least one detected signer VAT belongs to `VERIFIERS_VAT_LIST`
 - at least one other detected signer VAT is different and does not belong to `VERIFIERS_VAT_LIST`
+
+If `VERIFICATION_PARTNERS_VAT_LIST` is also configured, `_verify` will additionally require:
+- at least one detected signer VAT belongs to `VERIFICATION_PARTNERS_VAT_LIST`
 
 After that validation, matching verifier signatures are ignored when choosing the signer used to populate the organization/person credentials.
 
