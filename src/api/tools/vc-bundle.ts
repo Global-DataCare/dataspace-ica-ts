@@ -367,6 +367,25 @@ function extractAdditionalPersonDataFromPdf(result: VerifyResult): Record<string
   return {};
 }
 
+function mergePostalAddress(
+  baseAddress: unknown,
+  addressCountry: string | undefined,
+): Record<string, unknown> | undefined {
+  const normalizedBase = baseAddress && typeof baseAddress === 'object'
+    ? { ...(baseAddress as Record<string, unknown>) }
+    : {};
+
+  if (!addressCountry && Object.keys(normalizedBase).length === 0) {
+    return undefined;
+  }
+
+  return {
+    '@type': 'PostalAddress',
+    ...normalizedBase,
+    ...(addressCountry ? { addressCountry } : {}),
+  };
+}
+
 export function buildVerificationVcBundle(
   route: VerifyRouteContext,
   result: VerifyResult,
@@ -375,23 +394,23 @@ export function buildVerificationVcBundle(
   const subjectDn = result.signerSubject ? parseDistinguishedName(result.signerSubject) : {};
   const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
 
-  const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU) || (result.organizationPayload?.legalName as string | undefined);
+  const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU);
   const annexOrganizationDid = getAnnexOrganizationDid(result);
   const organizationAdditionalType = getAnnexField(result, ANNEX_ORGANIZATION_ADDITIONAL_TYPE);
   const organizationAlternateName = getAnnexField(result, ANNEX_ORGANIZATION_ALTERNATE_NAME);
   const organizationRegistrationNumber = getAnnexField(result, ANNEX_ORGANIZATION_REGISTRATION_NUMBER);
   const organizationUrl = normalizeOrganizationUrl(getAnnexField(result, ANNEX_ORGANIZATION_URL));
-  const organizationTaxId = parseOrganizationTaxId(subjectDn) || (result.organizationPayload?.taxID as string | undefined) || (result.organizationPayload?.taxId as string | undefined);
+  const organizationTaxId = parseOrganizationTaxId(subjectDn);
   
-  const givenName = subjectDn.GN || subjectDn.GIVENNAME || (result.legalRepresentativePayload?.givenName as string | undefined);
-  const familyName = subjectDn.SN || subjectDn.SURNAME || (result.legalRepresentativePayload?.familyName as string | undefined);
+  const givenName = subjectDn.GN || subjectDn.GIVENNAME;
+  const familyName = subjectDn.SN || subjectDn.SURNAME;
   const representativeName =
     [givenName, familyName]
       .filter(Boolean)
       .join(' ')
     || subjectDn.CN
     || 'Representative from certificate or payload';
-  const personIdentifier = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']) || (result.legalRepresentativePayload?.identifier as string | undefined);
+  const personIdentifier = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']);
   const personEmail = firstDefined(
     getAnnexField(result, ANNEX_PERSON_EMAIL),
     subjectDn.EMAILADDRESS,
@@ -426,8 +445,9 @@ export function buildVerificationVcBundle(
   if (organizationTaxId) {
     organizationSubject.taxID = organizationTaxId;
   }
-  if (country) {
-    organizationSubject.address = { '@type': 'PostalAddress', addressCountry: country };
+  const organizationAddress = mergePostalAddress(organizationSubject.address, country);
+  if (organizationAddress) {
+    organizationSubject.address = organizationAddress;
   }
   if (organizationAdditionalType) {
     organizationSubject.additionalType = organizationAdditionalType;

@@ -4,9 +4,11 @@ import {
 } from './supported-jurisdictions.ts';
 import {
   getConfiguredSupportedSectorIds,
+  hasWildcardSupportedSector,
   getSupportedSectorCodings,
   getSupportedSectorsLanguage,
 } from './supported-sectors.ts';
+import { DIDCOMM_BUNDLE_TYPE } from './tools/didcomm-message.ts';
 
 const OPERATION_OUTCOME_SCHEMA = {
   type: 'object',
@@ -2025,6 +2027,61 @@ function resolveOpenApiInfoVersion(): string {
   return '0.0.0';
 }
 
+function resolveOpenApiSectorExample(
+  supportedSectorIds: readonly string[],
+  wildcardEnabled: boolean,
+): string {
+  const fromEnv = (process.env.ICA_OPENAPI_SECTOR_EXAMPLE || '').trim().toLowerCase();
+  if (fromEnv) return fromEnv;
+
+  const dataspaceTitle = (process.env.DATASPACE_TITLE || '').trim().toLowerCase();
+  if (dataspaceTitle === 'procuredata') return 'retail';
+  if (dataspaceTitle === 'global-datacare') return 'health-care';
+
+  if (!wildcardEnabled) {
+    return supportedSectorIds[0] || 'health-care';
+  }
+  return 'retail';
+}
+
+function resolveOpenApiTitle(): string {
+  const dataspaceTitle = (process.env.DATASPACE_TITLE || '').trim();
+  if (dataspaceTitle) {
+    return `${dataspaceTitle} ICA Verification API`;
+  }
+  return 'DataSpace ICA Verification API';
+}
+
+const OPENAPI_DIDCOMM_EXAMPLE_PREFIX = 'https://globaldatacare.es/didcomm/';
+
+function normalizeOpenApiDidcommTypeExamples<T>(value: T): T {
+  if (!value || typeof value !== 'object') return value;
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || typeof current !== 'object') continue;
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        stack.push(item);
+      }
+      continue;
+    }
+
+    const record = current as Record<string, unknown>;
+    if (
+      typeof record.type === 'string'
+      && record.type.startsWith(OPENAPI_DIDCOMM_EXAMPLE_PREFIX)
+    ) {
+      record.type = DIDCOMM_BUNDLE_TYPE;
+    }
+
+    for (const nested of Object.values(record)) {
+      stack.push(nested);
+    }
+  }
+  return value;
+}
+
 const OPENAPI_INFO_VERSION = resolveOpenApiInfoVersion();
 
 export function buildIcaVerifyOpenApiSpec(
@@ -2041,17 +2098,24 @@ export function buildIcaVerifyOpenApiSpec(
     example: supportedJurisdictionIds[0] || 'ES',
   } as const;
   const supportedSectorIds = getConfiguredSupportedSectorIds();
-  const supportedSectorSchema = {
-    type: 'string',
-    enum: supportedSectorIds,
-    example: supportedSectorIds[0] || 'health-care',
-  } as const;
+  const wildcardSupportedSector = hasWildcardSupportedSector();
+  const supportedSectorExample = resolveOpenApiSectorExample(supportedSectorIds, wildcardSupportedSector);
+  const supportedSectorSchema = wildcardSupportedSector
+    ? {
+        type: 'string',
+        example: supportedSectorExample,
+      } as const
+    : {
+        type: 'string',
+        enum: supportedSectorIds,
+        example: supportedSectorExample,
+      } as const;
   const supportedSectorCodings = getSupportedSectorCodings();
   const supportedSectorsLanguage = getSupportedSectorsLanguage();
-  return {
+  const spec = {
     openapi: '3.1.0',
     info: {
-      title: 'DataSpace ICA Verification API',
+      title: resolveOpenApiTitle(),
       version: OPENAPI_INFO_VERSION,
       description:
         'Asynchronous API for verifying FNMT-signed PDF terms, persisting network evidence/credentials, upserting ICA delegation policies (ODRL), checking credential status, revoking credentials, and activating ICA cryptographic keys before production issuance, plus synchronous DCAT v3 catalog discovery. Current deployment is monotenant and uses alternateName "ica".',
@@ -5384,4 +5448,5 @@ export function buildIcaVerifyOpenApiSpec(
       },
     },
   } as const;
+  return normalizeOpenApiDidcommTypeExamples(spec);
 }

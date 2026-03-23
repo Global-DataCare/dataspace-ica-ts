@@ -23,6 +23,8 @@ export type SupportedSectorCoding = {
   display: string;
 };
 
+export const ICA_SUPPORTED_SECTORS_WILDCARD = '*';
+
 function parseCsvList(value: string | undefined): string[] {
   if (!value) return [];
   return value
@@ -60,6 +62,12 @@ export function getConfiguredSupportedSectorIds(
   return [...DEFAULT_ICA_SUPPORTED_SECTORS];
 }
 
+export function hasWildcardSupportedSector(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return getConfiguredSupportedSectorIds(env).includes(ICA_SUPPORTED_SECTORS_WILDCARD);
+}
+
 export function getSupportedSectorsLanguage(): string {
   return DEFAULT_ICA_SUPPORTED_SECTORS_LANGUAGE;
 }
@@ -79,11 +87,15 @@ export function isSupportedSector(
 ): rawSector is AllowedSector {
   const normalized = rawSector.trim().toLowerCase();
   if (!normalized) return false;
+  if (hasWildcardSupportedSector(env)) return true;
   return getConfiguredSupportedSectorIds(env).includes(normalized as AllowedSector);
 }
 
 export function getSupportedSectorErrorMessage(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  if (hasWildcardSupportedSector(env)) {
+    return 'sector must be a non-empty string.';
+  }
   return `sector must be one of: ${getConfiguredSupportedSectorIds(env).join(', ')}.`;
 }
