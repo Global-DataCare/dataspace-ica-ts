@@ -206,22 +206,22 @@ export async function extractTermsAnnexFormFieldsFromPdf(
       return { fields: {}, warnings };
     }
 
-    const byName = new Map<string, unknown>();
+    const byName = new Map<string, { field: unknown; outputName: string }>();
     for (const field of allFields) {
       const name = asNonEmptyString((field as { getName?: () => string }).getName?.());
       if (!name) continue;
       const canonicalName = CANONICAL_ANNEX_FIELD_NAMES.get(name.toLowerCase());
-      if (!canonicalName || byName.has(canonicalName)) continue;
-      byName.set(canonicalName, field);
+      const outputName = canonicalName || name;
+      const lookupKey = outputName.toLowerCase();
+      if (byName.has(lookupKey)) continue;
+      byName.set(lookupKey, { field, outputName });
     }
 
     const fields: Record<string, string> = {};
-    for (const fieldName of TERMS_ANNEX_FIELD_SPECS.map((spec) => spec.name)) {
-      const field = byName.get(fieldName);
-      if (!field) continue;
-      const value = readFieldValue(field);
+    for (const entry of byName.values()) {
+      const value = readFieldValue(entry.field);
       if (!value) continue;
-      fields[fieldName] = value;
+      fields[entry.outputName] = value;
     }
     return { fields, warnings };
   } catch (error: unknown) {

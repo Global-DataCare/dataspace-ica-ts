@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   EvidenceDocumentDLT,
 } from 'gdc-common-utils-ts/models/oidc4ida.document.model';
@@ -15,9 +15,14 @@ import type {
   VerifyResult,
   VerifyRouteContext,
 } from '../types.ts';
-import { attachProofToCredential, resolveIcaIssuerDid } from './ica-identity.ts';
+import { getConfiguredSupportedJurisdictionIds } from '../supported-jurisdictions.ts';
+import { attachProofToCredential, resolveVcIssuerDid } from './ica-identity.ts';
 import { buildOrganizationDidFromTaxId } from './organization-did.ts';
-import { normalizeSameAsHash } from './multihash.ts';
+import {
+  multibase58CidV1RawSha3_256Hex,
+  multibase58CidV1RawSha3_384Hex,
+  normalizeSameAsHash,
+} from './multihash.ts';
 
 function normalizeDnKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, '');
@@ -67,6 +72,45 @@ const ANNEX_ORGANIZATION_REGISTRATION_NUMBER = 'organization.registrationNumber'
 const ANNEX_PERSON_EMAIL = 'person.email';
 const ANNEX_PERSON_ALTERNATE_NAME = 'person.alternateName';
 const ANNEX_PERSON_ADDITIONAL_TYPE = 'person.additionalType';
+const ANNEX_ORGANIZATION_VISIBLE_TAX_ID_FIELDS = [
+  'organization.taxID',
+  'organization.taxId',
+  'organization.vat',
+  'organization.vatID',
+  'organization.vatId',
+  'organization.vatNumber',
+  'organization.cif',
+  'organization.nif',
+  'taxID',
+  'taxId',
+  'vat',
+  'vatID',
+  'vatId',
+  'vatNumber',
+  'cif',
+  'nif',
+  'identificacion empresa',
+  'identificación empresa',
+  'identificacion',
+  'identificación',
+];
+const ANNEX_ORGANIZATION_VISIBLE_LEGAL_NAME_FIELDS = [
+  'organization.legalName',
+  'organization.legalname',
+  'organization.name',
+  'organization.companyName',
+  'organization.company',
+  'organization.razonSocial',
+  'organization.razon social',
+  'legalName',
+  'legalname',
+  'name',
+  'companyName',
+  'company',
+  'razonSocial',
+  'razon social',
+  'razón social',
+];
 
 function getAnnexField(result: VerifyResult, name: string): string | undefined {
   const directValue = result.annexFormFields?.[name];
@@ -81,6 +125,55 @@ function getAnnexOrganizationDid(result: VerifyResult): string | undefined {
   const candidate = getAnnexField(result, ANNEX_ORGANIZATION_SAME_AS);
   if (!candidate) return undefined;
   return candidate.startsWith('did:web:') ? candidate : undefined;
+}
+
+function getFirstAnnexField(result: VerifyResult, names: string[]): string | undefined {
+  for (const name of names) {
+    const value = getAnnexField(result, name);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function normalizePdfOrganizationLegalName(value: string | undefined): string | undefined {
+  const normalized = (value || '').trim().replace(/\s+/g, ' ');
+  return normalized ? normalized.toUpperCase() : undefined;
+}
+
+function normalizePdfOrganizationTaxId(
+  value: string | undefined,
+  defaultJurisdiction: string,
+): string | undefined {
+  const normalizedValue = (value || '').trim().toUpperCase();
+  const jurisdiction = defaultJurisdiction.trim().toUpperCase();
+  if (!normalizedValue || !jurisdiction) return undefined;
+
+  const prefixPattern = new RegExp(`^${jurisdiction}(?:[\\s-]*)`, 'i');
+  const withoutPrefix = prefixPattern.test(normalizedValue)
+    ? normalizedValue.replace(prefixPattern, '')
+    : normalizedValue;
+  const normalizedTaxNumber = withoutPrefix.replace(/[\s-]+/g, '');
+  if (!normalizedTaxNumber) return undefined;
+  return `${jurisdiction}-${normalizedTaxNumber}`;
+}
+
+function resolveDefaultOrganizationJurisdiction(route: VerifyRouteContext): string {
+  return getConfiguredSupportedJurisdictionIds()[0] || route.jurisdiction.toUpperCase();
+}
+
+function extractOrganizationIdentityFromPdf(
+  route: VerifyRouteContext,
+  result: VerifyResult,
+): { taxID?: string; legalName?: string; hasTaxIdField: boolean; hasLegalNameField: boolean } {
+  const jurisdiction = resolveDefaultOrganizationJurisdiction(route);
+  const rawTaxId = getFirstAnnexField(result, ANNEX_ORGANIZATION_VISIBLE_TAX_ID_FIELDS);
+  const rawLegalName = getFirstAnnexField(result, ANNEX_ORGANIZATION_VISIBLE_LEGAL_NAME_FIELDS);
+  return {
+    taxID: normalizePdfOrganizationTaxId(rawTaxId, jurisdiction),
+    legalName: normalizePdfOrganizationLegalName(rawLegalName),
+    hasTaxIdField: Boolean(rawTaxId),
+    hasLegalNameField: Boolean(rawLegalName),
+  };
 }
 
 function resolveOrganizationPublicDid(route: VerifyRouteContext, organizationTaxId: string | undefined): string | undefined {
@@ -131,18 +224,47 @@ function normalizeOrganizationUrl(value: string | undefined): string | undefined
     .replace(/\/+$/g, '');
 }
 
-function determineAssuranceLevel(result: VerifyResult): 'low' | 'medium' | 'high' {
-  if (
-    result.signatureValid &&
-    result.chainValid &&
-    result.templateMatch &&
-    result.revocationStatus === 'good'
-  ) {
-    return 'high';
+function determineEvidenceSource(certificateOrganizationTaxId: string | undefined): 'qualified_certification' | 'visible_pdf_fields' {
+  // Source is qualified only when the org identity was extracted from the signer certificate itself
+  // (signer DN contained O= or organizationIdentifier with the company VAT).
+  // If org data came from visible PDF form fields (fallback), source is visible_pdf_fields.
+  return certificateOrganizationTaxId ? 'qualified_certification' : 'visible_pdf_fields';
+}
+
+function determineAssuranceLevel(result: VerifyResult, source: 'qualified_certification' | 'visible_pdf_fields'): 'low' | 'medium' | 'high' {
+  // Qualified certificates with valid chain and revocation = high assurance
+  if (source === 'qualified_certification') {
+    if (
+      result.signatureValid &&
+      result.chainValid &&
+      result.templateMatch &&
+      result.revocationStatus === 'good'
+    ) {
+      return 'high';
+    }
+    // Qualified cert with valid chain but other issues = medium
+    if (result.signatureValid && result.chainValid) {
+      return 'medium';
+    }
+    return 'low';
   }
-  if (result.signatureValid && result.chainValid) {
-    return 'medium';
+  
+  // Fallback to visible PDF fields (no qualified cert) = lower assurance baseline
+  if (source === 'visible_pdf_fields') {
+    if (
+      result.signatureValid &&
+      result.chainValid &&
+      result.templateMatch &&
+      result.revocationStatus === 'good'
+    ) {
+      return 'medium';
+    }
+    if (result.signatureValid && result.chainValid) {
+      return 'medium';
+    }
+    return 'low';
   }
+  
   return 'low';
 }
 
@@ -155,6 +277,75 @@ function normalizeDigestAlgorithmForEvidence(alg: string | undefined): string {
   const normalized = (alg || '').trim().toLowerCase();
   if (!normalized) return 'sha3-384';
   return normalized;
+}
+
+function parseBooleanEnv(value: string | undefined, fallback = false): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return fallback;
+}
+
+function isDeterministicVcByContractEnabled(): boolean {
+  return parseBooleanEnv(process.env.DETERMINISTIC_VC_BY_CONTRACT, false);
+}
+
+function normalizeUrnSegment(value: string, fallback: string): string {
+  const normalized = (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-');
+  const collapsed = normalized.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+  return collapsed || fallback;
+}
+
+function resolveDataspaceUrnNamespace(route: VerifyRouteContext): string {
+  const configured = process.env.DATASPACE_URN_NAMESPACE;
+  if (configured && configured.trim()) {
+    return normalizeUrnSegment(configured, 'dataspace');
+  }
+  return normalizeUrnSegment(route.tenantId, 'dataspace');
+}
+
+function normalizeHexDigest(hex: string): string {
+  return (hex || '').trim().toLowerCase();
+}
+
+function normalizeIsoTimestampToSecondPrecision(value: string, fieldName: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`${fieldName} is not a valid ISO timestamp: ${value}`);
+  }
+  parsed.setMilliseconds(0);
+  return parsed.toISOString();
+}
+
+function resolveVcEvidenceTimestamp(result: VerifyResult, deterministicVcByContract: boolean): string {
+  if (deterministicVcByContract) {
+    if (!result.signerSigningTime) {
+      throw new Error('Deterministic staging mode requires signerSigningTime extracted from CMS signature.');
+    }
+    return normalizeIsoTimestampToSecondPrecision(result.signerSigningTime, 'signerSigningTime');
+  }
+  return normalizeIsoTimestampToSecondPrecision(result.verifiedAt, 'verifiedAt');
+}
+
+function deriveDocumentContentCidV1Raw(evidenceDigestAlg: string, evidenceDigestHex: string): string {
+  const normalizedAlg = (evidenceDigestAlg || '').trim().toLowerCase();
+  const normalizedHex = normalizeHexDigest(evidenceDigestHex);
+  if (!/^[0-9a-f]+$/.test(normalizedHex)) {
+    throw new Error('Signed document digest must be hexadecimal to derive deterministic document version ID.');
+  }
+  if (normalizedAlg === 'sha3-384' && normalizedHex.length === 96) {
+    return multibase58CidV1RawSha3_384Hex(normalizedHex);
+  }
+  if (normalizedAlg === 'sha3-256' && normalizedHex.length === 64) {
+    return multibase58CidV1RawSha3_256Hex(normalizedHex);
+  }
+  const digestBytes = Buffer.from(normalizedHex, 'hex');
+  const derivedSha3_384 = createHash('sha3-384').update(digestBytes).digest('hex');
+  return multibase58CidV1RawSha3_384Hex(derivedSha3_384);
 }
 
 function parseCommaSeparatedUrls(raw: string): string[] {
@@ -244,7 +435,11 @@ function buildOidc4IdaEvidence(
   route: VerifyRouteContext,
   result: VerifyResult,
   serialNumber: string,
-  verifierOrganization: string,
+  verifierOrganizationDid: string,
+  certificateOrganizationTaxId: string | undefined,
+  documentContentCid: string,
+  deterministicVcByContract: boolean,
+  vcEvidenceTimestamp: string,
 ): EvidenceObjectDLT[] {
   const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
   const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
@@ -260,10 +455,14 @@ function buildOidc4IdaEvidence(
     result.revocationStatus,
   );
 
+  // Determine signature source: qualified eIDAS-4 certificate or fallback to visible PDF fields
+  const evidenceSource = determineEvidenceSource(certificateOrganizationTaxId);
+
   // Keep evidence attachment compact; detailed debug stays in Bundle.result.
   const attachmentPayload = {
     profile: 'oidc4ida-evidence-v1',
-    assuranceLevel: determineAssuranceLevel(result),
+    source: evidenceSource,
+    assuranceLevel: determineAssuranceLevel(result, evidenceSource),
     verificationResult: result.ok ? 'valid' : 'invalid',
     signatureValid: result.signatureValid,
     chainValid: result.chainValid,
@@ -285,9 +484,9 @@ function buildOidc4IdaEvidence(
   const signatureEvidence: EvidenceElectronicSignatureDLT = {
     type: 'electronic_signature',
     signature_type: 'pades',
-    issuer: result.signerIssuer || verifierOrganization,
+    issuer: result.signerIssuer || verifierOrganizationDid,
     serial_number: serialNumber,
-    created_at: result.verifiedAt,
+    created_at: vcEvidenceTimestamp,
     attachments: [
       {
         content_type: 'application/json',
@@ -303,22 +502,22 @@ function buildOidc4IdaEvidence(
   const documentEvidence: EvidenceDocumentDLT = {
     type: 'document',
     method: 'eid',
-    time: result.verifiedAt,
+    time: vcEvidenceTimestamp,
     verifier: {
-      organization: verifierOrganization,
+      organization: verifierOrganizationDid,
     },
     check_details: [
       {
         check_method: 'vdig',
-        organization: verifierOrganization,
+        organization: verifierOrganizationDid,
         ...(auditTxnRef ? { txn: auditTxnRef } : {}),
-        time: result.verifiedAt,
+        time: vcEvidenceTimestamp,
       },
       {
         check_method: 'vcrypt',
-        organization: verifierOrganization,
+        organization: verifierOrganizationDid,
         ...(auditTxnRef ? { txn: auditTxnRef } : {}),
-        time: result.verifiedAt,
+        time: vcEvidenceTimestamp,
       },
     ],
     attachments: {
@@ -326,14 +525,15 @@ function buildOidc4IdaEvidence(
         alg: evidenceDigestAlg,
         value: hexToBase64(evidenceDigestHex),
       },
-      url: result.auditDocument?.attachmentUrl || `urn:uuid:${randomUUID()}`,
+      url: result.auditDocument?.attachmentUrl
+        || (deterministicVcByContract ? `ipfs://${documentContentCid}` : `urn:uuid:${randomUUID()}`),
     },
     document_details: {
       type: 'terms-and-conditions',
       document_number: route.resourceType,
       ...(serialNumber ? { serial_number: serialNumber } : {}),
       issuer: {
-        id: verifierOrganization,
+        id: verifierOrganizationDid,
         type: 'TrustServiceProvider',
         country_code: route.jurisdiction.toUpperCase(),
         jurisdiction: route.jurisdiction.toUpperCase(),
@@ -392,15 +592,31 @@ export function buildVerificationVcBundle(
   issuerDidInput?: string,
 ): VerifyBundleResponse {
   const subjectDn = result.signerSubject ? parseDistinguishedName(result.signerSubject) : {};
-  const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
+  const issuerDid = (issuerDidInput || '').trim() || resolveVcIssuerDid();
 
-  const orgLegalName = firstDefined(subjectDn.O, subjectDn.OU);
+  const organizationIdentityFromPdf = extractOrganizationIdentityFromPdf(route, result);
+  const certificateOrganizationLegalName = firstDefined(subjectDn.O, subjectDn.OU);
+  const certificateOrganizationTaxId = parseOrganizationTaxId(subjectDn);
+  if (!certificateOrganizationTaxId) {
+    if (!organizationIdentityFromPdf.taxID) {
+      throw new Error(
+        'PDF must include a visible organization VAT/CIF field when signer certificate does not contain organization tax ID.',
+      );
+    }
+    if (!organizationIdentityFromPdf.legalName) {
+      throw new Error(
+        'PDF must include a visible organization legal name field when signer certificate does not contain organization tax ID.',
+      );
+    }
+  }
+
+  const orgLegalName = certificateOrganizationLegalName || organizationIdentityFromPdf.legalName;
   const annexOrganizationDid = getAnnexOrganizationDid(result);
   const organizationAdditionalType = getAnnexField(result, ANNEX_ORGANIZATION_ADDITIONAL_TYPE);
   const organizationAlternateName = getAnnexField(result, ANNEX_ORGANIZATION_ALTERNATE_NAME);
   const organizationRegistrationNumber = getAnnexField(result, ANNEX_ORGANIZATION_REGISTRATION_NUMBER);
   const organizationUrl = normalizeOrganizationUrl(getAnnexField(result, ANNEX_ORGANIZATION_URL));
-  const organizationTaxId = parseOrganizationTaxId(subjectDn);
+  const organizationTaxId = certificateOrganizationTaxId || organizationIdentityFromPdf.taxID;
   
   const givenName = subjectDn.GN || subjectDn.GIVENNAME;
   const familyName = subjectDn.SN || subjectDn.SURNAME;
@@ -425,12 +641,24 @@ export function buildVerificationVcBundle(
     result.signerCertificateSerialNumber
     || personIdentifier
     || `cert:${route.tenantId}:${route.resourceType}`;
-  const verifierOrganization = issuerDid;
+  const deterministicVcByContract = isDeterministicVcByContractEnabled();
+  const vcEvidenceTimestamp = resolveVcEvidenceTimestamp(result, deterministicVcByContract);
+  const verifierOrganizationDid = resolveOrganizationPublicDid(route, certificateOrganizationTaxId || organizationTaxId)
+    || issuerDid;
+  const dataspaceUrnNamespace = resolveDataspaceUrnNamespace(route);
+  const urnSector = normalizeUrnSegment(route.sector, 'unknown-sector');
+  const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
+  const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
+  const documentContentCid = deriveDocumentContentCidV1Raw(evidenceDigestAlg, evidenceDigestHex);
   const evidence = buildOidc4IdaEvidence(
     route,
     result,
     serialNumber,
-    verifierOrganization,
+    verifierOrganizationDid,
+    certificateOrganizationTaxId,
+    documentContentCid,
+    deterministicVcByContract,
+    vcEvidenceTimestamp,
   );
   const organizationIdentifiers = resolveOrganizationSubjectIdentifiers(route, organizationTaxId, annexOrganizationDid);
 
@@ -466,11 +694,13 @@ export function buildVerificationVcBundle(
   }
 
   const unsignedOrganizationVc: VerifiableCredentialV2 = {
-    id: `urn:uuid:${randomUUID()}`,
+    id: deterministicVcByContract
+      ? `urn:${dataspaceUrnNamespace}:${urnSector}:organization:vc:${documentContentCid}`
+      : `urn:uuid:${randomUUID()}`,
     '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
     type: ['VerifiableCredential', 'OrganizationCredential'],
     issuer: issuerDid,
-    validFrom: result.verifiedAt,
+    validFrom: vcEvidenceTimestamp,
     credentialSubject: organizationSubject,
     evidence,
   };
@@ -521,11 +751,13 @@ export function buildVerificationVcBundle(
   }
 
   const unsignedPersonVc: VerifiableCredentialV2 = {
-    id: `urn:uuid:${randomUUID()}`,
+    id: deterministicVcByContract
+      ? `urn:${dataspaceUrnNamespace}:${urnSector}:organization-representative:vc:${documentContentCid}`
+      : `urn:uuid:${randomUUID()}`,
     '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
     type: ['VerifiableCredential', 'PersonCredential', 'LegalRepresentativeCredential'],
     issuer: issuerDid,
-    validFrom: result.verifiedAt,
+    validFrom: vcEvidenceTimestamp,
     credentialSubject: personSubject,
     evidence,
   };

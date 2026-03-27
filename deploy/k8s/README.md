@@ -51,8 +51,7 @@ Recommended:
 Important:
 - `cloud_deploy.sh` does not create the GCP project, billing link, bucket, or cluster for you.
 - Those resources must exist (and your account must have IAM permissions) before running deploy.
-- If a local `gcp-service-account.json` exists in the repo root, `cloud_deploy.sh` validates that its `project_id` matches `FIRESTORE_PROJECT_ID` and fails early on mismatch.
-- If `GOOGLE_APPLICATION_CREDENTIALS` is set in `.env.deploy.<env>`, the pointed file must exist locally before deploy starts.
+- If `GOOGLE_APPLICATION_CREDENTIALS` is set in `.env.deploy.<env>`, `cloud_deploy.sh` validates that the pointed file exists locally and that its `project_id` matches `FIRESTORE_PROJECT_ID`.
 - The deployment uses Kubernetes ServiceAccount `dataspace-ica-runtime`. If `GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT` is set, `cloud_deploy.sh` annotates that KSA with `iam.gke.io/gcp-service-account=<GSA>`.
 
 ## GCP bootstrap (project + billing + GCS)

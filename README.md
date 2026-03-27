@@ -186,6 +186,8 @@ Swagger UI tip:
 Deployment tip:
 
 - new line / second IP: `./cloud_deploy.sh st-v2 --yes`
+- full dataspace bootstrap + deploy (private script): `./scripts/bootstrap-<dataspace>.private.sh`
+- generic public template: `./scripts/bootstrap-dataspace.template.sh`
 - protected legacy staging: `./cloud_deploy.sh staging --yes --allow-staging`
 - `staging` is blocked by default to reduce accidental deploys while `st-v2` is active
 
@@ -204,7 +206,7 @@ VERIFY_PAYLOAD=$(cat <<JSON
 {
   "jti": "msg-$THID",
   "thid": "$THID",
-  "type": "https://globaldatacare.es/didcomm/ica/terms/verify-request/v1",
+  "type": "application/bundle-api+json",
   "attachments": [
     {
       "id": "pdf-1",
@@ -397,7 +399,7 @@ curl -i -X POST \
   -d '{
     "jti":"activate-msg-001",
     "thid":"activate-signing-001",
-    "type":"https://globaldatacare.es/didcomm/ica/signing-keys/activate-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "signature":{
         "sigFormat":"application/jose",
@@ -429,7 +431,7 @@ curl -i -X POST \
   -d '{
     "jti":"activate-msg-002",
     "thid":"activate-signing-002",
-    "type":"https://globaldatacare.es/didcomm/ica/signing-keys/activate-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "signature":{
         "sigFormat":"application/jose",
@@ -503,7 +505,7 @@ curl -i -X POST \
   -d '{
     "jti":"evidence-add-msg-001",
     "thid":"evidence-add-001",
-    "type":"https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "data":[
         {
@@ -567,7 +569,7 @@ curl -i -X POST \
   -d '{
     "jti":"msg-evidence-vcjwt-001",
     "thid":"thid-evidence-vcjwt-001",
-    "type":"https://globaldatacare.es/didcomm/ica/network/evidence/add-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "issuedCredentialRecordId":"urn:uuid:issued-existing-002",
       "operatorDid":"did:web:ica.example.com#delegate-1"
@@ -610,7 +612,7 @@ curl -i -X POST \
   -d '{
     "jti":"delegation-policy-upsert-msg-001",
     "thid":"delegation-policy-upsert-001",
-    "type":"https://globaldatacare.es/didcomm/ica/network/policies/delegations/upsert-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "data":[
         {
@@ -680,7 +682,7 @@ curl -i -X POST \
   -d '{
     "jti":"credential-issue-msg-001",
     "thid":"credential-issue-001",
-    "type":"https://globaldatacare.es/didcomm/ica/network/credentials/issue-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "data":[
         {
@@ -746,7 +748,7 @@ curl -i -X POST \
   -d '{
     "jti":"credential-status-msg-001",
     "thid":"credential-status-001",
-    "type":"https://globaldatacare.es/didcomm/ica/network/credentials/status-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "data":[
         {
@@ -777,7 +779,7 @@ curl -i -X POST \
   -d '{
     "jti":"credential-revoke-msg-001",
     "thid":"credential-revoke-001",
-    "type":"https://globaldatacare.es/didcomm/ica/network/credentials/revoke-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "data":[
         {
@@ -845,7 +847,7 @@ Listar configuración actual:
 curl -sS -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/spaces/_list" \
   -H "Content-Type: application/didcomm-plain+json" \
-  -d '{"jti":"req-auto","thid":"thid-auto","type":"https://globaldatacare.es/didcomm/ica/network/spaces/list-request/v1","body":{}}' | jq .
+  -d '{"jti":"req-auto","thid":"thid-auto","type":"application/bundle-api+json","body":{}}' | jq .
 ```
 
 Reemplazar lista completa (`body.data[]`):
@@ -857,7 +859,7 @@ curl -sS -X POST \
   -d '{
     "jti":"req-auto",
     "thid":"thid-auto",
-    "type":"https://globaldatacare.es/didcomm/ica/network/spaces/replace-request/v1",
+    "type":"application/bundle-api+json",
     "body":{
       "data":[
         {
@@ -895,13 +897,15 @@ Final responses (`200`) and early errors (`4xx/5xx`) are always DIDComm plaintex
 - `body.type: "batch-response"`
 - `body.issues` in FHIR `OperationOutcome` format
 
+`application/bundle-api+json` is a project-defined media type used intentionally by this API.
+
 Basic DIDComm fields used by this API:
 
 | Field | Where | Meaning in this API |
 |---|---|---|
 | `jti` | request/response | Message identifier. If `thid` is missing, request parsing can fallback to `jti` as thread id source. |
 | `thid` | request/response | Thread identifier for async flow. Required in polling (`_*-response`) via query/body; if absent in early errors it can be `""`. |
-| `type` | request/response | Semantic message type. Responses use `application/bundle-api+json`; DIDComm requests use endpoint-specific message types. |
+| `type` | request/response | Semantic message type. This API uses the project-defined value `application/bundle-api+json` in DIDComm request/response examples. |
 | `body` | request/response | Main business payload. In responses it is always a `Bundle` with `data[]`, `total`, and `issues`. |
 | `iss` | response | Issuer DID of ICA service (`did:web:...`) used to build response envelope. |
 | `aud` | response | Audience DID resolved by config/routing; in early errors it can be `""` if request context is incomplete. |
@@ -1072,7 +1076,7 @@ Important:
 - `./cloud_deploy.sh` in this repo deploys to **GKE**.
 - GKE gives internal service (`ClusterIP`) or public IP (`LoadBalancer`), not `*.run.app`.
 - `*.run.app` URLs are from **Cloud Run** deployments.
-- Before deploying, `./cloud_deploy.sh` now validates local `gcp-service-account.json` (or `GOOGLE_APPLICATION_CREDENTIALS` if set) and fails if its `project_id` does not match `FIRESTORE_PROJECT_ID`.
+- Before deploying, `./cloud_deploy.sh` validates the JSON pointed by `GOOGLE_APPLICATION_CREDENTIALS` (if set) and fails if its `project_id` does not match `FIRESTORE_PROJECT_ID`.
 - Staging/production GKE should not use `GOOGLE_APPLICATION_CREDENTIALS=./gcp-service-account.json`; use Workload Identity instead.
 
 Step-by-step guide:

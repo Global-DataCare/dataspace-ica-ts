@@ -241,8 +241,6 @@ IMAGE_URI="${DEPLOY_REGION}-docker.pkg.dev/${FIRESTORE_PROJECT_ID}/${ARTIFACT_RE
 LOCAL_CREDENTIALS_PATH=""
 if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
   LOCAL_CREDENTIALS_PATH="$(resolve_credentials_path "$GOOGLE_APPLICATION_CREDENTIALS")"
-elif [[ -f "$SCRIPT_DIR/gcp-service-account.json" ]]; then
-  LOCAL_CREDENTIALS_PATH="$SCRIPT_DIR/gcp-service-account.json"
 fi
 
 echo "Deploy summary"

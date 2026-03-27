@@ -1,4 +1,7 @@
+import { PRIVATE_KEY_PEM, PUBLIC_JWK } from './test-signing-key.fixture.js';
+import { resetActiveSigningKeysStateForTests, activateSigningKey } from '../src/api/tools/active-signing-keys.ts';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
@@ -29,6 +32,7 @@ import {
 } from '../src/api/path.ts';
 import { VerifyRequestManager } from '../src/api/managers/verify-request-manager.ts';
 import { VerifyResponseManager } from '../src/api/managers/verify-response-manager.ts';
+import { buildVerificationVcBundle } from '../src/api/server.ts';
 import { buildIcaVerifyOpenApiSpec } from '../src/api/openapi.ts';
 import {
   assertVerifierCounterpartySignaturePair,
@@ -37,7 +41,7 @@ import {
   parseVatIdFromSubjectDn,
   resolveTemplateResourceVersion,
   selectPrimaryCredentialSignature,
-} from '../src/api/fnmt-pdf-verifier.ts';
+} from '../src/api/cert-pdf-verifier.ts';
 import { AuditDocumentStorageService } from '../src/api/tools/audit-document-storage.ts';
 import { buildDidcommMessage } from '../src/api/tools/didcomm-message.ts';
 import { parseSpacesReplaceSubmission } from '../src/api/request-parsing.ts';
@@ -67,8 +71,9 @@ function buildTestVerifyResult(label: string): VerifyResult {
       templateHex: validSha3_384Hex,
     },
     signerCertificateSerialNumber: '00AA11',
-    signerSubject: 'CN=Signer',
+    signerSubject: 'CN=Signer,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
     signerIssuer: 'CN=FNMT',
+    signerSigningTime: '2026-03-05T00:00:00.000Z',
     hashes: {
       signedPdfSha256Hex: 'a'.repeat(64),
       unsignedPdfSha256Hex: 'b'.repeat(64),
@@ -76,6 +81,19 @@ function buildTestVerifyResult(label: string): VerifyResult {
     },
     notes: [label],
   };
+}
+
+function hashVcResource(resource: unknown): string {
+  return createHash('sha256').update(JSON.stringify(resource)).digest('hex');
+}
+
+function hashVcResourceWithoutProof(resource: unknown): string {
+  if (!resource || typeof resource !== 'object') {
+    return createHash('sha256').update(JSON.stringify(resource)).digest('hex');
+  }
+  const normalized = { ...(resource as Record<string, unknown>) };
+  delete normalized.proof;
+  return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }
 
 function buildMinimalPdf(contentStream: string, pageExtra = '', extraObjects = ''): Buffer {
@@ -108,8 +126,11 @@ function buildMinimalPdf(contentStream: string, pageExtra = '', extraObjects = '
   );
 }
 
-const REAL_MULTISIGN_PDF_PATH = '/Users/fernando/GITS/gdc-workspace/TEST-A4-multisign-fnmt.pdf';
-const REAL_THREE_SIGN_PDF_PATH = '/Users/fernando/GITS/gdc-workspace/TEST-A4-firmas-3-fnmt.pdf';
+const REAL_FNMT_FIXTURES_DIR = '/Users/fernando/GITS/gdc-workspace/examples';
+const REAL_MULTISIGN_PDF_FILENAME = 'prueba-TEST-A4-multisign-fnmt.pdf';
+const REAL_THREE_SIGN_PDF_FILENAME = 'prueba-TEST-A4-firmas-3-fnmt.pdf';
+const REAL_MULTISIGN_PDF_PATH = path.join(REAL_FNMT_FIXTURES_DIR, REAL_MULTISIGN_PDF_FILENAME);
+const REAL_THREE_SIGN_PDF_PATH = path.join(REAL_FNMT_FIXTURES_DIR, REAL_THREE_SIGN_PDF_FILENAME);
 
 function splitPemCertificates(rawPem: string): string[] {
   return rawPem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
@@ -309,6 +330,40 @@ test('assertVerifierCounterpartySignaturePair handles verification partners corr
   );
 });
 
+test('assertVerifierCounterpartySignaturePair accepts verifier plus personal signer when PDF shows organization identity', () => {
+  assert.doesNotThrow(() => {
+    assertVerifierCounterpartySignaturePair(
+      [
+        { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
+        { signatureIndex: 1, signerVatId: undefined },
+      ],
+      ['VATES-VERIFIER'],
+      [],
+      undefined,
+      {
+        'Organization.taxID': 'ES-B12345678',
+        'Organization.legalName': 'Acme Health SL',
+      },
+    );
+  });
+});
+
+test('assertVerifierCounterpartySignaturePair still rejects verifier-only PDFs without visible organization identity', () => {
+  assert.throws(
+    () => {
+      assertVerifierCounterpartySignaturePair(
+        [
+          { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
+          { signatureIndex: 1, signerVatId: undefined },
+        ],
+        ['VATES-VERIFIER'],
+        [],
+      );
+    },
+    /visible organization VAT\/CIF and legal name fields/i,
+  );
+});
+
 test(
   'selectPrimaryCredentialSignature handles the real FNMT three-signature PDF regardless of which verifier/partner VAT is configured',
   { skip: !existsSync(REAL_THREE_SIGN_PDF_PATH) },
@@ -349,6 +404,8 @@ test(
       fnmtRootCertPath: path.resolve('certs/fnmt/fnmt-root.pem'),
       fnmtIntermediateCertPath: path.resolve('certs/fnmt/fnmt-intermediate.pem'),
       fnmtAutoDownload: false,
+      knownRootCertUrls: [],
+      knownIntermediateCertUrls: [],
       templateUrlPattern: 'https://example.test/{resourceVersion}.pdf',
       strictRevocation: true,
       strictTemplateMatch: true,
@@ -820,7 +877,7 @@ test('InMemoryVerificationJobStore tracks queued running and succeeded states', 
       templateHex: 'c',
     },
     signerCertificateSerialNumber: '00AA11',
-    signerSubject: 'CN=Signer',
+    signerSubject: 'CN=Signer,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
     signerIssuer: 'CN=FNMT',
     hashes: {
       signedPdfSha256Hex: 'a',
@@ -1140,3 +1197,208 @@ test('VerifyRequestManager rejects compressed DIDComm payloads', async () => {
   assert.equal(outcome.statusCode, 415);
   assert.match(outcome.message, /unsupported content-encoding/i);
 });
+
+test('VerifyRequestManager sanitizes verbose openssl chain diagnostics before storing job failure', async () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const store = new InMemoryVerificationJobStore(60);
+  const manager = new VerifyRequestManager(store, {
+    verify: async () => {
+      throw new Error(
+        'Signature 1 failed: Certificate chain validation failed: Command failed: openssl verify -CAfile /var/folders/x/y/fnmt-root.pem -untrusted /var/folders/x/y/untrusted.pem /var/folders/x/y/signer.pem C=ES, O=UANATACA error 20 at 1 depth lookup: unable to get local issuer certificate error /var/folders/x/y/signer.pem: verification failed',
+      );
+    },
+  });
+
+  const payload = Buffer.from(JSON.stringify({
+    jti: 'msg-openssl-sanitize-001',
+    thid: 'thid-openssl-sanitize-001',
+    type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
+    attachments: [
+      {
+        id: 'pdf-1',
+        media_type: 'application/pdf',
+        data: { base64: Buffer.from('pdf-bytes').toString('base64') },
+      },
+    ],
+  }));
+  const req = Readable.from([payload]) as unknown as IncomingMessage;
+  (req as any).method = 'POST';
+  (req as any).url = '/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify';
+  (req as any).headers = {
+    host: 'localhost:3310',
+    'content-type': 'application/didcomm-plain+json',
+    'content-length': String(payload.length),
+  };
+
+  const outcome = await manager.submit(parsed.context, req);
+  assert.equal(outcome.type, 'accepted');
+
+  await new Promise((resolve) => setImmediate(resolve));
+  const job = store.get('thid-openssl-sanitize-001');
+  assert.equal(job?.status, 'failed');
+  assert.equal(
+    job?.error,
+    'Signature 1 failed: Certificate chain validation failed: unable to get local issuer certificate.',
+  );
+});
+
+test(
+  'buildVerificationVcBundle generates stable organization-representative VC IDs from real PDF digest',
+  { skip: !existsSync(REAL_MULTISIGN_PDF_PATH) },
+  () => {
+    resetActiveSigningKeysStateForTests();
+    activateSigningKey({
+      kid: 'deterministic-key-1',
+      alg: 'ES384',
+      publicJwk: PUBLIC_JWK,
+      privateKeyPem: PRIVATE_KEY_PEM,
+    });
+    const previousFlag = process.env.DETERMINISTIC_VC_BY_CONTRACT;
+    const previousNamespace = process.env.DATASPACE_URN_NAMESPACE;
+    process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
+    process.env.DATASPACE_URN_NAMESPACE = 'GlobalDataCare';
+    try {
+      const pdfBytes = readFileSync(REAL_MULTISIGN_PDF_PATH);
+      const realSha3_384Hex = createHash('sha3-384').update(pdfBytes).digest('hex');
+      assert.equal(realSha3_384Hex.length, 96);
+
+      const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+      assert.ok(parsed);
+      assert.equal(parsed.ok, true);
+      if (!parsed.ok) return;
+
+      const verifyResult: VerifyResult = {
+        ...buildTestVerifyResult('real-pdf-deterministic'),
+        digest: {
+          alg: 'sha3-384',
+          signedPdfHex: realSha3_384Hex,
+          unsignedPdfHex: realSha3_384Hex,
+          templateHex: realSha3_384Hex,
+        },
+        hashes: {
+          signedPdfSha256Hex: 'a'.repeat(64),
+          unsignedPdfSha256Hex: 'b'.repeat(64),
+          templateSha256Hex: 'c'.repeat(64),
+        },
+      };
+
+      const bundleA = buildVerificationVcBundle(parsed.context, verifyResult);
+      const bundleB = buildVerificationVcBundle(parsed.context, verifyResult);
+
+      const orgA = bundleA.data[0].resource as Record<string, any>;
+      const orgB = bundleB.data[0].resource as Record<string, any>;
+      const repA = bundleA.data[1].resource as Record<string, any>;
+      const repB = bundleB.data[1].resource as Record<string, any>;
+
+      // IDs are stable across calls with the same digest
+      assert.equal(orgA.id, orgB.id);
+      assert.equal(repA.id, repB.id);
+
+      // Format: urn:<namespace>:<sector>:organization:vc:z<cidv1>
+      assert.match(String(orgA.id || ''), /^urn:globaldatacare:animal-care:organization:vc:z/);
+      // Representative VC uses organization-representative segment
+      assert.match(String(repA.id || ''), /^urn:globaldatacare:animal-care:organization-representative:vc:z/);
+
+      // CID in vc.id matches CID in ipfs:// attachment URL
+      const docEvidence = (orgA.evidence as Array<Record<string, any>>)[1];
+      assert.match(String(docEvidence.attachments?.url || ''), /^\/\/z|\/\/z|^ipfs:\/\/z/);
+      assert.equal(
+        String(docEvidence.attachments?.url || '').includes(String(orgA.id).split(':vc:')[1]),
+        true,
+      );
+    } finally {
+      if (previousFlag === undefined) delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
+      else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousFlag;
+      if (previousNamespace === undefined) delete process.env.DATASPACE_URN_NAMESPACE;
+      else process.env.DATASPACE_URN_NAMESPACE = previousNamespace;
+    }
+  },
+);
+
+test(
+  'buildVerificationVcBundle real prueba PDF: VC hashes with/without proof remain equal en deterministic mode and differ in non-deterministic mode',
+  { skip: !existsSync(REAL_MULTISIGN_PDF_PATH) },
+  () => {
+    resetActiveSigningKeysStateForTests();
+    activateSigningKey({
+      kid: 'deterministic-key-1',
+      alg: 'ES384',
+      publicJwk: PUBLIC_JWK,
+      privateKeyPem: PRIVATE_KEY_PEM,
+    });
+    const previousFlag = process.env.DETERMINISTIC_VC_BY_CONTRACT;
+    const previousNamespace = process.env.DATASPACE_URN_NAMESPACE;
+    try {
+      const pdfBytes = readFileSync(REAL_MULTISIGN_PDF_PATH);
+      const realSha3_384Hex = createHash('sha3-384').update(pdfBytes).digest('hex');
+
+      const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+      assert.ok(parsed);
+      assert.equal(parsed.ok, true);
+      if (!parsed.ok) return;
+
+      const verifyResult: VerifyResult = {
+        ...buildTestVerifyResult('real-pdf-deterministic-vs-nondeterministic'),
+        digest: {
+          alg: 'sha3-384',
+          signedPdfHex: realSha3_384Hex,
+          unsignedPdfHex: realSha3_384Hex,
+          templateHex: realSha3_384Hex,
+        },
+        hashes: {
+          signedPdfSha256Hex: 'a'.repeat(64),
+          unsignedPdfSha256Hex: 'b'.repeat(64),
+          templateSha256Hex: 'c'.repeat(64),
+        },
+      };
+
+      process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
+      process.env.DATASPACE_URN_NAMESPACE = 'GlobalDataCare';
+
+      const deterministicA = buildVerificationVcBundle(parsed.context, verifyResult);
+      const deterministicB = buildVerificationVcBundle(parsed.context, verifyResult);
+
+      const orgDetAHash = hashVcResource(deterministicA.data[0].resource);
+      const orgDetBHash = hashVcResource(deterministicB.data[0].resource);
+      const repDetAHash = hashVcResource(deterministicA.data[1].resource);
+      const repDetBHash = hashVcResource(deterministicB.data[1].resource);
+      const orgDetAHashWithoutProof = hashVcResourceWithoutProof(deterministicA.data[0].resource);
+      const orgDetBHashWithoutProof = hashVcResourceWithoutProof(deterministicB.data[0].resource);
+      const repDetAHashWithoutProof = hashVcResourceWithoutProof(deterministicA.data[1].resource);
+      const repDetBHashWithoutProof = hashVcResourceWithoutProof(deterministicB.data[1].resource);
+
+      assert.equal(orgDetAHash, orgDetBHash);
+      assert.equal(repDetAHash, repDetBHash);
+      assert.equal(orgDetAHashWithoutProof, orgDetBHashWithoutProof);
+      assert.equal(repDetAHashWithoutProof, repDetBHashWithoutProof);
+
+      delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
+
+      const nonDeterministicA = buildVerificationVcBundle(parsed.context, verifyResult);
+      const nonDeterministicB = buildVerificationVcBundle(parsed.context, verifyResult);
+
+      const orgNonDetAHash = hashVcResource(nonDeterministicA.data[0].resource);
+      const orgNonDetBHash = hashVcResource(nonDeterministicB.data[0].resource);
+      const repNonDetAHash = hashVcResource(nonDeterministicA.data[1].resource);
+      const repNonDetBHash = hashVcResource(nonDeterministicB.data[1].resource);
+      const orgNonDetAHashWithoutProof = hashVcResourceWithoutProof(nonDeterministicA.data[0].resource);
+      const orgNonDetBHashWithoutProof = hashVcResourceWithoutProof(nonDeterministicB.data[0].resource);
+      const repNonDetAHashWithoutProof = hashVcResourceWithoutProof(nonDeterministicA.data[1].resource);
+      const repNonDetBHashWithoutProof = hashVcResourceWithoutProof(nonDeterministicB.data[1].resource);
+
+      assert.notEqual(orgNonDetAHash, orgNonDetBHash);
+      assert.notEqual(repNonDetAHash, repNonDetBHash);
+      assert.notEqual(orgNonDetAHashWithoutProof, orgNonDetBHashWithoutProof);
+      assert.notEqual(repNonDetAHashWithoutProof, repNonDetBHashWithoutProof);
+    } finally {
+      if (previousFlag === undefined) delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
+      else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousFlag;
+      if (previousNamespace === undefined) delete process.env.DATASPACE_URN_NAMESPACE;
+      else process.env.DATASPACE_URN_NAMESPACE = previousNamespace;
+    }
+  },
+);

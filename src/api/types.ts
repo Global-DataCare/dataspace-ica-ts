@@ -77,6 +77,8 @@ export type FnmtVerifierConfig = {
   fnmtIntermediateCertPinsSha256: string[];
   fnmtIntermediateCertPinsSha1: string[];
   fnmtAutoDownload: boolean;
+  knownRootCertUrls: string[];
+  knownIntermediateCertUrls: string[];
   templateUrlPattern: string;
   strictRevocation: boolean;
   strictTemplateMatch: boolean;
@@ -466,6 +468,7 @@ export interface VerifyResult {
   signerCertificateSerialNumber?: string;
   signerSubject?: string;
   signerIssuer?: string;
+  signerSigningTime?: string;
   hashes: VerifyHashes;
   notes: string[];
   annexFormFields?: Record<string, string>;

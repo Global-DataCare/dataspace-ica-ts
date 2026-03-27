@@ -477,9 +477,103 @@ type VerifiedPdfSignature = {
   signedData: Buffer;
 };
 
+const PDF_VISIBLE_ORGANIZATION_TAX_ID_FIELDS = [
+  'organization.taxID',
+  'organization.taxId',
+  'organization.vat',
+  'organization.vatID',
+  'organization.vatId',
+  'organization.vatNumber',
+  'organization.cif',
+  'organization.nif',
+  'taxID',
+  'taxId',
+  'vat',
+  'vatID',
+  'vatId',
+  'vatNumber',
+  'cif',
+  'nif',
+  'identificacion empresa',
+  'identificación empresa',
+  'identificacion',
+  'identificación',
+];
+const PDF_VISIBLE_ORGANIZATION_LEGAL_NAME_FIELDS = [
+  'organization.legalName',
+  'organization.legalname',
+  'organization.name',
+  'organization.companyName',
+  'organization.company',
+  'organization.razonSocial',
+  'organization.razon social',
+  'legalName',
+  'legalname',
+  'name',
+  'companyName',
+  'company',
+  'razonSocial',
+  'razon social',
+  'razón social',
+];
+
+function isVerifyDebugTraceEnabled(): boolean {
+  const value = (process.env.ICA_VERIFY_DEBUG_TRACE || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
+function debugVerifyTrace(label: string, payload: Record<string, unknown>): void {
+  if (!isVerifyDebugTraceEnabled()) return;
+  try {
+    console.warn(`[verify-debug] ${label}: ${JSON.stringify(payload)}`);
+  } catch {
+    console.warn(`[verify-debug] ${label}: <unserializable-payload>`);
+  }
+}
+
 function normalizeVatId(value: string | undefined): string | undefined {
   const normalized = value?.trim().replace(/\s+/g, '').toUpperCase();
   return normalized || undefined;
+}
+
+function getAnnexFieldValue(annexFormFields: Record<string, string> | undefined, name: string): string | undefined {
+  if (!annexFormFields) return undefined;
+  const directValue = annexFormFields[name];
+  const value = directValue !== undefined
+    ? directValue
+    : Object.entries(annexFormFields).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || undefined;
+}
+
+function hasVisibleOrganizationIdentity(annexFormFields: Record<string, string> | undefined): boolean {
+  const hasTaxId = PDF_VISIBLE_ORGANIZATION_TAX_ID_FIELDS.some((name) => Boolean(getAnnexFieldValue(annexFormFields, name)));
+  const hasLegalName = PDF_VISIBLE_ORGANIZATION_LEGAL_NAME_FIELDS.some((name) => Boolean(getAnnexFieldValue(annexFormFields, name)));
+  return hasTaxId && hasLegalName;
+}
+
+function collectVisibleOrganizationIdentity(annexFormFields: Record<string, string> | undefined): {
+  hasTaxId: boolean;
+  hasLegalName: boolean;
+  matchedTaxIdFields: Array<{ field: string; value: string }>;
+  matchedLegalNameFields: Array<{ field: string; value: string }>;
+} {
+  const matchedTaxIdFields: Array<{ field: string; value: string }> = [];
+  for (const field of PDF_VISIBLE_ORGANIZATION_TAX_ID_FIELDS) {
+    const value = getAnnexFieldValue(annexFormFields, field);
+    if (value) matchedTaxIdFields.push({ field, value });
+  }
+  const matchedLegalNameFields: Array<{ field: string; value: string }> = [];
+  for (const field of PDF_VISIBLE_ORGANIZATION_LEGAL_NAME_FIELDS) {
+    const value = getAnnexFieldValue(annexFormFields, field);
+    if (value) matchedLegalNameFields.push({ field, value });
+  }
+  return {
+    hasTaxId: matchedTaxIdFields.length > 0,
+    hasLegalName: matchedLegalNameFields.length > 0,
+    matchedTaxIdFields,
+    matchedLegalNameFields,
+  };
 }
 
 export function parseVatIdFromSubjectDn(subjectDn: string): string | undefined {
@@ -518,6 +612,7 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
   verifierVatList: string[],
   verificationPartnersVatList: string[],
   organizationPayload?: Record<string, unknown>,
+  annexFormFields?: Record<string, string>,
 ): void {
   const verifierVatSet = new Set(
     verifierVatList
@@ -538,6 +633,19 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
   const verifierSignerVatIds = signerVatIds.filter((value) => verifierVatSet.has(value));
   const partnerSignerVatIds = signerVatIds.filter((value) => partnerVatSet.has(value));
   const counterpartSignerVatIds = signerVatIds.filter((value) => !verifierVatSet.has(value) && !partnerVatSet.has(value));
+  const visibleOrganizationIdentity = collectVisibleOrganizationIdentity(annexFormFields);
+
+  debugVerifyTrace('assertVerifierCounterpartySignaturePair.inputs', {
+    signaturesCount: signatures.length,
+    signerVatIds,
+    verifierVatList: [...verifierVatSet],
+    verificationPartnersVatList: [...partnerVatSet],
+    verifierSignerVatIds,
+    partnerSignerVatIds,
+    counterpartSignerVatIds,
+    hasOrganizationPayloadTaxId: Boolean(organizationPayload?.taxID || organizationPayload?.taxId),
+    visibleOrganizationIdentity,
+  });
 
   if (!verifierSignerVatIds.length) {
     throw new Error(
@@ -552,9 +660,17 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
       );
     }
   } else if (!counterpartSignerVatIds.length && !partnerSignerVatIds.length) {
-    if (!organizationPayload?.taxID && !organizationPayload?.taxId) {
+    if (!organizationPayload?.taxID && !organizationPayload?.taxId && !hasVisibleOrganizationIdentity(annexFormFields)) {
+      debugVerifyTrace('assertVerifierCounterpartySignaturePair.failure', {
+        reason: 'missing_non_verifier_counterparty_and_missing_org_identity_fallback',
+        verifierSignerVatIds,
+        partnerSignerVatIds,
+        counterpartSignerVatIds,
+        hasOrganizationPayloadTaxId: Boolean(organizationPayload?.taxID || organizationPayload?.taxId),
+        visibleOrganizationIdentity,
+      });
       throw new Error(
-        'PDF must include at least one non-verifier counterparty signature different from VERIFIERS_VAT_LIST, or provide organization taxID in the payload.',
+        'PDF must include at least one non-verifier counterparty signature different from VERIFIERS_VAT_LIST, or visible organization VAT/CIF and legal name fields in the PDF, or provide organization taxID in the payload.',
       );
     }
   }
@@ -1512,6 +1628,7 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
         this.config.verifierVatList,
         this.config.verificationPartnersVatList,
         submission.organizationPayload,
+        submission.annexFormFields,
       );
       let primarySignature = selectPrimaryCredentialSignature(
         verifiedSignatures,

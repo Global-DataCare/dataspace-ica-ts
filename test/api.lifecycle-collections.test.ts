@@ -38,7 +38,7 @@ import { IssueCredentialResponseManager } from '../src/api/managers/issue-creden
 import { VerifyRequestManager } from '../src/api/managers/verify-request-manager.ts';
 import { VerifyResponseManager } from '../src/api/managers/verify-response-manager.ts';
 import { buildIcaVerifyOpenApiSpec } from '../src/api/openapi.ts';
-import { computePdfLogicalFingerprint, resolveTemplateResourceVersion } from '../src/api/fnmt-pdf-verifier.ts';
+import { computePdfLogicalFingerprint, resolveTemplateResourceVersion } from '../src/api/cert-pdf-verifier.ts';
 import { parseActivateSigningKeySubmission, parseRotateSubmission } from '../src/api/request-parsing.ts';
 import { SignatureVerificationManager } from '../src/api/signature-verification-manager.ts';
 import { AuditDocumentStorageService } from '../src/api/tools/audit-document-storage.ts';
@@ -768,7 +768,7 @@ test('VerifyResponseManager succeeded job returns result inside body', async () 
       templateHex: TEST_SHA3_384_HEX,
     },
     signerCertificateSerialNumber: '00AA11',
-    signerSubject: 'CN=Signer',
+    signerSubject: 'CN=Signer,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
     signerIssuer: 'CN=FNMT',
     hashes: {
       signedPdfSha256Hex: 'a',
@@ -1622,7 +1622,7 @@ function buildTestVerifyResult(label: string): VerifyResult {
       templateHex: TEST_SHA3_384_HEX,
     },
     signerCertificateSerialNumber: '00AA11',
-    signerSubject: 'CN=Signer',
+    signerSubject: 'CN=Signer,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
     signerIssuer: 'CN=FNMT',
     hashes: {
       signedPdfSha256Hex: 'a',

@@ -17,7 +17,7 @@ import { buildVerificationVcBundle } from '../tools/vc-bundle.ts';
 import { buildVcJwtAttachments } from '../tools/vc-jwt.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
-import { resolveIcaIssuerDid } from '../tools/ica-identity.ts';
+import { resolveVcIssuerDid } from '../tools/ica-identity.ts';
 import { multibase58MultihashSha3_384Hex, sameAsValuesEqual } from '../tools/multihash.ts';
 
 export type VerifyPollOutcome =
@@ -341,7 +341,7 @@ export class VerifyResponseManager {
       };
     }
 
-    const issuerDid = resolveIcaIssuerDid(req);
+    const issuerDid = resolveVcIssuerDid(req);
     const body = buildVerificationVcBundle(route, verificationResult, issuerDid) as VerifyBundleResponse;
     attachBootstrapKeysToVerificationEntries(verificationResult, body);
 

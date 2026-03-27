@@ -1,5 +1,6 @@
 import {
   constants as cryptoConstants,
+  createHash,
   createPrivateKey,
   createPublicKey,
   createSign,
@@ -343,6 +344,57 @@ function base64UrlEncode(input: Buffer | string): string {
     .replace(/\//g, '_');
 }
 
+function selectPublicJwkForDidJwk(publicJwk: JsonObject): JsonObject | null {
+  const kty = String(publicJwk.kty || '');
+  if (kty === 'EC') {
+    const crv = String(publicJwk.crv || '');
+    const x = String(publicJwk.x || '');
+    const y = String(publicJwk.y || '');
+    if (!crv || !x || !y) return null;
+    return { kty: 'EC', crv, x, y };
+  }
+  if (kty === 'OKP') {
+    const crv = String(publicJwk.crv || '');
+    const x = String(publicJwk.x || '');
+    if (!crv || !x) return null;
+    return { kty: 'OKP', crv, x };
+  }
+  if (kty === 'RSA') {
+    const n = String(publicJwk.n || '');
+    const e = String(publicJwk.e || '');
+    if (!n || !e) return null;
+    return { kty: 'RSA', n, e };
+  }
+  return null;
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJsonStringify(entry)).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`).join(',')}}`;
+}
+
+function buildDidJwkFromPublicJwk(publicJwk: JsonObject): string | null {
+  const didJwkPublic = selectPublicJwkForDidJwk(publicJwk);
+  if (!didJwkPublic) return null;
+  const canonical = stableJsonStringify(didJwkPublic);
+  return `did:jwk:${base64UrlEncode(canonical)}`;
+}
+
+function buildDidJwtFromPublicJwk(publicJwk: JsonObject): string | null {
+  const didJwkPublic = selectPublicJwkForDidJwk(publicJwk);
+  if (!didJwkPublic) return null;
+  const canonical = stableJsonStringify(didJwkPublic);
+  const thumbprint = createHash('sha256').update(canonical).digest('base64url');
+  return `did:jwt:${thumbprint}`;
+}
+
 function buildDetachedJws(
   payloadBytes: Buffer,
   signing: SigningKeyMaterial,
@@ -474,6 +526,28 @@ export function resolveIcaIssuerDid(req?: IncomingMessage): string {
   return buildDidWebFromAuthority(`localhost:${port}`) || 'did:web:localhost%3A3310';
 }
 
+export function resolveVcIssuerDid(req?: IncomingMessage): string {
+  const forcedIssuer = (process.env.ICA_VC_ISSUER_DID || '').trim();
+  if (forcedIssuer) return forcedIssuer;
+
+  const deterministicByContract = parseBoolean(process.env.DETERMINISTIC_VC_BY_CONTRACT, false);
+  if (deterministicByContract) {
+    const signing = resolveSigningKeyMaterial();
+    if (signing) {
+      const didJwt = buildDidJwtFromPublicJwk(signing.publicJwk);
+      if (didJwt) return didJwt;
+    }
+    throw new Error('Deterministic VC issuer requires active signing key (bootstrap key)');
+  }
+
+  const signing = resolveSigningKeyMaterial();
+  if (signing) {
+    const didJwk = buildDidJwkFromPublicJwk(signing.publicJwk);
+    if (didJwk) return didJwk;
+  }
+  return resolveIcaIssuerDid(req);
+}
+
 function mergeSigningMethods(document: JsonObject, issuerDid: string): void {
   const existingVerification = Array.isArray(document.verificationMethod)
     ? (document.verificationMethod as JsonObject[])
@@ -554,6 +628,14 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
     '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
     id: issuerDid,
   };
+  // Añadir alsoKnownAs con did:jwt derivado de la clave bootstrap si existe
+  const signing = resolveSigningKeyMaterial();
+  if (signing) {
+    const didJwt = buildDidJwtFromPublicJwk(signing.publicJwk);
+    if (didJwt) {
+      document.alsoKnownAs = [didJwt];
+    }
+  }
   mergeSigningMethods(document, issuerDid);
 
   const controllerDescriptor = resolveControllerMemberDescriptor(issuerDid);
@@ -627,7 +709,12 @@ export function attachProofToCredential(
   issuerDidInput?: string,
 ): VerifiableCredentialV2 {
   const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
-  const createdAt = new Date().toISOString();
+  const deterministicByContract = parseBoolean(process.env.DETERMINISTIC_VC_BY_CONTRACT, false);
+  const vcRecord = vc as unknown as Record<string, unknown>;
+  const deterministicCreatedAt = typeof vcRecord.validFrom === 'string' ? vcRecord.validFrom : '';
+  const createdAt = deterministicByContract && deterministicCreatedAt
+    ? deterministicCreatedAt
+    : new Date().toISOString();
   const vcWithoutProof = { ...vc };
   delete vcWithoutProof.proof;
 

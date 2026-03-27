@@ -23,6 +23,24 @@ function extractVerificationErrorDetails(error: unknown): VerificationErrorDetai
   return details;
 }
 
+function sanitizeVerificationErrorMessage(message: string): string {
+  const normalized = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return 'Verification failed.';
+
+  if (/unable to get local issuer certificate/i.test(normalized)) {
+    const signaturePrefix = normalized.match(/^Signature\s+\d+\s+failed:/i)?.[0] || 'Signature verification failed:';
+    return `${signaturePrefix} Certificate chain validation failed: unable to get local issuer certificate.`;
+  }
+
+  let sanitized = normalized;
+  sanitized = sanitized.replace(/Command failed:\s*openssl\s+verify\s+[\s\S]*?(?=error\s+\d+\s+at\s+\d+\s+depth\s+lookup:|verification failed|$)/i, '');
+  sanitized = sanitized.replace(/\/(?:private\/)?var\/folders\/[\w./-]+/g, '<temp-path>');
+  sanitized = sanitized.replace(/\/tmp\/[\w./-]+/g, '<temp-path>');
+  sanitized = sanitized.replace(/\s+/g, ' ').trim();
+
+  return sanitized || 'Verification failed.';
+}
+
 export class VerifyRequestManager {
   private readonly jobStore: InMemoryVerificationJobStore;
   private readonly verifier: PdfVerificationService;
@@ -77,9 +95,10 @@ export class VerifyRequestManager {
           });
         } catch (error: unknown) {
           const message = (error as Error)?.message || String(error);
+          const sanitizedMessage = sanitizeVerificationErrorMessage(message);
           const errorDetails = extractVerificationErrorDetails(error);
           console.error(`Verification job failed (thid=${submission.thid}): ${message}`);
-          this.jobStore.markFailed(submission.thid, message, errorDetails);
+          this.jobStore.markFailed(submission.thid, sanitizedMessage, errorDetails);
         }
       });
 

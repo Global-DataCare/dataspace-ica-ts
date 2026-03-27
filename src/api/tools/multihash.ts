@@ -5,6 +5,8 @@ const MULTIHASH_SHA3_384_CODE = 0x15;
 const MULTIHASH_SHA3_384_SIZE = 0x30;
 const MULTIHASH_SHA3_256_CODE = 0x16;
 const MULTIHASH_SHA3_256_SIZE = 0x20;
+const CID_V1_VERSION = 0x01;
+const MULTICODEC_RAW = 0x55;
 
 export function base58btcEncode(input: Buffer<ArrayBufferLike>): string {
   if (!input.length) return '';
@@ -42,7 +44,7 @@ export function multibase58MultihashSha3_256(value: string): string {
   return `z${base58btcEncode(multihash)}`;
 }
 
-export function multibase58MultihashSha3_384Hex(hex: string): string {
+function buildSha3_384MultihashFromHex(hex: string): Buffer {
   const normalized = hex.trim().toLowerCase();
   if (!normalized) {
     throw new Error('Cannot create sha3-384 multihash from empty digest.');
@@ -51,8 +53,41 @@ export function multibase58MultihashSha3_384Hex(hex: string): string {
     throw new Error('sha3-384 digest hex must be 96 hexadecimal characters.');
   }
   const digest = Buffer.from(normalized, 'hex');
-  const multihash = Buffer.concat([Buffer.from([MULTIHASH_SHA3_384_CODE, MULTIHASH_SHA3_384_SIZE]), digest]);
+  return Buffer.concat([Buffer.from([MULTIHASH_SHA3_384_CODE, MULTIHASH_SHA3_384_SIZE]), digest]);
+}
+
+function buildSha3_256MultihashFromHex(hex: string): Buffer {
+  const normalized = hex.trim().toLowerCase();
+  if (!normalized) {
+    throw new Error('Cannot create sha3-256 multihash from empty digest.');
+  }
+  if (!/^[0-9a-f]+$/.test(normalized) || normalized.length !== MULTIHASH_SHA3_256_SIZE * 2) {
+    throw new Error('sha3-256 digest hex must be 64 hexadecimal characters.');
+  }
+  const digest = Buffer.from(normalized, 'hex');
+  return Buffer.concat([Buffer.from([MULTIHASH_SHA3_256_CODE, MULTIHASH_SHA3_256_SIZE]), digest]);
+}
+
+export function multibase58MultihashSha3_384Hex(hex: string): string {
+  const multihash = buildSha3_384MultihashFromHex(hex);
   return `z${base58btcEncode(multihash)}`;
+}
+
+export function multibase58MultihashSha3_256Hex(hex: string): string {
+  const multihash = buildSha3_256MultihashFromHex(hex);
+  return `z${base58btcEncode(multihash)}`;
+}
+
+export function multibase58CidV1RawSha3_384Hex(hex: string): string {
+  const multihash = buildSha3_384MultihashFromHex(hex);
+  const cidBytes = Buffer.concat([Buffer.from([CID_V1_VERSION, MULTICODEC_RAW]), multihash]);
+  return `z${base58btcEncode(cidBytes)}`;
+}
+
+export function multibase58CidV1RawSha3_256Hex(hex: string): string {
+  const multihash = buildSha3_256MultihashFromHex(hex);
+  const cidBytes = Buffer.concat([Buffer.from([CID_V1_VERSION, MULTICODEC_RAW]), multihash]);
+  return `z${base58btcEncode(cidBytes)}`;
 }
 
 function looksLikeBase58Multibase(value: string): boolean {

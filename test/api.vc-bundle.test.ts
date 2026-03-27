@@ -2,7 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseVerifyRoute } from '../src/api/path.ts';
 import { buildVerificationVcBundle } from '../src/api/server.ts';
-import { resetActiveSigningKeysStateForTests } from '../src/api/tools/active-signing-keys.ts';
+import { resetActiveSigningKeysStateForTests, activateSigningKey } from '../src/api/tools/active-signing-keys.ts';
+import { PRIVATE_KEY_PEM, PUBLIC_JWK } from './test-signing-key.fixture.js';
+  // Clave activa para pruebas
+  resetActiveSigningKeysStateForTests();
+  activateSigningKey({
+    kid: 'test-key-1',
+    alg: 'ES384',
+    publicJwk: PUBLIC_JWK,
+    privateKeyPem: PRIVATE_KEY_PEM,
+  });
 import { normalizeSameAsHash } from '../src/api/tools/multihash.ts';
 import type { VerifyResult } from '../src/api/types.ts';
 
@@ -22,8 +31,9 @@ function buildTestVerifyResult(label: string): VerifyResult {
       templateHex: 'c',
     },
     signerCertificateSerialNumber: '00AA11',
-    signerSubject: 'CN=Signer',
+    signerSubject: 'CN=Signer,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
     signerIssuer: 'CN=FNMT',
+    signerSigningTime: '2026-03-05T00:00:00.000Z',
     hashes: {
       signedPdfSha256Hex: 'a',
       unsignedPdfSha256Hex: 'b',
@@ -34,6 +44,13 @@ function buildTestVerifyResult(label: string): VerifyResult {
 }
 
 test('buildVerificationVcBundle returns two VCs each with evidence', () => {
+  resetActiveSigningKeysStateForTests();
+  activateSigningKey({
+    kid: 'test-key-1',
+    alg: 'ES384',
+    publicJwk: { kty: 'EC', crv: 'P-384', x: 'x1', y: 'y1' },
+    privateKeyPem: `-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEICv1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1oAoGCCqGSM49\nAwEHoUQDQgAEx1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1\ny1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1==\n-----END EC PRIVATE KEY-----`,
+  });
   const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
   const previousExternalDomain = process.env.ICA_EXTERNAL_DOMAIN;
   const previousOrganizationDidPublicDomain = process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
@@ -127,11 +144,11 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
     assert.equal(typeof signatureEvidence.attachments?.[0]?.content, 'string');
     assert.equal((signatureEvidence.attachments?.[0]?.content || '').length > 0, true);
 
-    const expectedIssuerDid = `did:web:localhost%3A${process.env.ICA_API_PORT || process.env.PORT || '3310'}`;
+    const expectedVerifierDid = 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678';
     const documentEvidence = organizationEvidence[1];
     assert.equal(documentEvidence.type, 'document');
     assert.equal(documentEvidence.method, 'eid');
-    assert.equal(documentEvidence.verifier.organization, expectedIssuerDid);
+    assert.equal(documentEvidence.verifier.organization, expectedVerifierDid);
     assert.equal(Array.isArray(documentEvidence.check_details), true);
     assert.equal(documentEvidence.check_details?.length, 2);
     assert.equal(documentEvidence.check_details?.[0]?.check_method, 'vdig');
@@ -142,7 +159,7 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
     assert.equal(documentEvidence.document_details?.type, 'terms-and-conditions');
     assert.equal(documentEvidence.document_details?.document_number, '202630011200');
     assert.equal(documentEvidence.document_details?.serial_number, '00AA11');
-    assert.equal(documentEvidence.document_details?.issuer?.id, expectedIssuerDid);
+    assert.equal(documentEvidence.document_details?.issuer?.id, expectedVerifierDid);
     assert.equal(documentEvidence.document_details?.issuer?.type, 'TrustServiceProvider');
     assert.equal(documentEvidence.document_details?.issuer?.country_code, 'ES');
     assert.equal(documentEvidence.document_details?.issuer?.jurisdiction, 'ES');
@@ -535,6 +552,167 @@ test('buildVerificationVcBundle allows payload merge when environment variable i
       delete process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
     } else {
       process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = previousFlag;
+    }
+  }
+});
+
+test('buildVerificationVcBundle uses visible PDF organization identity when signer certificate is personal', () => {
+  const previousJurisdictions = process.env.ICA_SUPPORTED_JURISDICTIONS;
+  process.env.ICA_SUPPORTED_JURISDICTIONS = 'ES';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const bundle = buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult('pdf-org-identity'),
+      signerSubject: 'CN=Jane Doe,SERIALNUMBER=12345678Z,C=ES',
+      annexFormFields: {
+        'Organization.taxID': 'ES-B123 45678',
+        'Organization.legalName': 'Acme Health SL',
+      },
+    });
+
+    const organizationResource = bundle.data[0].resource as Record<string, any>;
+    const personResource = bundle.data[1].resource as Record<string, any>;
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+
+    assert.equal(organizationSubject.id, 'did:web:globaldatacare.es:animal-care:organization:taxid:ES-B12345678');
+    assert.equal(organizationSubject.taxID, 'ES-B12345678');
+    assert.equal(organizationSubject.legalName, 'ACME HEALTH SL');
+    assert.equal(personSubject.memberOf?.taxID, 'ES-B12345678');
+    assert.equal(personSubject.memberOf?.legalName, 'ACME HEALTH SL');
+  } finally {
+    if (previousJurisdictions === undefined) {
+      delete process.env.ICA_SUPPORTED_JURISDICTIONS;
+    } else {
+      process.env.ICA_SUPPORTED_JURISDICTIONS = previousJurisdictions;
+    }
+  }
+});
+
+test('buildVerificationVcBundle does not duplicate the country prefix when PDF tax ID already starts with it', () => {
+  const previousJurisdictions = process.env.ICA_SUPPORTED_JURISDICTIONS;
+  process.env.ICA_SUPPORTED_JURISDICTIONS = 'ES';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const bundle = buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult('pdf-org-prefix'),
+      signerSubject: 'CN=Jane Doe,SERIALNUMBER=12345678Z,C=ES',
+      annexFormFields: {
+        'organization.taxId': 'ES-B12345678',
+        'organization.legalName': 'ProcureData S.L.',
+      },
+    });
+
+    const organizationResource = bundle.data[0].resource as Record<string, any>;
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    assert.equal(organizationSubject.taxID, 'ES-B12345678');
+    assert.equal(organizationSubject.legalName, 'PROCUREDATA S.L.');
+  } finally {
+    if (previousJurisdictions === undefined) {
+      delete process.env.ICA_SUPPORTED_JURISDICTIONS;
+    } else {
+      process.env.ICA_SUPPORTED_JURISDICTIONS = previousJurisdictions;
+    }
+  }
+});
+
+test('buildVerificationVcBundle requires visible PDF organization legal name when signer certificate is personal', () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  assert.throws(
+    () => buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult('pdf-org-missing-name'),
+      signerSubject: 'CN=Jane Doe,SERIALNUMBER=12345678Z,C=ES',
+      annexFormFields: {
+        'organization.taxID': 'ES-B12345678',
+      },
+    }),
+    /visible organization legal name field/i,
+  );
+});
+
+test('buildVerificationVcBundle uses deterministic VC/document IDs when DETERMINISTIC_VC_BY_CONTRACT=true', () => {
+    // Clave determinista activa
+    resetActiveSigningKeysStateForTests();
+    activateSigningKey({
+      kid: 'deterministic-key-1',
+      alg: 'ES384',
+      publicJwk: PUBLIC_JWK,
+      privateKeyPem: PRIVATE_KEY_PEM,
+    });
+  resetActiveSigningKeysStateForTests();
+  activateSigningKey({
+    kid: 'deterministic-key-1',
+    alg: 'ES384',
+    publicJwk: { kty: 'EC', crv: 'P-384', x: 'u5v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1', y: 'v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5' },
+    privateKeyPem: `-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEICv1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1oAoGCCqGSM49\nAwEHoUQDQgAEu5v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1\nv5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5==\n-----END EC PRIVATE KEY-----`,
+  });
+  const previousFlag = process.env.DETERMINISTIC_VC_BY_CONTRACT;
+  const previousNamespace = process.env.DATASPACE_URN_NAMESPACE;
+  process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
+  process.env.DATASPACE_URN_NAMESPACE = 'GlobalDataCare';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const verifyResult = {
+      ...buildTestVerifyResult('deterministic-vc'),
+      digest: {
+        alg: 'sha3-384',
+        signedPdfHex: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        unsignedPdfHex: 'b',
+        templateHex: 'c',
+      },
+      hashes: {
+        signedPdfSha256Hex: 'a',
+        unsignedPdfSha256Hex: 'b',
+        templateSha256Hex: 'c',
+      },
+    } as VerifyResult;
+
+    const bundleA = buildVerificationVcBundle(parsed.context, verifyResult);
+    const bundleB = buildVerificationVcBundle(parsed.context, verifyResult);
+
+    const orgA = bundleA.data[0].resource as Record<string, any>;
+    const orgB = bundleB.data[0].resource as Record<string, any>;
+    const personA = bundleA.data[1].resource as Record<string, any>;
+    const personB = bundleB.data[1].resource as Record<string, any>;
+
+    assert.equal(orgA.id, orgB.id);
+    assert.equal(personA.id, personB.id);
+    assert.match(String(orgA.id || ''), /^urn:globaldatacare:animal-care:organization:vc:z/);
+    assert.match(String(personA.id || ''), /^urn:globaldatacare:animal-care:organization-representative:vc:z/);
+
+    const orgEvidenceA = orgA.evidence as Array<Record<string, any>>;
+    const docEvidenceA = orgEvidenceA[1];
+    const attachmentUrl = String(docEvidenceA.attachments?.url || '');
+
+    assert.match(attachmentUrl, /^ipfs:\/\/z/);
+    assert.equal(String(docEvidenceA.attachments?.url || '').startsWith('urn:uuid:'), false);
+    assert.equal(attachmentUrl.includes(String(orgA.id).split(':vc:')[1]), true);
+  } finally {
+    if (previousFlag === undefined) {
+      delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
+    } else {
+      process.env.DETERMINISTIC_VC_BY_CONTRACT = previousFlag;
+    }
+    if (previousNamespace === undefined) {
+      delete process.env.DATASPACE_URN_NAMESPACE;
+    } else {
+      process.env.DATASPACE_URN_NAMESPACE = previousNamespace;
     }
   }
 });

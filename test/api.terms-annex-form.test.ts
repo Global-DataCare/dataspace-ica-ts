@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -82,3 +83,77 @@ test('extractTermsAnnexFormFieldsFromPdf matches Organization.* and Person.* fie
   assert.equal(extracted.fields['organization.url'], 'member.example.org');
   assert.equal(extracted.fields['person.alternateName'], 'controller-es384-20260309');
 });
+
+test('extractTermsAnnexFormFieldsFromPdf preserves non-canonical visible organization identity fields', async () => {
+  const document = await PDFDocument.create();
+  const page = document.addPage([400, 200]);
+  const form = document.getForm();
+
+  const taxIdField = form.createTextField('Organization.taxID');
+  taxIdField.setText('ES-B12345678');
+  taxIdField.addToPage(page, { x: 20, y: 140, width: 250, height: 20 });
+
+  const legalNameField = form.createTextField('Organization.legalName');
+  legalNameField.setText('Acme Health SL');
+  legalNameField.addToPage(page, { x: 20, y: 110, width: 250, height: 20 });
+
+  const pdfBytes = Buffer.from(await document.save());
+  const extracted = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
+
+  assert.equal(extracted.warnings.length, 0);
+  assert.equal(extracted.fields['Organization.taxID'], 'ES-B12345678');
+  assert.equal(extracted.fields['Organization.legalName'], 'Acme Health SL');
+});
+
+const VITEMARKETING_FIXTURE_PATH =
+  '/Users/fernando/GITS/gdc-workspace/examples/prueba-Contrato de Adhesión PROCUREDATA_VITEMARKETING.pdf';
+
+test(
+  'extractTermsAnnexFormFieldsFromPdf extracts visible organization identity from VITEMARKETING real fixture',
+  { skip: !existsSync(VITEMARKETING_FIXTURE_PATH) },
+  async () => {
+    const pdfBytes = await readFile(VITEMARKETING_FIXTURE_PATH);
+    const extracted = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
+
+    const visibleTaxIdCandidates = [
+      extracted.fields['organization.taxID'],
+      extracted.fields['organization.taxId'],
+      extracted.fields['Organization.taxID'],
+      extracted.fields['Organization.taxId'],
+      extracted.fields['organization.cif'],
+      extracted.fields['Organization.cif'],
+      extracted.fields['organization.vat'],
+      extracted.fields['Organization.vat'],
+      extracted.fields['organization.vatNumber'],
+      extracted.fields['Organization.vatNumber'],
+      extracted.fields['Identificacion Empresa'],
+      extracted.fields['Identificación Empresa'],
+      extracted.fields['Identificacion'],
+      extracted.fields['Identificación'],
+    ].filter((value): value is string => Boolean(value && value.trim()));
+
+    const visibleLegalNameCandidates = [
+      extracted.fields['organization.legalName'],
+      extracted.fields['Organization.legalName'],
+      extracted.fields['organization.name'],
+      extracted.fields['Organization.name'],
+      extracted.fields['organization.legal_name'],
+      extracted.fields['Organization.legal_name'],
+      extracted.fields['organization.razonSocial'],
+      extracted.fields['Organization.razonSocial'],
+      extracted.fields['organization.razon_social'],
+      extracted.fields['Organization.razon_social'],
+      extracted.fields['Razon Social'],
+      extracted.fields['Razón Social'],
+    ].filter((value): value is string => Boolean(value && value.trim()));
+
+    assert.ok(
+      visibleTaxIdCandidates.length > 0,
+      `No visible organization VAT/CIF extracted from real fixture. Extracted keys: ${Object.keys(extracted.fields).join(', ')}`,
+    );
+    assert.ok(
+      visibleLegalNameCandidates.length > 0,
+      `No visible organization legal name extracted from real fixture. Extracted keys: ${Object.keys(extracted.fields).join(', ')}`,
+    );
+  },
+);

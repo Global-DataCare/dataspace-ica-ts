@@ -1,4 +1,4 @@
-import { FnmtPdfVerificationService } from '../fnmt-pdf-verifier.ts';
+import { FnmtPdfVerificationService } from '../cert-pdf-verifier.ts';
 import type {
   PdfVerificationService,
   SignatureVerifierAdapter,
