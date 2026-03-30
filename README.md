@@ -1214,12 +1214,18 @@ Verification behavior:
 For multi-signed contract PDFs, every detected signature is still CMS/chain/revocation validated. When `VERIFIERS_VAT_LIST` is configured, `_verify` only accepts the PDF if:
 
 - at least one detected signer VAT belongs to `VERIFIERS_VAT_LIST`
-- at least one other detected signer VAT is different and does not belong to `VERIFIERS_VAT_LIST`
+- and there is a counterparty signature, resolved by these rules:
+  - any non-verifier signer VAT is a counterparty candidate
+  - if no non-verifier signer exists and all signer VATs are verifiers, the counterparty is the signer that matches the last configured VAT present in `VERIFIERS_VAT_LIST`
 
 If `VERIFICATION_PARTNERS_VAT_LIST` is also configured, `_verify` will additionally require:
 - at least one detected signer VAT belongs to `VERIFICATION_PARTNERS_VAT_LIST`
 
-After that validation, matching verifier signatures are ignored when choosing the signer used to populate the organization/person credentials.
+Counterparty selection rules used to populate organization/person credentials:
+
+- if verifier+partner+third-party signatures exist, the third-party signer is preferred as counterparty
+- if the PDF only has verifier+partner signatures, the partner signature is selected as the primary counterparty
+- if the PDF only has verifier signatures, the counterparty is selected from verifiers using the last configured VAT present in `VERIFIERS_VAT_LIST`
 
 Audit document persistence:
 
@@ -1318,3 +1324,26 @@ During `_verify`, signed PDF form values are extracted and incorporated into evi
 - `person.additionalType` is used for the controller algorithm, e.g. `ES384`.
 
 Extended guide: [docs/terms-annex-form.md](./docs/terms-annex-form.md)
+
+## Entorno local y tests
+
+Para que la API y los tests funcionen correctamente, es necesario configurar las variables de entorno:
+
+1. **Copia el archivo de ejemplo:**
+
+   ```bash
+   cp env.example .env.local
+   ```
+
+2. **Edita `.env.local`** con los valores necesarios para tu entorno (por ejemplo, `DID_WEB_DOMAIN`, claves, etc).
+
+3. **Carga automática en tests:**
+   - Los tests relevantes cargan automáticamente `.env.local` usando `dotenv`.
+   - Así, no necesitas exportar variables manualmente ni pasar el archivo al runner.
+
+4. **Ejecución local:**
+   - Usa `.env.local` también para `npm run api:local` y otros comandos de desarrollo.
+
+> **Recomendación:** Mantén `.env.local` fuera de control de versiones y actualiza `env.example` cuando cambien las variables requeridas.
+
+---

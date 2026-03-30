@@ -27,6 +27,10 @@ function sameRoute(a: CreateDidDocumentRouteContext, b: CreateDidDocumentRouteCo
   );
 }
 
+function routeKey(route: CreateDidDocumentRouteContext): string {
+  return `${route.tenantId}|${route.jurisdiction.toUpperCase()}|${route.sector}|${route.action}`;
+}
+
 function buildDidcommCreateDidDocumentMessage(
   route: CreateDidDocumentRouteContext,
   thid: string,
@@ -80,7 +84,7 @@ export class CreateDidDocumentResponseManager {
       return {
         type: 'error',
         statusCode: 404,
-        message: 'Job exists but does not belong to this route.',
+        message: `Job exists but does not belong to this route (thid=${thid}, expected=${routeKey(job.route)}, got=${routeKey(route)}).`,
       };
     }
 

@@ -13,9 +13,29 @@ export type IssueCredentialAction = '_issue' | '_issue-response';
 export type CredentialStatusAction = '_status' | '_status-response';
 export type CredentialRevokeAction = '_revoke' | '_revoke-response';
 export type CredentialSearchAction = '_search' | '_search-response';
+export type CredentialRetrieveAction = '_retrieve' | '_retrieve-response';
 export type SpacesAction = '_list' | '_replace';
 export type DcatCatalogAction = 'request' | 'dataset';
 export type DcatCatalogDdoAction = 'ddo-request' | 'ddo-dataset';
+export type ControllerExchangeAction = '_exchange' | '_exchange-response';
+export type ApiKeyProvisioningAction =
+  | '_create'
+  | '_create-response'
+  | '_disable'
+  | '_disable-response'
+  | '_remove'
+  | '_remove-response'
+  | '_search'
+  | '_search-response';
+export type IdentityAuthAction =
+  | '_dcr'
+  | '_dcr-response'
+  | '_code'
+  | '_code-response'
+  | '_token'
+  | '_token-response'
+  | '_exchange'
+  | '_exchange-response';
 
 export type VerifyJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 export type ActivateJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
@@ -196,6 +216,16 @@ export interface CredentialSearchRouteContext {
   action: CredentialSearchAction;
 }
 
+export interface CredentialRetrieveRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'network';
+  format: 'credentials';
+  credentialType: string;
+  action: CredentialRetrieveAction;
+}
+
 export interface SpacesRouteContext {
   tenantId: string;
   jurisdiction: string;
@@ -241,6 +271,33 @@ export interface DcatCatalogDdoDatasetRouteContext {
   format: 'catalog-ddo';
   action: 'ddo-dataset';
   datasetId: string;
+}
+
+export interface ControllerExchangeRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'organization';
+  format: 'dataspace-auth';
+  action: ControllerExchangeAction;
+}
+
+export interface ApiKeyProvisioningRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'api-key';
+  format: 'org.schema.action';
+  action: ApiKeyProvisioningAction;
+}
+
+export interface IdentityAuthRouteContext {
+  tenantId: string;
+  jurisdiction: string;
+  sector: AllowedSector;
+  section: 'identity';
+  format: 'auth';
+  action: IdentityAuthAction;
 }
 
 export interface VerifySubmission {
@@ -469,6 +526,10 @@ export interface VerifyResult {
   signerSubject?: string;
   signerIssuer?: string;
   signerSigningTime?: string;
+  organizationSigningTime?: string;
+  personSigningTime?: string;
+  verifierVatId?: string;
+  verifierSigningTime?: string;
   hashes: VerifyHashes;
   notes: string[];
   annexFormFields?: Record<string, string>;
@@ -638,6 +699,12 @@ export interface CredentialSearchResult {
   items: CredentialSearchResultItem[];
 }
 
+export interface CredentialRetrieveResult {
+  matchedCount: number;
+  format: 'vc+json' | 'vc+jwt';
+  item?: CredentialRetrieveResultItem;
+}
+
 export interface CreateDidDocumentResult {
   createdCount: number;
   items: CreateDidDocumentResultItem[];
@@ -667,6 +734,20 @@ export interface CredentialSearchResultItem {
   credential: Record<string, unknown>;
 }
 
+export interface CredentialRetrieveResultItem {
+  issuedCredentialRecordId: string;
+  credentialId: string;
+  credentialType: string;
+  subjectId: string;
+  issuerId: string;
+  legalName?: string;
+  taxId?: string;
+  taxIdHash?: string;
+  organizationDid?: string;
+  credential: Record<string, unknown>;
+  vcJwt?: string;
+}
+
 export interface CredentialSearchJob {
   thid: string;
   route: CredentialSearchRouteContext;
@@ -674,6 +755,16 @@ export interface CredentialSearchJob {
   createdAt: number;
   updatedAt: number;
   result?: CredentialSearchResult;
+  error?: string;
+}
+
+export interface CredentialRetrieveJob {
+  thid: string;
+  route: CredentialRetrieveRouteContext;
+  status: EntityJobStatus;
+  createdAt: number;
+  updatedAt: number;
+  result?: CredentialRetrieveResult;
   error?: string;
 }
 
@@ -771,4 +862,3 @@ export interface DidcommAttachment {
 
 export type DidcommPlaintextMessage<TBody = unknown> =
   Omit<IDecodedDidcommPayload, 'body'> & { body: TBody; attachments?: DidcommAttachment[] };
-

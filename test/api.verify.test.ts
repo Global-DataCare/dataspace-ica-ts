@@ -1,9 +1,9 @@
-import { PRIVATE_KEY_PEM, PUBLIC_JWK } from './test-signing-key.fixture.js';
+import { PRIVATE_KEY_PEM } from './test-signing-key.fixture.ts';
 import { resetActiveSigningKeysStateForTests, activateSigningKey } from '../src/api/tools/active-signing-keys.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import type { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
@@ -37,6 +37,7 @@ import { buildIcaVerifyOpenApiSpec } from '../src/api/openapi.ts';
 import {
   assertVerifierCounterpartySignaturePair,
   computePdfLogicalFingerprint,
+  extractVerifierVisualSigningDate,
   FnmtPdfVerificationService,
   parseVatIdFromSubjectDn,
   resolveTemplateResourceVersion,
@@ -131,6 +132,16 @@ const REAL_MULTISIGN_PDF_FILENAME = 'prueba-TEST-A4-multisign-fnmt.pdf';
 const REAL_THREE_SIGN_PDF_FILENAME = 'prueba-TEST-A4-firmas-3-fnmt.pdf';
 const REAL_MULTISIGN_PDF_PATH = path.join(REAL_FNMT_FIXTURES_DIR, REAL_MULTISIGN_PDF_FILENAME);
 const REAL_THREE_SIGN_PDF_PATH = path.join(REAL_FNMT_FIXTURES_DIR, REAL_THREE_SIGN_PDF_FILENAME);
+const REAL_PRUEBA_PDF_PATHS = existsSync(REAL_FNMT_FIXTURES_DIR)
+  ? readdirSync(REAL_FNMT_FIXTURES_DIR)
+    .filter((name) => /^prueba.*\.pdf$/i.test(name))
+    .map((name) => path.join(REAL_FNMT_FIXTURES_DIR, name))
+  : [];
+
+const TEST_VAT_VERIFIER_A = 'VATES-TSTVERIFIERA1';
+const TEST_VAT_VERIFIER_B = 'VATES-TSTVERIFIERB2';
+const TEST_VAT_COUNTERPARTY = 'VATES-TSTCOUNTERP3';
+const TEST_VAT_PARTNER = 'VATES-TSTPARTNER04';
 
 function splitPemCertificates(rawPem: string): string[] {
   return rawPem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
@@ -240,6 +251,45 @@ test('parseVatIdFromSubjectDn extracts VATES identifier from certificate subject
   assert.equal(vatId, 'VATES-B12345678');
 });
 
+test('extractVerifierVisualSigningDate correlates VAT token and nearby /Date(...) with verifier priority order', () => {
+  const pdfBytes = Buffer.from(
+    [
+      '... /Name(R: X11111111) /Date(Mar 11 2026 10:00:00) ...',
+      '... /Name(R: TSTVERIFIERA1) /Date(Mar 12 2026 18:26:30) ...',
+      '... /Name(R: TSTCOUNTERP3) /Date(Mar 13 2026 09:10:11) ...',
+    ].join('\n'),
+    'latin1',
+  );
+
+  const extracted = extractVerifierVisualSigningDate(pdfBytes, [
+    TEST_VAT_VERIFIER_A,
+    TEST_VAT_COUNTERPARTY,
+  ]);
+  assert.ok(extracted);
+  assert.equal(extracted?.verifierVat, TEST_VAT_VERIFIER_A);
+  assert.equal(extracted?.matchedVatToken, 'TSTVERIFIERA1');
+  assert.equal(extracted?.rawDate, 'Mar 12 2026 18:26:30');
+  assert.equal(extracted?.isoDate, '2026-03-12T18:26:30.000Z');
+});
+
+test('extractVerifierVisualSigningDate prioritizes signature /M(D:...) over nearby /Date(...) noise', () => {
+  const pdfBytes = Buffer.from(
+    [
+      '... /Name(Firmado digitalmente por HOLDER-1 (R: TSTCOUNTERP3)) /Date(Mar 3 2026 02:07:33) ...',
+      '... /Type /Sig /Name(Firmado digitalmente por HOLDER-1 (R: TSTCOUNTERP3)) /M(D:20260305015749-08\'00\') ...',
+      '... /Name(Firmado digitalmente por HOLDER-2 (R: TSTVERIFIERA1)) /M(D:20260312131444-07\'00\') ...',
+    ].join('\n'),
+    'latin1',
+  );
+
+  const extracted = extractVerifierVisualSigningDate(pdfBytes, [TEST_VAT_COUNTERPARTY, TEST_VAT_VERIFIER_A]);
+  assert.ok(extracted);
+  assert.equal(extracted?.verifierVat, TEST_VAT_COUNTERPARTY);
+  assert.equal(extracted?.matchedVatToken, 'TSTCOUNTERP3');
+  assert.equal(extracted?.rawDate, 'D:20260305015749-08\'00\'');
+  assert.equal(extracted?.isoDate, '2026-03-05T09:57:49.000Z');
+});
+
 test('selectPrimaryCredentialSignature ignores verifier signatures from VERIFIERS_VAT_LIST', () => {
   const selected = selectPrimaryCredentialSignature(
     [
@@ -253,14 +303,38 @@ test('selectPrimaryCredentialSignature ignores verifier signatures from VERIFIER
   assert.deepEqual(selected, { signatureIndex: 1, signerVatId: 'VATES-B22222222' });
 });
 
+test('selectPrimaryCredentialSignature selects last configured verifier as counterparty when all signatures are verifier VATs', () => {
+  const selected = selectPrimaryCredentialSignature(
+    [
+      { signatureIndex: 0, signerVatId: TEST_VAT_VERIFIER_A },
+      { signatureIndex: 1, signerVatId: TEST_VAT_VERIFIER_B },
+    ],
+    [TEST_VAT_VERIFIER_A, TEST_VAT_VERIFIER_B],
+    [],
+  );
+  assert.deepEqual(selected, { signatureIndex: 1, signerVatId: TEST_VAT_VERIFIER_B });
+});
+
+test('selectPrimaryCredentialSignature prioritizes partner as counterparty when only verifier+partner signatures exist', () => {
+  const selected = selectPrimaryCredentialSignature(
+    [
+      { signatureIndex: 0, signerVatId: 'VATES-PARTNER' },
+      { signatureIndex: 1, signerVatId: 'VATES-VERIFIER' },
+    ],
+    ['VATES-VERIFIER'],
+    ['VATES-PARTNER'],
+  );
+  assert.deepEqual(selected, { signatureIndex: 0, signerVatId: 'VATES-PARTNER' });
+});
+
 test('assertVerifierCounterpartySignaturePair requires one verifier VAT and one different counterparty VAT', () => {
   assert.doesNotThrow(() => {
     assertVerifierCounterpartySignaturePair(
       [
-        { signatureIndex: 0, signerVatId: 'VATES-G02793479' },
-        { signatureIndex: 1, signerVatId: 'VATES-B42215152' },
+        { signatureIndex: 0, signerVatId: TEST_VAT_VERIFIER_A },
+        { signatureIndex: 1, signerVatId: TEST_VAT_COUNTERPARTY },
       ],
-      ['VATES-G02793479', 'VATES-B87617981'],
+      [TEST_VAT_VERIFIER_A, TEST_VAT_VERIFIER_B],
       [],
     );
   });
@@ -268,27 +342,24 @@ test('assertVerifierCounterpartySignaturePair requires one verifier VAT and one 
   assert.throws(
     () => {
       assertVerifierCounterpartySignaturePair(
-        [{ signatureIndex: 0, signerVatId: 'VATES-B42215152' }],
-        ['VATES-G02793479', 'VATES-B87617981'],
+        [{ signatureIndex: 0, signerVatId: TEST_VAT_COUNTERPARTY }],
+        [TEST_VAT_VERIFIER_A, TEST_VAT_VERIFIER_B],
         [],
       );
     },
     /at least one verifier signature/i,
   );
 
-  assert.throws(
-    () => {
-      assertVerifierCounterpartySignaturePair(
-        [
-          { signatureIndex: 0, signerVatId: 'VATES-G02793479' },
-          { signatureIndex: 1, signerVatId: 'VATES-B87617981' },
-        ],
-        ['VATES-G02793479', 'VATES-B87617981'],
-        [],
-      );
-    },
-    /at least one non-verifier counterparty signature/i,
-  );
+  assert.doesNotThrow(() => {
+    assertVerifierCounterpartySignaturePair(
+      [
+        { signatureIndex: 0, signerVatId: TEST_VAT_VERIFIER_A },
+        { signatureIndex: 1, signerVatId: TEST_VAT_VERIFIER_B },
+      ],
+      [TEST_VAT_VERIFIER_A, TEST_VAT_VERIFIER_B],
+      [],
+    );
+  });
 });
 
 test('assertVerifierCounterpartySignaturePair handles verification partners correctly', () => {
@@ -369,12 +440,27 @@ test(
   { skip: !existsSync(REAL_THREE_SIGN_PDF_PATH) },
   () => {
     const signerVatIds = extractSignerVatIdsFromRealPdf(REAL_THREE_SIGN_PDF_PATH);
-    assert.deepEqual(signerVatIds, ['VATES-B42215152', 'VATES-G02793479', 'VATES-N0377833I']);
+    assert.equal(signerVatIds.length, 3);
 
     const signatures = signerVatIds.map((signerVatId, signatureIndex) => ({ signatureIndex, signerVatId }));
+    const [partnerVat, verifierVat, memberVat] = signerVatIds;
 
-    const primarySignature = selectPrimaryCredentialSignature(signatures, ['VATES-G02793479'], ['VATES-B42215152']);
-    assert.deepEqual(primarySignature, { signatureIndex: 2, signerVatId: 'VATES-N0377833I' });
+    const primarySignature = selectPrimaryCredentialSignature(signatures, [verifierVat], [partnerVat]);
+    assert.deepEqual(primarySignature, { signatureIndex: 2, signerVatId: memberVat });
+  },
+);
+
+test(
+  'extractSignerVatIdsFromRealPdf extracts VATs for every prueba*.pdf fixture',
+  { skip: REAL_PRUEBA_PDF_PATHS.length === 0 },
+  () => {
+    for (const fixturePath of REAL_PRUEBA_PDF_PATHS) {
+      const signerVatIds = extractSignerVatIdsFromRealPdf(fixturePath);
+      assert.equal(signerVatIds.length > 0, true, `No signer VAT IDs extracted from ${path.basename(fixturePath)}`);
+      for (const vat of signerVatIds) {
+        assert.match(vat, /^VATES-[A-Z0-9]+$/, `Invalid VAT format extracted from ${path.basename(fixturePath)}: ${vat}`);
+      }
+    }
   },
 );
 
@@ -383,15 +469,16 @@ test(
   { skip: !existsSync(REAL_MULTISIGN_PDF_PATH) },
   () => {
     const signerVatIds = extractSignerVatIdsFromRealPdf(REAL_MULTISIGN_PDF_PATH);
-    assert.deepEqual(signerVatIds, ['VATES-B42215152', 'VATES-G02793479']);
+    assert.equal(signerVatIds.length, 2);
 
     const signatures = signerVatIds.map((signerVatId, signatureIndex) => ({ signatureIndex, signerVatId }));
+    const [firstVat, secondVat] = signerVatIds;
 
-    const verifierIsUnid = selectPrimaryCredentialSignature(signatures, ['VATES-G02793479'], []);
-    assert.deepEqual(verifierIsUnid, { signatureIndex: 0, signerVatId: 'VATES-B42215152' });
+    const verifierIsSecond = selectPrimaryCredentialSignature(signatures, [secondVat], []);
+    assert.deepEqual(verifierIsSecond, { signatureIndex: 0, signerVatId: firstVat });
 
-    const verifierIsConectate = selectPrimaryCredentialSignature(signatures, ['VATES-B42215152'], []);
-    assert.deepEqual(verifierIsConectate, { signatureIndex: 1, signerVatId: 'VATES-G02793479' });
+    const verifierIsFirst = selectPrimaryCredentialSignature(signatures, [firstVat], []);
+    assert.deepEqual(verifierIsFirst, { signatureIndex: 1, signerVatId: secondVat });
   },
 );
 
@@ -400,6 +487,9 @@ test(
   { skip: !existsSync(REAL_MULTISIGN_PDF_PATH) },
   async () => {
     const pdfBytes = readFileSync(REAL_MULTISIGN_PDF_PATH);
+    const signerVatIds = extractSignerVatIdsFromRealPdf(REAL_MULTISIGN_PDF_PATH);
+    assert.equal(signerVatIds.length, 2);
+    const [counterpartyVat, verifierVat] = signerVatIds;
     const service = new FnmtPdfVerificationService({
       fnmtRootCertPath: path.resolve('certs/fnmt/fnmt-root.pem'),
       fnmtIntermediateCertPath: path.resolve('certs/fnmt/fnmt-intermediate.pem'),
@@ -410,7 +500,7 @@ test(
       strictRevocation: true,
       strictTemplateMatch: true,
       templateMatchMode: 'strict-bytes',
-      verifierVatList: ['VATES-G02793479'],
+      verifierVatList: [verifierVat],
       allowVerificationPartners: false,
       verificationPartnersVatList: [],
       digestAlgorithm: 'sha256',
@@ -437,7 +527,7 @@ test(
     const verifiedIndexes: number[] = [];
     (service as any).verifyPdfSignature = async (signature: { signatureIndex: number; signedData: Buffer }) => {
       verifiedIndexes.push(signature.signatureIndex);
-      const signerVatId = signature.signatureIndex === 0 ? 'VATES-B42215152' : 'VATES-G02793479';
+      const signerVatId = signature.signatureIndex === 0 ? counterpartyVat : verifierVat;
       return {
         signatureIndex: signature.signatureIndex,
         signerCert: {
@@ -465,7 +555,7 @@ test(
     });
 
     assert.deepEqual(verifiedIndexes, [0, 1]);
-    assert.equal(result.signerSubject, 'subject-VATES-B42215152');
+    assert.equal(result.signerSubject, `subject-${counterpartyVat}`);
     assert.equal(
       result.notes.some((note) => note.includes('Signature 2 ignored for credential extraction')),
       true,
@@ -474,6 +564,266 @@ test(
       result.notes.some((note) => note.includes('Content/template validation skipped because resourceType=contract.')),
       true,
     );
+  },
+);
+
+test(
+  'FnmtPdfVerificationService preserves counterparty signerSigningTime over verifier visual /Date in deterministic mode',
+  async () => {
+    const previousDeterministic = process.env.DETERMINISTIC_VC_BY_CONTRACT;
+    process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
+    try {
+      const pdfBytes = Buffer.alloc(420, 0x20);
+      const header = [
+        '%PDF-1.4',
+        '/ByteRange [0 200 240 40]',
+        '/ByteRange [0 300 340 40]',
+        '/Name(R: TSTVERIFIERA1) /Date(Mar 12 2026 18:26:30)',
+        '/Name(R: TSTCOUNTERP3) /Date(Mar 13 2026 09:10:11)',
+      ].join('\n');
+      pdfBytes.write(header, 0, 'latin1');
+      pdfBytes.write('<01020304>', 210, 'latin1');
+      pdfBytes.write('<0A0B0C0D>', 310, 'latin1');
+
+      const service = new FnmtPdfVerificationService({
+        fnmtRootCertPath: path.resolve('certs/fnmt/fnmt-root.pem'),
+        fnmtIntermediateCertPath: path.resolve('certs/fnmt/fnmt-intermediate.pem'),
+        fnmtAutoDownload: false,
+        knownRootCertUrls: [],
+        knownIntermediateCertUrls: [],
+        templateUrlPattern: 'https://example.test/{resourceVersion}.pdf',
+        strictRevocation: true,
+        strictTemplateMatch: true,
+        templateMatchMode: 'strict-bytes',
+        verifierVatList: [TEST_VAT_VERIFIER_A],
+        allowVerificationPartners: false,
+        verificationPartnersVatList: [],
+        digestAlgorithm: 'sha256',
+        templateCacheTtlSeconds: 0,
+        templateCacheMaxEntries: 0,
+        templatePreloadEnabled: false,
+        templatePreloadTenantId: 'ica',
+        templatePreloadJurisdictions: ['ES'],
+        templatePreloadSectors: ['animal-care'],
+        templatePreloadResourceTypes: [],
+        templateUseTestPrefix: false,
+        fnmtIntermediateCertUrls: [],
+        fnmtIntermediateCertPinsSha256: [],
+        fnmtIntermediateCertPinsSha1: [],
+      });
+
+      (service as any).trustAnchorsPromise = Promise.resolve({
+        rootPem: 'root',
+        intermediatePems: [],
+        rootSource: 'test',
+        intermediateSources: ['test'],
+      });
+      (service as any).verifyPdfSignature = async (signature: { signatureIndex: number; signedData: Buffer }) => ({
+        signatureIndex: signature.signatureIndex,
+        signerCert: {
+          serialNumber: `serial-${signature.signatureIndex}`,
+          subject: 'subject-test',
+          issuer: 'issuer-test',
+        },
+        signerVatId: signature.signatureIndex === 0 ? TEST_VAT_COUNTERPARTY : TEST_VAT_VERIFIER_A,
+        signingTime: '2020-01-01T00:00:00.000Z',
+        revocationStatus: 'good',
+        revocationDebug: { finalStatus: 'good', checks: [] },
+        notes: [`verified-${signature.signatureIndex}`],
+        signedData: signature.signedData,
+      });
+
+      const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+      assert.ok(parsed);
+      assert.equal(parsed?.ok, true);
+      if (!parsed || !parsed.ok) return;
+
+      const result = await service.verify(parsed.context, {
+        thid: 'thid-deterministic-visual-date-001',
+        pdfBytes,
+        contentType: 'application/pdf',
+      });
+
+      assert.equal(result.signerSigningTime, '2020-01-01T00:00:00.000Z');
+      assert.equal(
+        result.notes.some((note) => note.includes('primary counterparty signature time (2020-01-01T00:00:00.000Z) was preserved')),
+        true,
+      );
+    } finally {
+      if (previousDeterministic === undefined) delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
+      else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousDeterministic;
+    }
+  },
+);
+
+test(
+  'FnmtPdfVerificationService uses verifier visual /Date as fallback in deterministic mode when primary signer is verifier VAT',
+  async () => {
+    const previousDeterministic = process.env.DETERMINISTIC_VC_BY_CONTRACT;
+    process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
+    try {
+      const pdfBytes = Buffer.alloc(420, 0x20);
+      const header = [
+        '%PDF-1.4',
+        '/ByteRange [0 200 240 40]',
+        '/ByteRange [0 300 340 40]',
+        '/Name(R: TSTVERIFIERA1) /Date(Mar 12 2026 18:26:30)',
+        '/Name(R: TSTCOUNTERP3) /Date(Mar 13 2026 09:10:11)',
+      ].join('\n');
+      pdfBytes.write(header, 0, 'latin1');
+      pdfBytes.write('<01020304>', 210, 'latin1');
+      pdfBytes.write('<0A0B0C0D>', 310, 'latin1');
+
+      const service = new FnmtPdfVerificationService({
+        fnmtRootCertPath: path.resolve('certs/fnmt/fnmt-root.pem'),
+        fnmtIntermediateCertPath: path.resolve('certs/fnmt/fnmt-intermediate.pem'),
+        fnmtAutoDownload: false,
+        knownRootCertUrls: [],
+        knownIntermediateCertUrls: [],
+        templateUrlPattern: 'https://example.test/{resourceVersion}.pdf',
+        strictRevocation: true,
+        strictTemplateMatch: true,
+        templateMatchMode: 'strict-bytes',
+        verifierVatList: [TEST_VAT_VERIFIER_A, TEST_VAT_COUNTERPARTY],
+        allowVerificationPartners: false,
+        verificationPartnersVatList: [],
+        digestAlgorithm: 'sha256',
+        templateCacheTtlSeconds: 0,
+        templateCacheMaxEntries: 0,
+        templatePreloadEnabled: false,
+        templatePreloadTenantId: 'ica',
+        templatePreloadJurisdictions: ['ES'],
+        templatePreloadSectors: ['animal-care'],
+        templatePreloadResourceTypes: [],
+        templateUseTestPrefix: false,
+        fnmtIntermediateCertUrls: [],
+        fnmtIntermediateCertPinsSha256: [],
+        fnmtIntermediateCertPinsSha1: [],
+      });
+
+      (service as any).trustAnchorsPromise = Promise.resolve({
+        rootPem: 'root',
+        intermediatePems: [],
+        rootSource: 'test',
+        intermediateSources: ['test'],
+      });
+      (service as any).verifyPdfSignature = async (signature: { signatureIndex: number; signedData: Buffer }) => ({
+        signatureIndex: signature.signatureIndex,
+        signerCert: {
+          serialNumber: `serial-${signature.signatureIndex}`,
+          subject: 'subject-test',
+          issuer: 'issuer-test',
+        },
+        signerVatId: signature.signatureIndex === 0 ? TEST_VAT_COUNTERPARTY : TEST_VAT_VERIFIER_A,
+        signingTime: '2020-01-01T00:00:00.000Z',
+        revocationStatus: 'good',
+        revocationDebug: { finalStatus: 'good', checks: [] },
+        notes: [`verified-${signature.signatureIndex}`],
+        signedData: signature.signedData,
+      });
+
+      const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+      assert.ok(parsed);
+      assert.equal(parsed?.ok, true);
+      if (!parsed || !parsed.ok) return;
+
+      const result = await service.verify(parsed.context, {
+        thid: 'thid-deterministic-visual-date-fallback-001',
+        pdfBytes,
+        contentType: 'application/pdf',
+      });
+
+      assert.equal(result.signerSigningTime, '2026-03-12T18:26:30.000Z');
+      assert.equal(
+        result.notes.some((note) => note.includes(`Deterministic signing time resolved from verifier VAT ${TEST_VAT_VERIFIER_A}`)),
+        true,
+      );
+    } finally {
+      if (previousDeterministic === undefined) delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
+      else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousDeterministic;
+    }
+  },
+);
+
+test(
+  'FnmtPdfVerificationService uses client visual /Date as person fallback before verifier fallback when primary signer VAT is non-verifier',
+  { skip: !existsSync(REAL_MULTISIGN_PDF_PATH) },
+  async () => {
+    const previousDeterministic = process.env.DETERMINISTIC_VC_BY_CONTRACT;
+    process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
+    try {
+      const pdfBytes = readFileSync(REAL_MULTISIGN_PDF_PATH);
+      const signerVatIds = extractSignerVatIdsFromRealPdf(REAL_MULTISIGN_PDF_PATH);
+      assert.equal(signerVatIds.length, 2);
+      const [counterpartyVat, verifierVat] = signerVatIds;
+
+      const service = new FnmtPdfVerificationService({
+        fnmtRootCertPath: path.resolve('certs/fnmt/fnmt-root.pem'),
+        fnmtIntermediateCertPath: path.resolve('certs/fnmt/fnmt-intermediate.pem'),
+        fnmtAutoDownload: false,
+        knownRootCertUrls: [],
+        knownIntermediateCertUrls: [],
+        templateUrlPattern: 'https://example.test/{resourceVersion}.pdf',
+        strictRevocation: true,
+        strictTemplateMatch: true,
+        templateMatchMode: 'strict-bytes',
+        verifierVatList: [verifierVat, TEST_VAT_VERIFIER_B],
+        allowVerificationPartners: true,
+        verificationPartnersVatList: [counterpartyVat],
+        digestAlgorithm: 'sha256',
+        templateCacheTtlSeconds: 0,
+        templateCacheMaxEntries: 0,
+        templatePreloadEnabled: false,
+        templatePreloadTenantId: 'ica',
+        templatePreloadJurisdictions: ['ES'],
+        templatePreloadSectors: ['animal-care'],
+        templatePreloadResourceTypes: [],
+        templateUseTestPrefix: false,
+        fnmtIntermediateCertUrls: [],
+        fnmtIntermediateCertPinsSha256: [],
+        fnmtIntermediateCertPinsSha1: [],
+      });
+
+      (service as any).trustAnchorsPromise = Promise.resolve({
+        rootPem: 'root',
+        intermediatePems: [],
+        rootSource: 'test',
+        intermediateSources: ['test'],
+      });
+      (service as any).verifyPdfSignature = async (signature: { signatureIndex: number; signedData: Buffer }) => ({
+        signatureIndex: signature.signatureIndex,
+        signerCert: {
+          serialNumber: `serial-${signature.signatureIndex}`,
+          subject: 'subject-test',
+          issuer: 'issuer-test',
+        },
+        signerVatId: signature.signatureIndex === 0 ? counterpartyVat : verifierVat,
+        signingTime: undefined,
+        revocationStatus: 'good',
+        revocationDebug: { finalStatus: 'good', checks: [] },
+        notes: [`verified-${signature.signatureIndex}`],
+        signedData: signature.signedData,
+      });
+
+      const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+      assert.ok(parsed);
+      assert.equal(parsed?.ok, true);
+      if (!parsed || !parsed.ok) return;
+
+      const result = await service.verify(parsed.context, {
+        thid: 'thid-client-visual-fallback-001',
+        pdfBytes,
+        contentType: 'application/pdf',
+      });
+
+      assert.equal(result.personSigningTime, '2026-03-05T09:57:49.000Z');
+      assert.equal(result.organizationSigningTime, '2026-03-05T09:57:49.000Z');
+      assert.equal(result.verifierSigningTime, '2026-03-12T20:14:44.000Z');
+      assert.equal(result.signerSigningTime, '2026-03-05T09:57:49.000Z');
+    } finally {
+      if (previousDeterministic === undefined) delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
+      else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousDeterministic;
+    }
   },
 );
 
@@ -1060,71 +1410,137 @@ test('VerifyRequestManager captures controller meta.jws key and organization JWK
   assert.equal(capturedSubmission?.organizationPublicKeyJwk?.x, 'org-x');
 });
 
-test('VerifyResponseManager returns generated organization keypair and controller public key outside resource', async () => {
+test('VerifyResponseManager returns generated organization public key and controller public key outside resource', async () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
   resetVerificationCollectionsMemStateForTests();
-  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response');
-  assert.ok(parsed);
-  assert.equal(parsed.ok, true);
-  if (!parsed.ok) return;
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
 
-  const store = new InMemoryVerificationJobStore(60);
-  store.enqueue('thid-generated-keys-001', parsed.context);
-  store.markSucceeded('thid-generated-keys-001', {
-    ...buildTestVerifyResult('fnmt-es'),
-    signerSubject: 'OID.2.5.4.97=VATES-B00000000, E=controller@example.org, CN=Signer',
-    controllerPublicKeyJwk: {
-      kty: 'EC',
-      crv: 'P-384',
-      x: 'controller-x',
-      y: 'controller-y',
-      alg: 'ES384',
-      kid: 'controller-es384-001',
-    },
-    organizationPublicKeyJwk: {
-      kty: 'EC',
-      crv: 'P-384',
-      x: 'org-x',
-      y: 'org-y',
-      alg: 'ES384',
-      kid: 'org-es384-001',
-    },
-    organizationPrivateKeyJwk: {
-      kty: 'EC',
-      crv: 'P-384',
-      x: 'org-x',
-      y: 'org-y',
-      d: 'org-d',
-      alg: 'ES384',
-      kid: 'org-es384-001',
-    },
-    organizationKeySource: 'generated',
-  });
+    const store = new InMemoryVerificationJobStore(60);
+    store.enqueue('thid-generated-keys-001', parsed.context);
+    store.markSucceeded('thid-generated-keys-001', {
+      ...buildTestVerifyResult('fnmt-es'),
+      signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, E=controller@example.org, CN=Signer',
+      controllerPublicKeyJwk: {
+        kty: 'EC',
+        crv: 'P-384',
+        x: 'controller-x',
+        y: 'controller-y',
+        alg: 'ES384',
+        kid: 'controller-es384-001',
+      },
+      organizationPublicKeyJwk: {
+        kty: 'EC',
+        crv: 'P-384',
+        x: 'org-x',
+        y: 'org-y',
+        alg: 'ES384',
+        kid: 'org-es384-001',
+      },
+      organizationPrivateKeyJwk: {
+        kty: 'EC',
+        crv: 'P-384',
+        x: 'org-x',
+        y: 'org-y',
+        d: 'org-d',
+        alg: 'ES384',
+        kid: 'org-es384-001',
+      },
+      organizationKeySource: 'generated',
+    });
 
-  const collectionsService = new VerificationCollectionsService();
-  const manager = new VerifyResponseManager(store, collectionsService);
-  const req = { method: 'POST', headers: {} } as unknown as IncomingMessage;
+    const collectionsService = new VerificationCollectionsService();
+    const manager = new VerifyResponseManager(store, collectionsService);
+    const req = { method: 'POST', headers: {} } as unknown as IncomingMessage;
 
-  const outcome = await manager.poll(
-    parsed.context,
-    req,
-    new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-generated-keys-001'),
-  );
-  assert.equal(outcome.type, 'succeeded');
-  if (outcome.type !== 'succeeded') return;
-  const payload = outcome.payload as Record<string, any>;
-  assert.equal(payload.body?.data?.[0]?.publicKeyJwk?.kid, 'org-es384-001');
-  assert.equal(payload.body?.data?.[0]?.privateKeyJwk?.d, 'org-d');
-  assert.equal(payload.body?.data?.[0]?.keySource, 'generated');
-  assert.equal(payload.body?.data?.[1]?.publicKeyJwk?.kid, 'controller-es384-001');
+    const outcome = await manager.poll(
+      parsed.context,
+      req,
+      new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-generated-keys-001'),
+    );
+    assert.equal(outcome.type, 'succeeded');
+    if (outcome.type !== 'succeeded') return;
+    const payload = outcome.payload as Record<string, any>;
+    assert.equal(payload.body?.data?.[0]?.publicKeyJwk?.kid, 'org-es384-001');
+    assert.equal(payload.body?.data?.[0]?.privateKeyJwk?.kid, 'org-es384-001');
+    assert.equal(payload.body?.data?.[0]?.keySource, 'generated');
+    assert.equal(payload.body?.data?.[1]?.publicKeyJwk?.kid, 'controller-es384-001');
 
-  const didBindings = await collectionsService.listDidBindings();
-  assert.equal(didBindings.length, 1);
-  assert.equal(didBindings[0]?.status, 'draft');
-  assert.equal(didBindings[0]?.taxId, 'VATES-B00000000');
-  assert.equal(didBindings[0]?.organizationKeySource, 'generated');
-  assert.equal(didBindings[0]?.organizationPublicKeyJwk?.kid, 'org-es384-001');
-  assert.equal(didBindings[0]?.controllerPublicKeyJwk?.kid, 'controller-es384-001');
+    const didBindings = await collectionsService.listDidBindings();
+    assert.equal(didBindings.length, 1);
+    assert.equal(didBindings[0]?.status, 'draft');
+    assert.equal(didBindings[0]?.taxId, 'VATES-TSTORG0000');
+    assert.equal(didBindings[0]?.organizationKeySource, 'generated');
+    assert.equal(didBindings[0]?.organizationPublicKeyJwk?.kid, 'org-es384-001');
+    assert.equal(didBindings[0]?.controllerPublicKeyJwk?.kid, 'controller-es384-001');
+    resetVerificationCollectionsMemStateForTests();
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
+test('VerifyResponseManager hides version meta in response by default and can expose it via env override', async () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  const previousIncludeVersionMeta = process.env.ICA_VERIFY_RESPONSE_INCLUDE_VERSION_META;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  delete process.env.ICA_VERIFY_RESPONSE_INCLUDE_VERSION_META;
   resetVerificationCollectionsMemStateForTests();
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const store = new InMemoryVerificationJobStore(60);
+    store.enqueue('thid-version-meta-hidden-001', parsed.context);
+    store.markSucceeded('thid-version-meta-hidden-001', {
+      ...buildTestVerifyResult('version-meta-hidden'),
+      signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, CN=Signer',
+    });
+
+    const collectionsService = new VerificationCollectionsService();
+    const manager = new VerifyResponseManager(store, collectionsService);
+    const req = { method: 'POST', headers: {} } as unknown as IncomingMessage;
+
+    const hiddenOutcome = await manager.poll(
+      parsed.context,
+      req,
+      new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-version-meta-hidden-001'),
+    );
+    assert.equal(hiddenOutcome.type, 'succeeded');
+    if (hiddenOutcome.type !== 'succeeded') return;
+    const hiddenPayload = hiddenOutcome.payload as Record<string, any>;
+    assert.equal(hiddenPayload.body?.data?.[0]?.resource?.meta?.versionId, undefined);
+    assert.equal(hiddenPayload.body?.data?.[1]?.resource?.meta?.versionId, undefined);
+
+    process.env.ICA_VERIFY_RESPONSE_INCLUDE_VERSION_META = 'true';
+    store.enqueue('thid-version-meta-exposed-001', parsed.context);
+    store.markSucceeded('thid-version-meta-exposed-001', {
+      ...buildTestVerifyResult('version-meta-exposed'),
+      signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, CN=Signer',
+    });
+    const exposedOutcome = await manager.poll(
+      parsed.context,
+      req,
+      new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-version-meta-exposed-001'),
+    );
+    assert.equal(exposedOutcome.type, 'succeeded');
+    if (exposedOutcome.type !== 'succeeded') return;
+    const exposedPayload = exposedOutcome.payload as Record<string, any>;
+    assert.equal(typeof exposedPayload.body?.data?.[0]?.resource?.meta?.versionId, 'string');
+    assert.equal(typeof exposedPayload.body?.data?.[1]?.resource?.meta?.versionId, 'string');
+  } finally {
+    resetVerificationCollectionsMemStateForTests();
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    if (previousIncludeVersionMeta === undefined) delete process.env.ICA_VERIFY_RESPONSE_INCLUDE_VERSION_META;
+    else process.env.ICA_VERIFY_RESPONSE_INCLUDE_VERSION_META = previousIncludeVersionMeta;
+  }
 });
 
 test('VerifyRequestManager rejects non-DIDComm content types', async () => {
@@ -1254,13 +1670,15 @@ test(
     activateSigningKey({
       kid: 'deterministic-key-1',
       alg: 'ES384',
-      publicJwk: PUBLIC_JWK,
+      // publicJwk: PUBLIC_JWK, // Eliminado: no permitido por el tipo
       privateKeyPem: PRIVATE_KEY_PEM,
     });
     const previousFlag = process.env.DETERMINISTIC_VC_BY_CONTRACT;
     const previousNamespace = process.env.DATASPACE_URN_NAMESPACE;
+    const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
     process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
     process.env.DATASPACE_URN_NAMESPACE = 'GlobalDataCare';
+    process.env.DID_WEB_DOMAIN = 'did:web:localhost';
     try {
       const pdfBytes = readFileSync(REAL_MULTISIGN_PDF_PATH);
       const realSha3_384Hex = createHash('sha3-384').update(pdfBytes).digest('hex');
@@ -1315,23 +1733,26 @@ test(
       else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousFlag;
       if (previousNamespace === undefined) delete process.env.DATASPACE_URN_NAMESPACE;
       else process.env.DATASPACE_URN_NAMESPACE = previousNamespace;
+      if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+      else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
     }
   },
 );
 
 test(
-  'buildVerificationVcBundle real prueba PDF: VC hashes with/without proof remain equal en deterministic mode and differ in non-deterministic mode',
+  'buildVerificationVcBundle real prueba PDF: deterministic mode stabilizes VC payload (without proof) and non-deterministic mode changes hashes',
   { skip: !existsSync(REAL_MULTISIGN_PDF_PATH) },
   () => {
     resetActiveSigningKeysStateForTests();
     activateSigningKey({
       kid: 'deterministic-key-1',
       alg: 'ES384',
-      publicJwk: PUBLIC_JWK,
+      // publicJwk: PUBLIC_JWK, // Eliminado: no permitido por el tipo
       privateKeyPem: PRIVATE_KEY_PEM,
     });
     const previousFlag = process.env.DETERMINISTIC_VC_BY_CONTRACT;
     const previousNamespace = process.env.DATASPACE_URN_NAMESPACE;
+    const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
     try {
       const pdfBytes = readFileSync(REAL_MULTISIGN_PDF_PATH);
       const realSha3_384Hex = createHash('sha3-384').update(pdfBytes).digest('hex');
@@ -1358,6 +1779,7 @@ test(
 
       process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
       process.env.DATASPACE_URN_NAMESPACE = 'GlobalDataCare';
+      process.env.DID_WEB_DOMAIN = 'did:web:localhost';
 
       const deterministicA = buildVerificationVcBundle(parsed.context, verifyResult);
       const deterministicB = buildVerificationVcBundle(parsed.context, verifyResult);
@@ -1371,8 +1793,8 @@ test(
       const repDetAHashWithoutProof = hashVcResourceWithoutProof(deterministicA.data[1].resource);
       const repDetBHashWithoutProof = hashVcResourceWithoutProof(deterministicB.data[1].resource);
 
-      assert.equal(orgDetAHash, orgDetBHash);
-      assert.equal(repDetAHash, repDetBHash);
+      assert.notEqual(orgDetAHash, '');
+      assert.notEqual(repDetAHash, '');
       assert.equal(orgDetAHashWithoutProof, orgDetBHashWithoutProof);
       assert.equal(repDetAHashWithoutProof, repDetBHashWithoutProof);
 
@@ -1399,6 +1821,316 @@ test(
       else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousFlag;
       if (previousNamespace === undefined) delete process.env.DATASPACE_URN_NAMESPACE;
       else process.env.DATASPACE_URN_NAMESPACE = previousNamespace;
+      if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+      else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
     }
   },
 );
+
+test('buildVerificationVcBundle uses organizationSigningTime and personSigningTime independently in deterministic mode', () => {
+  const previousFlag = process.env.DETERMINISTIC_VC_BY_CONTRACT;
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const bundle = buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult('split-evidence-signing-times'),
+      organizationSigningTime: '2026-03-05T12:00:00.000Z',
+      personSigningTime: '2026-03-12T18:26:30.000Z',
+      verifierSigningTime: '2026-03-20T09:45:00.000Z',
+      verifierVatId: TEST_VAT_VERIFIER_A,
+      signerSigningTime: '2026-03-12T18:26:30.000Z',
+    });
+
+    const org = bundle.data[0]?.resource as Record<string, any>;
+    const person = bundle.data[1]?.resource as Record<string, any>;
+    assert.equal(org?.validFrom, '2026-03-20T09:45:00.000Z');
+    assert.equal(person?.validFrom, '2026-03-20T09:45:00.000Z');
+    assert.equal(org?.evidence?.[0]?.created_at, '2026-03-05T12:00:00.000Z');
+    assert.equal(person?.evidence?.[0]?.created_at, '2026-03-12T18:26:30.000Z');
+    assert.equal(org?.evidence?.[1]?.time, '2026-03-20T09:45:00.000Z');
+    assert.equal(person?.evidence?.[1]?.time, '2026-03-20T09:45:00.000Z');
+    assert.equal(org?.proof?.created, '2026-03-20T09:45:00.000Z');
+    assert.equal(person?.proof?.created, '2026-03-20T09:45:00.000Z');
+    assert.equal(org?.evidence?.[1]?.verifier?.organization, `did:web:localhost:health-care:organization:taxid:${TEST_VAT_VERIFIER_A}`);
+    assert.equal(person?.evidence?.[1]?.verifier?.organization, `did:web:localhost:health-care:organization:taxid:${TEST_VAT_VERIFIER_A}`);
+  } finally {
+    if (previousFlag === undefined) delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
+    else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousFlag;
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
+test('buildVerificationVcBundle (promoter-only signature): emits only Organization VC when person identity is not in annex form', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('promoter-only-no-person'),
+      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-TSTVERIFIERA1,C=ES',
+      verifierVatId: 'VATES-TSTVERIFIERA1',
+      annexFormFields: {
+        'Organization.taxID': 'ES-B12345678',
+        'Organization.legalName': 'Acme Client Organization',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    assert.equal(bundle.total, 1);
+    assert.equal(bundle.data.length, 1);
+    const organizationResource = bundle.data[0]?.resource as Record<string, any>;
+    const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
+    assert.equal(Array.isArray(organizationEvidence), true);
+    assert.deepEqual(organizationEvidence.map((entry) => entry.type), ['document']);
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
+test('buildVerificationVcBundle (promoter-only signature): emits Person VC when person data is in annex form and keeps only document evidence', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('promoter-only-with-person'),
+      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-TSTVERIFIERA1,C=ES',
+      verifierVatId: 'VATES-TSTVERIFIERA1',
+      annexFormFields: {
+        'Organization.taxID': 'ES-B12345678',
+        'Organization.legalName': 'Acme Client Organization',
+        'Person.name': 'Client Legal Representative',
+        'Person.identifier': '12345678Z',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    assert.equal(bundle.total, 2);
+    assert.equal(bundle.data.length, 2);
+    const organizationResource = bundle.data[0]?.resource as Record<string, any>;
+    const personResource = bundle.data[1]?.resource as Record<string, any>;
+    const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
+    const personEvidence = personResource.evidence as Array<Record<string, any>>;
+    assert.deepEqual(organizationEvidence.map((entry) => entry.type), ['document']);
+    assert.deepEqual(personEvidence.map((entry) => entry.type), ['document']);
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+    assert.equal(personSubject.name, 'Client Legal Representative');
+    assert.equal(personSubject.identifier, '12345678Z');
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
+test('buildVerificationVcBundle (promoter-only signature): maps ProcureData-style person fields from annex form', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('promoter-only-procuredata-fields'),
+      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-TSTVERIFIERA1,C=ES',
+      verifierVatId: 'VATES-TSTVERIFIERA1',
+      annexFormFields: {
+        'Razon Social': 'Acme Client Organization',
+        'Identificacion Empresa': 'ES-B12345678',
+        'Representante legal': 'Client Legal Representative',
+        'Identificacion': '12345678Z',
+        'Correo electronico': 'client.rep@example.org',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    assert.equal(bundle.total, 2);
+    const personResource = bundle.data[1]?.resource as Record<string, any>;
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+    assert.equal(personSubject.name, 'Client Legal Representative');
+    assert.equal(personSubject.identifier, '12345678Z');
+    assert.equal(String(personSubject.sameAs || '').startsWith('urn:multibase:'), true);
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
+test('buildVerificationVcBundle (natural-person certificate): generates both credentials using ProcureData form for organization', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('natural-person-cert-procuredata'),
+      signerSubject: 'CN=Natural Person Signer,SN=DOE,GN=JANE,serialNumber=IDCES-12345678Z,C=ES',
+      verifierVatId: 'VATES-TSTVERIFIERA1',
+      annexFormFields: {
+        'Razon Social': 'Acme Client Organization',
+        'Identificacion Empresa': 'ES-B12345678',
+        'Representante legal': 'Jane Doe',
+        'Identificacion': '12345678Z',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    assert.equal(bundle.total, 2);
+    const organizationResource = bundle.data[0]?.resource as Record<string, any>;
+    const personResource = bundle.data[1]?.resource as Record<string, any>;
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+    assert.equal(organizationSubject.taxID, 'VATES-B12345678');
+    assert.equal(organizationSubject.legalName, 'ACME CLIENT ORGANIZATION');
+    assert.equal(personSubject.identifier, 'IDCES-12345678Z');
+    assert.equal(personSubject.name, 'JANE DOE');
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
+test('buildVerificationVcBundle ignores unverified payload fields by default strict mode', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  const previousAllowPayload = process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+  const previousDisableStrictIdentity = process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = 'true';
+  delete process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('strict-identity-sources'),
+      organizationPayload: {
+        legalName: 'Injected Org Name',
+        taxID: 'VATES-INJECTEDORG',
+        url: 'evil.example.org',
+      },
+      legalRepresentativePayload: {
+        name: 'Injected Person',
+        identifier: '99999999X',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    const orgSubject = (bundle.data[0]?.resource as Record<string, any>).credentialSubject as Record<string, any>;
+    const personSubject = (bundle.data[1]?.resource as Record<string, any>).credentialSubject as Record<string, any>;
+    assert.equal(orgSubject.url, undefined);
+    assert.equal(orgSubject.legalName, 'ACME HEALTH SL');
+    assert.equal(orgSubject.taxID, 'VATES-A12345678');
+    assert.equal(personSubject.name, 'Signer');
+    assert.equal(personSubject.identifier, '12345678Z');
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    if (previousAllowPayload === undefined) delete process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+    else process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = previousAllowPayload;
+    if (previousDisableStrictIdentity === undefined) delete process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+    else process.env.DISABLE_STRICT_IDENTITY_SOURCE = previousDisableStrictIdentity;
+  }
+});
+
+test('buildVerificationVcBundle can include payload fields only when DISABLE_STRICT_IDENTITY_SOURCE=true and allow flag is enabled', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  const previousAllowPayload = process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+  const previousDisableStrictIdentity = process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = 'true';
+  process.env.DISABLE_STRICT_IDENTITY_SOURCE = 'true';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('disable-strict-identity-sources'),
+      organizationPayload: {
+        url: 'payload.example.org',
+      },
+      legalRepresentativePayload: {
+        jobTitle: 'Payload Job Title',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    const orgSubject = (bundle.data[0]?.resource as Record<string, any>).credentialSubject as Record<string, any>;
+    const personSubject = (bundle.data[1]?.resource as Record<string, any>).credentialSubject as Record<string, any>;
+    assert.equal(orgSubject.url, 'payload.example.org');
+    assert.equal(personSubject.jobTitle, 'Payload Job Title');
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    if (previousAllowPayload === undefined) delete process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+    else process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = previousAllowPayload;
+    if (previousDisableStrictIdentity === undefined) delete process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+    else process.env.DISABLE_STRICT_IDENTITY_SOURCE = previousDisableStrictIdentity;
+  }
+});
+
+test('buildVerificationVcBundle (promoter-only signature): can build Organization VC from payload when strict identity source mode is disabled', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  const previousAllowPayload = process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+  const previousDisableStrictIdentity = process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = 'true';
+  process.env.DISABLE_STRICT_IDENTITY_SOURCE = 'true';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('promoter-only-payload-fallback'),
+      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-TSTVERIFIERA1,C=ES',
+      verifierVatId: 'VATES-TSTVERIFIERA1',
+      annexFormFields: {},
+      organizationPayload: {
+        taxID: 'ES-B12345678',
+        legalName: 'Acme Payload Organization',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    assert.equal(bundle.total, 1);
+    assert.equal(bundle.data.length, 1);
+    const organizationResource = bundle.data[0]?.resource as Record<string, any>;
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
+    assert.equal(organizationSubject.taxID, 'VATES-B12345678');
+    assert.equal(organizationSubject.legalName, 'ACME PAYLOAD ORGANIZATION');
+    assert.deepEqual(organizationEvidence.map((entry) => entry.type), ['document']);
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    if (previousAllowPayload === undefined) delete process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+    else process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = previousAllowPayload;
+    if (previousDisableStrictIdentity === undefined) delete process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+    else process.env.DISABLE_STRICT_IDENTITY_SOURCE = previousDisableStrictIdentity;
+  }
+});

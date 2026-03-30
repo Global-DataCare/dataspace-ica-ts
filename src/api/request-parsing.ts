@@ -39,7 +39,10 @@ import { assertValidDelegationPolicyResource } from './tools/odrl-delegation-pol
 import { assertSchemaOrgCredential } from './tools/schemaorg-credential-validation.ts';
 import { computeControllerAuthorizationPayloadBase64Url } from './tools/controller-authorization-payload.ts';
 import { extractVerifiedVcJwtAttachmentEvidence } from './tools/vc-jwt-evidence.ts';
-import { extractTermsAnnexFormFieldsFromPdf } from './tools/terms-annex-form.ts';
+import {
+  extractTermsAnnexFormFieldsFromPdf,
+  extractVisibleOrganizationIdentityFromPdfText,
+} from './tools/terms-annex-form.ts';
 import { normalizeSameAsHash } from './tools/multihash.ts';
 import {
   normalizeControllerPublicKeyJwk,
@@ -85,6 +88,71 @@ function asNonEmptyStringList(value: unknown): string[] {
   return value
     .map((entry) => asNonEmptyString(entry))
     .filter(Boolean);
+}
+
+function normalizeVerifierVatToken(value: string): string {
+  const upper = String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '');
+  if (!upper) return '';
+  const withoutVates = upper.startsWith('VATES') ? upper.slice(5) : upper;
+  const withoutVat = withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates;
+  return withoutVat.startsWith('ES') ? withoutVat.slice(2) : withoutVat;
+}
+
+function normalizeTaxToken(raw: string): string {
+  const upper = String(raw || '').trim().toUpperCase().replace(/[\s-]+/g, '');
+  if (!upper) return '';
+  const withoutVates = upper.startsWith('VATES') ? upper.slice(5) : upper;
+  const withoutVat = withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates;
+  return withoutVat.startsWith('ES') ? withoutVat.slice(2) : withoutVat;
+}
+
+function extractTaxTokenFromValue(value: string): string | undefined {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized) return undefined;
+  const tokenMatch = normalized.match(/\b([A-Z]\d{8}|\d{8}[A-Z])\b/);
+  return tokenMatch?.[1];
+}
+
+function looksLikeOrganizationName(value: string): boolean {
+  const normalized = String(value || '').trim();
+  if (normalized.length < 4) return false;
+  if (/@/.test(normalized)) return false;
+  if (/^\d+$/.test(normalized)) return false;
+  if (!/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(normalized)) return false;
+  if (/^(CEO|CTO|CFO|COO|MADRID|BARCELONA|SEVILLA|VALENCIA)$/i.test(normalized)) return false;
+  return true;
+}
+
+function inferOrganizationIdentityFromGenericAnnexFields(
+  annexFields: Record<string, string>,
+  verifierVatList: string[],
+): { taxID?: string; legalName?: string } {
+  const entries = Object.entries(annexFields);
+  if (!entries.length) return {};
+  const verifierSet = new Set(
+    verifierVatList
+      .map((value) => normalizeVerifierVatToken(value))
+      .filter(Boolean),
+  );
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const [, value] = entries[index];
+    const token = extractTaxTokenFromValue(value);
+    if (!token) continue;
+    const normalizedToken = normalizeTaxToken(token);
+    if (!normalizedToken || verifierSet.has(normalizedToken)) continue;
+    const taxID = `VATES-${normalizedToken}`;
+    const previousValue = index > 0 ? entries[index - 1][1] : '';
+    const legalName = looksLikeOrganizationName(previousValue)
+      ? previousValue.trim()
+      : entries.map((entry) => entry[1]).find((candidate) => looksLikeOrganizationName(candidate));
+    return {
+      taxID,
+      ...(legalName ? { legalName } : {}),
+    };
+  }
+
+  return {};
 }
 
 function normalizeContentType(headerValue: string): string {
@@ -330,6 +398,40 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   const annex = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
+  const verifierVatList = String(process.env.VERIFIERS_VAT_LIST || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const inferredFromGenericFields = inferOrganizationIdentityFromGenericAnnexFields(
+    annex.fields,
+    verifierVatList,
+  );
+  if (inferredFromGenericFields.taxID && !annex.fields['organization.taxID']) {
+    annex.fields['organization.taxID'] = inferredFromGenericFields.taxID;
+  }
+  if (inferredFromGenericFields.legalName && !annex.fields['organization.legalName']) {
+    annex.fields['organization.legalName'] = inferredFromGenericFields.legalName;
+    if (!annex.fields['organization.name']) {
+      annex.fields['organization.name'] = inferredFromGenericFields.legalName;
+    }
+  }
+  const visibleIdentity = await extractVisibleOrganizationIdentityFromPdfText(
+    pdfBytes,
+    verifierVatList,
+    process.env.ICA_SUPPORTED_JURISDICTIONS?.split(',')[0]?.trim() || 'ES',
+  );
+  if (visibleIdentity.taxID && !annex.fields['organization.taxID']) {
+    annex.fields['organization.taxID'] = visibleIdentity.taxID;
+  }
+  if (visibleIdentity.legalName && !annex.fields['organization.legalName']) {
+    annex.fields['organization.legalName'] = visibleIdentity.legalName;
+    if (!annex.fields['organization.name']) {
+      annex.fields['organization.name'] = visibleIdentity.legalName;
+    }
+  }
+  if (visibleIdentity.warnings.length) {
+    annex.warnings.push(...visibleIdentity.warnings);
+  }
   const controllerPublicKeyJwk = resolveControllerPublicKeyFromMeta(parsed);
   const organizationPublicKeyJwk = resolveOrganizationPublicKeyFromDidcommAttachments(attachments);
   
@@ -1172,13 +1274,15 @@ function parseCredentialSearchInput(
   const text = asNonEmptyString(entry.text || resource.text || fallback.text) || undefined;
   const email = asNonEmptyString(entry.email || resource.email || fallback.email) || undefined;
   const taxId = asNonEmptyString(entry.taxId || entry.taxID || resource.taxId || resource.taxID || fallback.taxId) || undefined;
+  const identifierAsTaxId = asNonEmptyString(entry.identifier || resource.identifier || fallback.identifier) || undefined;
   const taxIdHash = asNonEmptyString(entry.taxIdHash || resource.taxIdHash || fallback.taxIdHash) || undefined;
   const legalName = asNonEmptyString(entry.legalName || resource.legalName || fallback.legalName) || undefined;
   const subjectId = asNonEmptyString(entry.subjectId || resource.subjectId || fallback.subjectId) || undefined;
   const issuerId = asNonEmptyString(entry.issuerId || resource.issuerId || fallback.issuerId) || undefined;
   const credentialId = asNonEmptyString(entry.credentialId || resource.credentialId || fallback.credentialId) || undefined;
 
-  if (!id && !text && !email && !taxId && !taxIdHash && !legalName && !subjectId && !issuerId && !credentialId) {
+  const resolvedTaxId = taxId || identifierAsTaxId;
+  if (!id && !text && !email && !resolvedTaxId && !taxIdHash && !legalName && !subjectId && !issuerId && !credentialId) {
     throw new Error(
       `Credential search requires at least one filter at ${indexLabel}: id, text, email, taxId, taxIdHash, legalName, subjectId, issuerId, or credentialId.`,
     );
@@ -1188,7 +1292,7 @@ function parseCredentialSearchInput(
     id,
     text,
     email,
-    taxId,
+    taxId: resolvedTaxId,
     taxIdHash,
     legalName,
     subjectId,
@@ -1214,13 +1318,14 @@ function parseSearchInputFromParams(
   const text = (params.get('text') || '').trim();
   const email = (params.get('email') || '').trim();
   const taxId = (params.get('taxId') || params.get('taxID') || '').trim();
+  const identifier = (params.get('identifier') || '').trim();
   const taxIdHash = (params.get('taxIdHash') || '').trim();
   const legalName = (params.get('legalName') || params.get('name') || '').trim();
   const subjectId = (params.get('subjectId') || '').trim();
   const issuerId = (params.get('issuerId') || '').trim();
   const credentialId = (params.get('credentialId') || '').trim();
 
-  const mappedTaxId = taxId || (hint === 'taxId' ? id : '');
+  const mappedTaxId = taxId || identifier || (hint === 'taxId' ? id : '');
   const mappedCredentialId = credentialId || (hint === 'credentialId' ? id : '');
   const mappedSubjectId = subjectId || (hint === 'subjectId' ? id : '');
   const mappedId = hint === 'generic' ? id : '';

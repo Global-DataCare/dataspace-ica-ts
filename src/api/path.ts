@@ -12,6 +12,8 @@ import type {
   DelegationPolicyRouteContext,
   CredentialRevokeAction,
   CredentialRevokeRouteContext,
+  CredentialRetrieveAction,
+  CredentialRetrieveRouteContext,
   CredentialSearchAction,
   CredentialSearchRouteContext,
   CredentialStatusAction,
@@ -22,6 +24,12 @@ import type {
   DcatCatalogDdoDatasetRouteContext,
   DcatCatalogDdoRequestRouteContext,
   DcatCatalogRequestRouteContext,
+  ControllerExchangeAction,
+  ControllerExchangeRouteContext,
+  ApiKeyProvisioningAction,
+  ApiKeyProvisioningRouteContext,
+  IdentityAuthAction,
+  IdentityAuthRouteContext,
   IssueCredentialAction,
   IssueCredentialRouteContext,
   RotateAction,
@@ -55,6 +63,8 @@ const NETWORK_CREDENTIAL_REVOKE_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/credentials\/(?<credentialType>[^/]+)\/(?<action>_revoke(?:-response)?)$/i;
 const NETWORK_CREDENTIAL_SEARCH_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/credentials\/(?<credentialType>[^/]+)\/(?<action>_search(?:-response)?)$/i;
+const NETWORK_CREDENTIAL_RETRIEVE_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/credentials\/(?<credentialType>[^/]+)\/(?<action>_retrieve(?:-response)?)$/i;
 const NETWORK_SPACES_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/network\/spaces\/(?<action>_(?:list|replace))$/i;
 const DCAT_CATALOG_REQUEST_ROUTE_REGEX =
@@ -65,6 +75,12 @@ const DCAT_CATALOG_DDO_REQUEST_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/dcat3\/catalog\/ddo\/request$/i;
 const DCAT_CATALOG_DDO_DATASET_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/dcat3\/catalog\/ddo\/datasets\/(?<datasetId>[^/]+)$/i;
+const CONTROLLER_EXCHANGE_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/organization\/dataspace\/auth\/(?<action>_exchange(?:-response)?)$/i;
+const API_KEY_PROVISIONING_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/api-key\/org\.schema\/action\/(?<action>_(?:create|disable|remove|search)(?:-response)?)$/i;
+const IDENTITY_AUTH_ROUTE_REGEX =
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/identity\/auth\/(?<action>_(?:dcr|code|token|exchange)(?:-response)?)$/i;
 
 function asAction(raw: string): VerifyAction {
   return raw.toLowerCase() === '_verify-response' ? '_verify-response' : '_verify';
@@ -110,8 +126,40 @@ function asCredentialSearchAction(raw: string): CredentialSearchAction {
   return raw.toLowerCase() === '_search-response' ? '_search-response' : '_search';
 }
 
+function asCredentialRetrieveAction(raw: string): CredentialRetrieveAction {
+  return raw.toLowerCase() === '_retrieve-response' ? '_retrieve-response' : '_retrieve';
+}
+
 function asSpacesAction(raw: string): SpacesAction {
   return raw.toLowerCase() === '_replace' ? '_replace' : '_list';
+}
+
+function asControllerExchangeAction(raw: string): ControllerExchangeAction {
+  return raw.toLowerCase() === '_exchange-response' ? '_exchange-response' : '_exchange';
+}
+
+function asApiKeyProvisioningAction(raw: string): ApiKeyProvisioningAction {
+  const normalized = raw.toLowerCase();
+  if (normalized === '_create-response') return '_create-response';
+  if (normalized === '_disable') return '_disable';
+  if (normalized === '_disable-response') return '_disable-response';
+  if (normalized === '_remove') return '_remove';
+  if (normalized === '_remove-response') return '_remove-response';
+  if (normalized === '_search') return '_search';
+  if (normalized === '_search-response') return '_search-response';
+  return '_create';
+}
+
+function asIdentityAuthAction(raw: string): IdentityAuthAction {
+  const normalized = raw.toLowerCase();
+  if (normalized === '_dcr-response') return '_dcr-response';
+  if (normalized === '_code') return '_code';
+  if (normalized === '_code-response') return '_code-response';
+  if (normalized === '_token') return '_token';
+  if (normalized === '_token-response') return '_token-response';
+  if (normalized === '_exchange') return '_exchange';
+  if (normalized === '_exchange-response') return '_exchange-response';
+  return '_dcr';
 }
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -888,6 +936,62 @@ export function buildCredentialSearchResponseLocation(context: CredentialSearchR
   return `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/network/credentials/${context.credentialType}/_search-response`;
 }
 
+export type ParsedCredentialRetrieveRoute =
+  | { ok: true; context: CredentialRetrieveRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseCredentialRetrieveRoute(pathname: string): ParsedCredentialRetrieveRoute | null {
+  const match = NETWORK_CREDENTIAL_RETRIEVE_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+
+  const tenantId = match.groups.tenantId.trim();
+  const jurisdiction = match.groups.jurisdiction.trim();
+  const sector = match.groups.sector.trim().toLowerCase() as AllowedSector;
+  const credentialType = match.groups.credentialType.trim();
+  const action = asCredentialRetrieveAction(match.groups.action.trim());
+
+  if (!tenantId) {
+    return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
+  }
+  const localTenantId = configuredLocalTenantId();
+  if (localTenantId && tenantId.toLowerCase() !== localTenantId.toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
+    };
+  }
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: getSupportedSectorErrorMessage(),
+    };
+  }
+  if (!credentialType) {
+    return { ok: false, statusCode: 400, message: 'credentialType is required in path.' };
+  }
+
+  return {
+    ok: true,
+    context: {
+      tenantId,
+      jurisdiction,
+      sector,
+      section: 'network',
+      format: 'credentials',
+      credentialType,
+      action,
+    },
+  };
+}
+
+export function buildCredentialRetrieveResponseLocation(context: CredentialRetrieveRouteContext): string {
+  return `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/network/credentials/${context.credentialType}/_retrieve-response`;
+}
+
 export type ParsedSpacesRoute =
   | { ok: true; context: SpacesRouteContext }
   | { ok: false; statusCode: number; message: string };
@@ -933,6 +1037,175 @@ export function parseSpacesRoute(pathname: string): ParsedSpacesRoute | null {
       action,
     },
   };
+}
+
+type ParsedAuthRouteBase =
+  | {
+    ok: true;
+    route: {
+      tenantId: string;
+      jurisdiction: string;
+      sector: AllowedSector;
+      action: string;
+    };
+  }
+  | { ok: false; statusCode: number; message: string };
+
+function parseAuthRouteBase(groups: Record<string, string>): ParsedAuthRouteBase {
+  const tenantId = groups.tenantId.trim();
+  const jurisdiction = groups.jurisdiction.trim();
+  const sector = groups.sector.trim().toLowerCase() as AllowedSector;
+  const action = groups.action.trim().toLowerCase();
+
+  if (!tenantId) {
+    return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
+  }
+  const localTenantId = configuredLocalTenantId();
+  if (localTenantId && tenantId.toLowerCase() !== localTenantId.toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `tenantId must be "${localTenantId}" for this ICA deployment.`,
+    };
+  }
+  const jurisdictionValidation = validateJurisdiction(jurisdiction);
+  if (jurisdictionValidation) return jurisdictionValidation;
+  if (!isSupportedSector(sector)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: getSupportedSectorErrorMessage(),
+    };
+  }
+
+  return {
+    ok: true,
+    route: {
+      tenantId,
+      jurisdiction,
+      sector,
+      action,
+    },
+  };
+}
+
+export type ParsedControllerExchangeRoute =
+  | { ok: true; context: ControllerExchangeRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseControllerExchangeRoute(pathname: string): ParsedControllerExchangeRoute | null {
+  const match = CONTROLLER_EXCHANGE_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+  const parsed = parseAuthRouteBase(match.groups as Record<string, string>);
+  if (!parsed.ok) return parsed;
+  const action = asControllerExchangeAction(parsed.route.action);
+  return {
+    ok: true,
+    context: {
+      tenantId: parsed.route.tenantId,
+      jurisdiction: parsed.route.jurisdiction,
+      sector: parsed.route.sector,
+      section: 'organization',
+      format: 'dataspace-auth',
+      action,
+    },
+  };
+}
+
+export function buildControllerExchangeResponseLocation(
+  context: ControllerExchangeRouteContext,
+  params?: Record<string, string | undefined>,
+): string {
+  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/organization/dataspace/auth/_exchange-response`;
+  if (!params) return base;
+  const entries = Object.entries(params).filter(([, value]) => value && value.trim());
+  if (!entries.length) return base;
+  const search = new URLSearchParams();
+  for (const [key, value] of entries) {
+    if (value) search.set(key, value);
+  }
+  const suffix = search.toString();
+  return suffix ? `${base}?${suffix}` : base;
+}
+
+export type ParsedApiKeyProvisioningRoute =
+  | { ok: true; context: ApiKeyProvisioningRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseApiKeyProvisioningRoute(pathname: string): ParsedApiKeyProvisioningRoute | null {
+  const match = API_KEY_PROVISIONING_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+  const parsed = parseAuthRouteBase(match.groups as Record<string, string>);
+  if (!parsed.ok) return parsed;
+  const action = asApiKeyProvisioningAction(parsed.route.action);
+  return {
+    ok: true,
+    context: {
+      tenantId: parsed.route.tenantId,
+      jurisdiction: parsed.route.jurisdiction,
+      sector: parsed.route.sector,
+      section: 'api-key',
+      format: 'org.schema.action',
+      action,
+    },
+  };
+}
+
+export function buildApiKeyProvisioningResponseLocation(
+  context: ApiKeyProvisioningRouteContext,
+  params?: Record<string, string | undefined>,
+): string {
+  const actionBase = context.action.endsWith('-response') ? context.action.slice(0, -9) : context.action;
+  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/api-key/org.schema/action/${actionBase}-response`;
+  if (!params) return base;
+  const entries = Object.entries(params).filter(([, value]) => value && value.trim());
+  if (!entries.length) return base;
+  const search = new URLSearchParams();
+  for (const [key, value] of entries) {
+    if (value) search.set(key, value);
+  }
+  const suffix = search.toString();
+  return suffix ? `${base}?${suffix}` : base;
+}
+
+export type ParsedIdentityAuthRoute =
+  | { ok: true; context: IdentityAuthRouteContext }
+  | { ok: false; statusCode: number; message: string };
+
+export function parseIdentityAuthRoute(pathname: string): ParsedIdentityAuthRoute | null {
+  const match = IDENTITY_AUTH_ROUTE_REGEX.exec(pathname);
+  if (!match?.groups) return null;
+  const parsed = parseAuthRouteBase(match.groups as Record<string, string>);
+  if (!parsed.ok) return parsed;
+  const action = asIdentityAuthAction(parsed.route.action);
+  return {
+    ok: true,
+    context: {
+      tenantId: parsed.route.tenantId,
+      jurisdiction: parsed.route.jurisdiction,
+      sector: parsed.route.sector,
+      section: 'identity',
+      format: 'auth',
+      action,
+    },
+  };
+}
+
+export function buildIdentityAuthResponseLocation(
+  context: IdentityAuthRouteContext,
+  params?: Record<string, string | undefined>,
+): string {
+  const actionBase = context.action.endsWith('-response') ? context.action.slice(0, -9) : context.action;
+  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/identity/auth/${actionBase}-response`;
+  if (!params) return base;
+  const entries = Object.entries(params).filter(([, value]) => value && value.trim());
+  if (!entries.length) return base;
+  const search = new URLSearchParams();
+  for (const [key, value] of entries) {
+    if (value) search.set(key, value);
+  }
+  const suffix = search.toString();
+  return suffix ? `${base}?${suffix}` : base;
 }
 
 type ParsedDcatRouteBase =

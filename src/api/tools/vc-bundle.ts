@@ -36,17 +36,34 @@ function parseDistinguishedName(dn: string): Record<string, string> {
   const normalized = trimmed.replace(/\r/g, '');
   const tokens = normalized.startsWith('/')
     ? normalized.split('/').filter(Boolean)
-    : normalized.split(/[,\n]+/).map((part) => part.trim()).filter(Boolean);
+    : normalized
+      .split(/(?<!\\),|\n+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
 
+  let lastParsedKey: string | undefined;
   for (const token of tokens) {
     const separator = token.indexOf('=');
-    if (separator <= 0) continue;
+    if (separator <= 0) {
+      // Some DN emitters split escaped commas in values as separate fragments
+      // (e.g. "O=ACME\\, S.L." => ["O=ACME\\", "S.L."]).
+      // Stitch the fragment back to the previous key value.
+      if (lastParsedKey && output[lastParsedKey]) {
+        output[lastParsedKey] = `${output[lastParsedKey]}, ${token.trim()}`;
+      }
+      continue;
+    }
     const key = normalizeDnKey(token.slice(0, separator));
-    const value = token.slice(separator + 1).trim();
+    const value = token
+      .slice(separator + 1)
+      .trim()
+      .replace(/\\,/g, ',')
+      .replace(/\\\\/g, '\\');
     if (!key || !value) continue;
     if (!(key in output)) {
       output[key] = value;
     }
+    lastParsedKey = key;
   }
   return output;
 }
@@ -64,6 +81,27 @@ function parseOrganizationTaxId(subjectDn: Record<string, string>): string | und
   return firstDefined(subjectDn.ORGANIZATIONIDENTIFIER, subjectDn['OID.2.5.4.97']);
 }
 
+function parseOrganizationTaxIdFromPayload(
+  route: VerifyRouteContext,
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
+  const raw = firstDefined(
+    typeof payload?.taxID === 'string' ? payload.taxID : undefined,
+    typeof payload?.taxId === 'string' ? payload.taxId : undefined,
+  );
+  if (!raw) return undefined;
+  return normalizePdfOrganizationTaxId(raw, resolveDefaultOrganizationJurisdiction(route));
+}
+
+function parseOrganizationLegalNameFromPayload(payload: Record<string, unknown> | undefined): string | undefined {
+  const raw = firstDefined(
+    typeof payload?.legalName === 'string' ? payload.legalName : undefined,
+    typeof payload?.name === 'string' ? payload.name : undefined,
+    typeof payload?.companyName === 'string' ? payload.companyName : undefined,
+  );
+  return normalizePdfOrganizationLegalName(raw);
+}
+
 const ANNEX_ORGANIZATION_ADDITIONAL_TYPE = 'organization.additionalType';
 const ANNEX_ORGANIZATION_SAME_AS = 'organization.sameAs';
 const ANNEX_ORGANIZATION_URL = 'organization.url';
@@ -75,20 +113,38 @@ const ANNEX_PERSON_ADDITIONAL_TYPE = 'person.additionalType';
 const ANNEX_ORGANIZATION_VISIBLE_TAX_ID_FIELDS = [
   'organization.taxID',
   'organization.taxId',
+  'organization.tax id',
+  'organization.tax identifier',
+  'organization.taxIdentifier',
+  'organization.taxNumber',
+  'organization.tax number',
   'organization.vat',
   'organization.vatID',
   'organization.vatId',
+  'organization.vat id',
+  'organization.vat number',
   'organization.vatNumber',
+  'organization.vat/cif',
   'organization.cif',
   'organization.nif',
   'taxID',
   'taxId',
+  'tax id',
+  'tax identifier',
+  'taxNumber',
+  'tax number',
   'vat',
   'vatID',
   'vatId',
+  'vat id',
+  'vat number',
   'vatNumber',
+  'vat/cif',
   'cif',
   'nif',
+  'company tax id',
+  'company vat',
+  'organization identifier',
   'identificacion empresa',
   'identificación empresa',
   'identificacion',
@@ -97,16 +153,28 @@ const ANNEX_ORGANIZATION_VISIBLE_TAX_ID_FIELDS = [
 const ANNEX_ORGANIZATION_VISIBLE_LEGAL_NAME_FIELDS = [
   'organization.legalName',
   'organization.legalname',
+  'organization.legal name',
   'organization.name',
   'organization.companyName',
+  'organization.company name',
   'organization.company',
+  'organization.businessName',
+  'organization.business name',
+  'organization.organizationName',
+  'organization.organization name',
   'organization.razonSocial',
   'organization.razon social',
   'legalName',
   'legalname',
+  'legal name',
   'name',
   'companyName',
+  'company name',
   'company',
+  'businessName',
+  'business name',
+  'organizationName',
+  'organization name',
   'razonSocial',
   'razon social',
   'razón social',
@@ -136,7 +204,11 @@ function getFirstAnnexField(result: VerifyResult, names: string[]): string | und
 }
 
 function normalizePdfOrganizationLegalName(value: string | undefined): string | undefined {
-  const normalized = (value || '').trim().replace(/\s+/g, ' ');
+  const normalized = (value || '')
+    .trim()
+    .replace(/[\\\/]+$/g, '')
+    .trim()
+    .replace(/\s+/g, ' ');
   return normalized ? normalized.toUpperCase() : undefined;
 }
 
@@ -148,13 +220,17 @@ function normalizePdfOrganizationTaxId(
   const jurisdiction = defaultJurisdiction.trim().toUpperCase();
   if (!normalizedValue || !jurisdiction) return undefined;
 
-  const prefixPattern = new RegExp(`^${jurisdiction}(?:[\\s-]*)`, 'i');
-  const withoutPrefix = prefixPattern.test(normalizedValue)
-    ? normalizedValue.replace(prefixPattern, '')
+  const vatPrefix = `VAT${jurisdiction}`;
+  const withoutVatPrefix = normalizedValue.startsWith(vatPrefix)
+    ? normalizedValue.slice(vatPrefix.length)
     : normalizedValue;
+  const prefixPattern = new RegExp(`^${jurisdiction}(?:[\\s-]*)`, 'i');
+  const withoutPrefix = prefixPattern.test(withoutVatPrefix)
+    ? withoutVatPrefix.replace(prefixPattern, '')
+    : withoutVatPrefix;
   const normalizedTaxNumber = withoutPrefix.replace(/[\s-]+/g, '');
   if (!normalizedTaxNumber) return undefined;
-  return `${jurisdiction}-${normalizedTaxNumber}`;
+  return `${vatPrefix}-${normalizedTaxNumber}`;
 }
 
 function resolveDefaultOrganizationJurisdiction(route: VerifyRouteContext): string {
@@ -287,8 +363,20 @@ function parseBooleanEnv(value: string | undefined, fallback = false): boolean {
   return fallback;
 }
 
+function normalizeVatId(value: string | undefined): string | undefined {
+  const trimmed = (value || '').trim();
+  return trimmed ? trimmed.toUpperCase() : undefined;
+}
+
 function isDeterministicVcByContractEnabled(): boolean {
   return parseBooleanEnv(process.env.DETERMINISTIC_VC_BY_CONTRACT, false);
+}
+
+function isStrictIdentitySourcesEnabled(): boolean {
+  // TODO(security): In production deployments, remove or hard-block this override
+  // so strict identity sources cannot be disabled via env vars from runtime operators.
+  // Suggested policy: ignore DISABLE_STRICT_IDENTITY_SOURCE when NODE_ENV=production.
+  return !parseBooleanEnv(process.env.DISABLE_STRICT_IDENTITY_SOURCE, false);
 }
 
 function normalizeUrnSegment(value: string, fallback: string): string {
@@ -321,12 +409,17 @@ function normalizeIsoTimestampToSecondPrecision(value: string, fieldName: string
   return parsed.toISOString();
 }
 
-function resolveVcEvidenceTimestamp(result: VerifyResult, deterministicVcByContract: boolean): string {
+function resolveVcEvidenceTimestamp(
+  result: VerifyResult,
+  deterministicVcByContract: boolean,
+  fieldName: 'organizationSigningTime' | 'personSigningTime' | 'verifierSigningTime',
+): string {
+  const signingTime = result[fieldName] || result.signerSigningTime;
+  if (signingTime) {
+    return normalizeIsoTimestampToSecondPrecision(signingTime, fieldName);
+  }
   if (deterministicVcByContract) {
-    if (!result.signerSigningTime) {
-      throw new Error('Deterministic staging mode requires signerSigningTime extracted from CMS signature.');
-    }
-    return normalizeIsoTimestampToSecondPrecision(result.signerSigningTime, 'signerSigningTime');
+    throw new Error(`Deterministic staging mode requires ${fieldName} (or signerSigningTime) extracted from signature metadata.`);
   }
   return normalizeIsoTimestampToSecondPrecision(result.verifiedAt, 'verifiedAt');
 }
@@ -439,7 +532,9 @@ function buildOidc4IdaEvidence(
   certificateOrganizationTaxId: string | undefined,
   documentContentCid: string,
   deterministicVcByContract: boolean,
-  vcEvidenceTimestamp: string,
+  signatureEvidenceTimestamp: string,
+  documentEvidenceTimestamp: string,
+  includeElectronicSignatureEvidence = true,
 ): EvidenceObjectDLT[] {
   const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
   const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
@@ -481,28 +576,32 @@ function buildOidc4IdaEvidence(
   const compactAttachmentJson = JSON.stringify(attachmentPayload);
   const compactAttachmentDataUri = `data:application/json;base64,${Buffer.from(compactAttachmentJson).toString('base64')}`;
 
-  const signatureEvidence: EvidenceElectronicSignatureDLT = {
-    type: 'electronic_signature',
-    signature_type: 'pades',
-    issuer: result.signerIssuer || verifierOrganizationDid,
-    serial_number: serialNumber,
-    created_at: vcEvidenceTimestamp,
-    attachments: [
-      {
-        content_type: 'application/json',
-        content: compactAttachmentDataUri,
-      },
-    ],
-  };
+  const evidences: EvidenceObjectDLT[] = [];
+  if (includeElectronicSignatureEvidence) {
+    const signatureEvidence: EvidenceElectronicSignatureDLT = {
+      type: 'electronic_signature',
+      signature_type: 'pades',
+      issuer: result.signerIssuer || verifierOrganizationDid,
+      serial_number: serialNumber,
+      created_at: signatureEvidenceTimestamp,
+      attachments: [
+        {
+          content_type: 'application/json',
+          content: compactAttachmentDataUri,
+        },
+      ],
+    };
+    evidences.push(signatureEvidence);
+  }
 
-  const auditTxnRef = result.auditDocument
-    ? `audit:${result.auditDocument.provider}:${result.auditDocument.objectKey}`
-    : undefined;
+  // tx reference must identify immutable document content, not storage location.
+  // Keep operational audit path internal and expose CID for contract-level traceability.
+  const documentTxnRef = documentContentCid;
 
   const documentEvidence: EvidenceDocumentDLT = {
     type: 'document',
     method: 'eid',
-    time: vcEvidenceTimestamp,
+    time: documentEvidenceTimestamp,
     verifier: {
       organization: verifierOrganizationDid,
     },
@@ -510,14 +609,14 @@ function buildOidc4IdaEvidence(
       {
         check_method: 'vdig',
         organization: verifierOrganizationDid,
-        ...(auditTxnRef ? { txn: auditTxnRef } : {}),
-        time: vcEvidenceTimestamp,
+        txn: documentTxnRef,
+        time: documentEvidenceTimestamp,
       },
       {
         check_method: 'vcrypt',
         organization: verifierOrganizationDid,
-        ...(auditTxnRef ? { txn: auditTxnRef } : {}),
-        time: vcEvidenceTimestamp,
+        txn: documentTxnRef,
+        time: documentEvidenceTimestamp,
       },
     ],
     attachments: {
@@ -525,8 +624,7 @@ function buildOidc4IdaEvidence(
         alg: evidenceDigestAlg,
         value: hexToBase64(evidenceDigestHex),
       },
-      url: result.auditDocument?.attachmentUrl
-        || (deterministicVcByContract ? `ipfs://${documentContentCid}` : `urn:uuid:${randomUUID()}`),
+      url: `ipfs://${documentContentCid}`,
     },
     document_details: {
       type: 'terms-and-conditions',
@@ -540,19 +638,15 @@ function buildOidc4IdaEvidence(
       },
     },
   };
-  if (result.annexFormFields && Object.keys(result.annexFormFields).length) {
-    const details = documentEvidence.document_details as unknown as Record<string, unknown>;
-    details.annexFormFields = result.annexFormFields;
-  }
-
-  return [
-    signatureEvidence,
-    documentEvidence,
-  ];
+  evidences.push(documentEvidence);
+  return evidences;
 }
 
 function extractAdditionalOrganizationDataFromPdf(result: VerifyResult): Record<string, unknown> {
   // TODO: Extract additional schema.org fields (like address, telephone) directly from the PDF fields
+  if (isStrictIdentitySourcesEnabled()) {
+    return {};
+  }
   if (process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS === 'true') {
     return (result.organizationPayload as Record<string, unknown>) || {};
   }
@@ -561,11 +655,67 @@ function extractAdditionalOrganizationDataFromPdf(result: VerifyResult): Record<
 
 function extractAdditionalPersonDataFromPdf(result: VerifyResult): Record<string, unknown> {
   // TODO: Extract additional schema.org fields directly from the PDF fields
+  if (isStrictIdentitySourcesEnabled()) {
+    return {};
+  }
   if (process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS === 'true') {
     return (result.legalRepresentativePayload as Record<string, unknown>) || {};
   }
   return {};
 }
+
+const ANNEX_PERSON_NAME_FIELDS = [
+  'person.name',
+  'person.fullName',
+  'person.fullname',
+  'person.legalRepresentativeName',
+  'person.representativeName',
+  'legalRepresentative.name',
+  'legalRepresentative.fullName',
+  'representative.name',
+  'representante legal',
+  'representante',
+];
+
+const ANNEX_PERSON_IDENTIFIER_FIELDS = [
+  'person.identifier',
+  'person.id',
+  'person.serialNumber',
+  'person.serialnumber',
+  'person.nif',
+  'person.nie',
+  'person.dni',
+  'legalRepresentative.identifier',
+  'legalRepresentative.nif',
+  'representative.identifier',
+  'identificacion',
+  'identificación',
+  'identificacion representante',
+  'identificación representante',
+];
+
+const ANNEX_PERSON_GIVEN_NAME_FIELDS = [
+  'person.givenName',
+  'person.givenname',
+  'legalRepresentative.givenName',
+  'representative.givenName',
+];
+
+const ANNEX_PERSON_FAMILY_NAME_FIELDS = [
+  'person.familyName',
+  'person.familyname',
+  'person.surname',
+  'legalRepresentative.familyName',
+  'representative.familyName',
+];
+
+const ANNEX_PERSON_EMAIL_FIELDS = [
+  ANNEX_PERSON_EMAIL,
+  'correo electronico',
+  'correo electrónico',
+  'email',
+  'e-mail',
+];
 
 function mergePostalAddress(
   baseAddress: unknown,
@@ -593,10 +743,36 @@ export function buildVerificationVcBundle(
 ): VerifyBundleResponse {
   const subjectDn = result.signerSubject ? parseDistinguishedName(result.signerSubject) : {};
   const issuerDid = (issuerDidInput || '').trim() || resolveVcIssuerDid();
+  const strictIdentitySources = isStrictIdentitySourcesEnabled();
+  const allowUnverifiedPayloads = process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS === 'true';
+  const allowPayloadIdentityFallback = !strictIdentitySources && allowUnverifiedPayloads;
 
   const organizationIdentityFromPdf = extractOrganizationIdentityFromPdf(route, result);
-  const certificateOrganizationLegalName = firstDefined(subjectDn.O, subjectDn.OU);
+  const certificateOrganizationLegalName = normalizePdfOrganizationLegalName(
+    firstDefined(subjectDn.O, subjectDn.OU),
+  );
   const certificateOrganizationTaxId = parseOrganizationTaxId(subjectDn);
+  const payloadOrganizationTaxId = parseOrganizationTaxIdFromPayload(route, result.organizationPayload);
+  const payloadOrganizationLegalName = parseOrganizationLegalNameFromPayload(result.organizationPayload);
+  const signerOrganizationTaxId = parseOrganizationTaxId(subjectDn);
+  const signerBelongsToVerifier = Boolean(
+    normalizeVatId(signerOrganizationTaxId)
+    && normalizeVatId(result.verifierVatId)
+    && normalizeVatId(signerOrganizationTaxId) === normalizeVatId(result.verifierVatId),
+  );
+  const organizationTaxId = signerBelongsToVerifier
+    ? firstDefined(
+      organizationIdentityFromPdf.taxID,
+      allowPayloadIdentityFallback ? payloadOrganizationTaxId : undefined,
+    )
+    : firstDefined(certificateOrganizationTaxId, organizationIdentityFromPdf.taxID);
+  const orgLegalName = signerBelongsToVerifier
+    ? firstDefined(
+      organizationIdentityFromPdf.legalName,
+      allowPayloadIdentityFallback ? payloadOrganizationLegalName : undefined,
+    )
+    : firstDefined(certificateOrganizationLegalName, organizationIdentityFromPdf.legalName);
+
   if (!certificateOrganizationTaxId) {
     if (!organizationIdentityFromPdf.taxID) {
       throw new Error(
@@ -609,26 +785,44 @@ export function buildVerificationVcBundle(
       );
     }
   }
+  if (signerBelongsToVerifier) {
+    if (!organizationTaxId) {
+      throw new Error(
+        'Organization tax ID is required when the only client evidence is document-level verification. '
+        + 'Provide visible PDF fields, or disable strict identity source mode and send organization payload.',
+      );
+    }
+    if (!orgLegalName) {
+      throw new Error(
+        'Organization legal name is required when the only client evidence is document-level verification. '
+        + 'Provide visible PDF fields, or disable strict identity source mode and send organization payload.',
+      );
+    }
+  }
 
-  const orgLegalName = certificateOrganizationLegalName || organizationIdentityFromPdf.legalName;
   const annexOrganizationDid = getAnnexOrganizationDid(result);
   const organizationAdditionalType = getAnnexField(result, ANNEX_ORGANIZATION_ADDITIONAL_TYPE);
   const organizationAlternateName = getAnnexField(result, ANNEX_ORGANIZATION_ALTERNATE_NAME);
   const organizationRegistrationNumber = getAnnexField(result, ANNEX_ORGANIZATION_REGISTRATION_NUMBER);
   const organizationUrl = normalizeOrganizationUrl(getAnnexField(result, ANNEX_ORGANIZATION_URL));
-  const organizationTaxId = certificateOrganizationTaxId || organizationIdentityFromPdf.taxID;
-  
+  const includeElectronicSignatureEvidence = !signerBelongsToVerifier;
+
   const givenName = subjectDn.GN || subjectDn.GIVENNAME;
   const familyName = subjectDn.SN || subjectDn.SURNAME;
-  const representativeName =
-    [givenName, familyName]
-      .filter(Boolean)
-      .join(' ')
-    || subjectDn.CN
-    || 'Representative from certificate or payload';
-  const personIdentifier = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']);
+  const personNameFromForm = getFirstAnnexField(result, ANNEX_PERSON_NAME_FIELDS);
+  const personIdentifierFromForm = getFirstAnnexField(result, ANNEX_PERSON_IDENTIFIER_FIELDS);
+  const personGivenNameFromForm = getFirstAnnexField(result, ANNEX_PERSON_GIVEN_NAME_FIELDS);
+  const personFamilyNameFromForm = getFirstAnnexField(result, ANNEX_PERSON_FAMILY_NAME_FIELDS);
+  const representativeNameFromCertificate = [givenName, familyName].filter(Boolean).join(' ') || subjectDn.CN;
+  const representativeName = signerBelongsToVerifier
+    ? firstDefined(personNameFromForm, [personGivenNameFromForm, personFamilyNameFromForm].filter(Boolean).join(' '))
+    : firstDefined(representativeNameFromCertificate, personNameFromForm);
+  const personIdentifierFromCertificate = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']);
+  const personIdentifier = signerBelongsToVerifier
+    ? personIdentifierFromForm
+    : firstDefined(personIdentifierFromCertificate, personIdentifierFromForm);
   const personEmail = firstDefined(
-    getAnnexField(result, ANNEX_PERSON_EMAIL),
+    getFirstAnnexField(result, ANNEX_PERSON_EMAIL_FIELDS),
     subjectDn.EMAILADDRESS,
     subjectDn.EMAIL,
     subjectDn.E,
@@ -642,15 +836,32 @@ export function buildVerificationVcBundle(
     || personIdentifier
     || `cert:${route.tenantId}:${route.resourceType}`;
   const deterministicVcByContract = isDeterministicVcByContractEnabled();
-  const vcEvidenceTimestamp = resolveVcEvidenceTimestamp(result, deterministicVcByContract);
-  const verifierOrganizationDid = resolveOrganizationPublicDid(route, certificateOrganizationTaxId || organizationTaxId)
+  const organizationEvidenceTimestamp = resolveVcEvidenceTimestamp(
+    result,
+    deterministicVcByContract,
+    'organizationSigningTime',
+  );
+  const personEvidenceTimestamp = resolveVcEvidenceTimestamp(
+    result,
+    deterministicVcByContract,
+    'personSigningTime',
+  );
+  const verifierEvidenceTimestamp = resolveVcEvidenceTimestamp(
+    result,
+    deterministicVcByContract,
+    'verifierSigningTime',
+  );
+  const verifierOrganizationDid = resolveOrganizationPublicDid(
+    route,
+    result.verifierVatId || certificateOrganizationTaxId || organizationTaxId,
+  )
     || issuerDid;
   const dataspaceUrnNamespace = resolveDataspaceUrnNamespace(route);
   const urnSector = normalizeUrnSegment(route.sector, 'unknown-sector');
   const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
   const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
   const documentContentCid = deriveDocumentContentCidV1Raw(evidenceDigestAlg, evidenceDigestHex);
-  const evidence = buildOidc4IdaEvidence(
+  const organizationEvidence = buildOidc4IdaEvidence(
     route,
     result,
     serialNumber,
@@ -658,7 +869,21 @@ export function buildVerificationVcBundle(
     certificateOrganizationTaxId,
     documentContentCid,
     deterministicVcByContract,
-    vcEvidenceTimestamp,
+    organizationEvidenceTimestamp,
+    verifierEvidenceTimestamp,
+    includeElectronicSignatureEvidence,
+  );
+  const personEvidence = buildOidc4IdaEvidence(
+    route,
+    result,
+    serialNumber,
+    verifierOrganizationDid,
+    certificateOrganizationTaxId,
+    documentContentCid,
+    deterministicVcByContract,
+    personEvidenceTimestamp,
+    verifierEvidenceTimestamp,
+    includeElectronicSignatureEvidence,
   );
   const organizationIdentifiers = resolveOrganizationSubjectIdentifiers(route, organizationTaxId, annexOrganizationDid);
 
@@ -700,9 +925,10 @@ export function buildVerificationVcBundle(
     '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
     type: ['VerifiableCredential', 'OrganizationCredential'],
     issuer: issuerDid,
-    validFrom: vcEvidenceTimestamp,
+    // Policy: credential validity starts when verifier/promoter signs the document.
+    validFrom: verifierEvidenceTimestamp,
     credentialSubject: organizationSubject,
-    evidence,
+    evidence: organizationEvidence,
   };
 
   const organizationRef: Record<string, unknown> = {
@@ -720,19 +946,21 @@ export function buildVerificationVcBundle(
       ? `urn:person:identifier:${personIdentifier}`
       : `urn:person:identifier:${route.tenantId}`,
     '@type': 'Person',
-    name: representativeName,
+    ...(representativeName ? { name: representativeName } : {}),
     hasOccupation: {
       '@type': 'Occupation',
       name: 'LegalRepresentative',
       identifier: 'urn:ilo:ilostat:isco-08:1120',
     },
-    memberOf: organizationRef,
+    ...(certificateOrganizationTaxId ? { memberOf: organizationRef } : {}),
   };
-  if (givenName) {
-    personSubject.givenName = givenName;
+  const resolvedGivenName = signerBelongsToVerifier ? personGivenNameFromForm : firstDefined(givenName, personGivenNameFromForm);
+  const resolvedFamilyName = signerBelongsToVerifier ? personFamilyNameFromForm : firstDefined(familyName, personFamilyNameFromForm);
+  if (resolvedGivenName) {
+    personSubject.givenName = resolvedGivenName;
   }
-  if (familyName) {
-    personSubject.familyName = familyName;
+  if (resolvedFamilyName) {
+    personSubject.familyName = resolvedFamilyName;
   }
   if (personIdentifier) {
     personSubject.identifier = personIdentifier;
@@ -750,20 +978,41 @@ export function buildVerificationVcBundle(
     personSubject.additionalType = personAdditionalType;
   }
 
-  const unsignedPersonVc: VerifiableCredentialV2 = {
+  const hasVerifiablePersonIdentity = Boolean(
+    representativeName
+    || personIdentifier
+    || resolvedGivenName
+    || resolvedFamilyName,
+  );
+
+  const unsignedPersonVc: VerifiableCredentialV2 | undefined = hasVerifiablePersonIdentity ? {
     id: deterministicVcByContract
       ? `urn:${dataspaceUrnNamespace}:${urnSector}:organization-representative:vc:${documentContentCid}`
       : `urn:uuid:${randomUUID()}`,
     '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
     type: ['VerifiableCredential', 'PersonCredential', 'LegalRepresentativeCredential'],
     issuer: issuerDid,
-    validFrom: vcEvidenceTimestamp,
+    // Policy: credential validity starts when verifier/promoter signs the document.
+    validFrom: verifierEvidenceTimestamp,
     credentialSubject: personSubject,
-    evidence,
-  };
+    evidence: personEvidence,
+  } : undefined;
 
-  const organizationVc = attachProofToCredential(unsignedOrganizationVc, route, issuerDid);
-  const personVc = attachProofToCredential(unsignedPersonVc, route, issuerDid);
+  const proofCreatedAtOverride = deterministicVcByContract ? verifierEvidenceTimestamp : undefined;
+  const organizationVc = attachProofToCredential(
+    unsignedOrganizationVc,
+    route,
+    issuerDid,
+    proofCreatedAtOverride,
+  );
+  const personVc = unsignedPersonVc
+    ? attachProofToCredential(
+      unsignedPersonVc,
+      route,
+      issuerDid,
+      proofCreatedAtOverride,
+    )
+    : undefined;
 
   const entryOutcome = buildOperationOutcome(
     result.ok ? 'information' : 'warning',
@@ -771,40 +1020,45 @@ export function buildVerificationVcBundle(
     result.ok ? 'Verification completed.' : 'Verification completed with warnings.',
   );
 
+  const data: VerifyBundleResponse['data'] = [
+    {
+      type: 'Organization-verification-v1.0',
+      response: {
+        status: '200',
+        outcome: buildOperationOutcome(
+          result.ok ? 'information' : 'warning',
+          result.ok ? 'informational' : 'processing',
+          result.ok
+            ? 'Organization credential extracted from verified document.'
+            : 'Organization credential extracted with verification warnings.',
+        ),
+      },
+      resource: organizationVc,
+    },
+  ];
+
+  if (personVc) {
+    data.push({
+      type: 'LegalRepresentative-verification-v1.0',
+      response: {
+        status: '200',
+        outcome: buildOperationOutcome(
+          result.ok ? 'information' : 'warning',
+          result.ok ? 'informational' : 'processing',
+          result.ok
+            ? 'Legal representative credential extracted from verified document.'
+            : 'Legal representative credential extracted with verification warnings.',
+        ),
+      },
+      resource: personVc,
+    });
+  }
+
   return {
     resourceType: 'Bundle',
     type: 'batch-response',
     issues: entryOutcome,
-    total: 2,
-    data: [
-      {
-        type: 'Organization-verification-v1.0',
-        response: {
-          status: '200',
-          outcome: buildOperationOutcome(
-            result.ok ? 'information' : 'warning',
-            result.ok ? 'informational' : 'processing',
-            result.ok
-              ? 'Organization credential extracted from verified document.'
-              : 'Organization credential extracted with verification warnings.',
-          ),
-        },
-        resource: organizationVc,
-      },
-      {
-        type: 'LegalRepresentative-verification-v1.0',
-        response: {
-          status: '200',
-          outcome: buildOperationOutcome(
-            result.ok ? 'information' : 'warning',
-            result.ok ? 'informational' : 'processing',
-            result.ok
-              ? 'Legal representative credential extracted from verified document.'
-              : 'Legal representative credential extracted with verification warnings.',
-          ),
-        },
-        resource: personVc,
-      },
-    ],
+    total: data.length,
+    data,
   };
 }

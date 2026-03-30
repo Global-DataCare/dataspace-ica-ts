@@ -196,6 +196,145 @@ function parseOpenSslSigningTimeToIso(raw: string): string | undefined {
   return parsed.toISOString();
 }
 
+function parsePdfDateToIso(raw: string): string | undefined {
+  const text = raw.trim();
+  if (!text) return undefined;
+
+  const monthNamed = /^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})$/.exec(text);
+  if (monthNamed) {
+    const monthMap: Record<string, number> = {
+      jan: 0,
+      feb: 1,
+      mar: 2,
+      apr: 3,
+      may: 4,
+      jun: 5,
+      jul: 6,
+      aug: 7,
+      sep: 8,
+      oct: 9,
+      nov: 10,
+      dec: 11,
+    };
+    const month = monthMap[monthNamed[1].toLowerCase()];
+    if (month === undefined) return undefined;
+    const iso = new Date(Date.UTC(
+      Number.parseInt(monthNamed[3], 10),
+      month,
+      Number.parseInt(monthNamed[2], 10),
+      Number.parseInt(monthNamed[4], 10),
+      Number.parseInt(monthNamed[5], 10),
+      Number.parseInt(monthNamed[6], 10),
+      0,
+    ));
+    return Number.isNaN(iso.getTime()) ? undefined : iso.toISOString();
+  }
+
+  const pdfDate = /^D:(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(Z|[+\-]\d{2}'?\d{2}'?)?$/.exec(text);
+  if (pdfDate) {
+    const year = Number.parseInt(pdfDate[1], 10);
+    const month = Number.parseInt(pdfDate[2], 10) - 1;
+    const day = Number.parseInt(pdfDate[3], 10);
+    const hour = Number.parseInt(pdfDate[4], 10);
+    const minute = Number.parseInt(pdfDate[5], 10);
+    const second = Number.parseInt(pdfDate[6], 10);
+    const zone = (pdfDate[7] || 'Z').replace(/'/g, '');
+    const baseUtc = Date.UTC(year, month, day, hour, minute, second, 0);
+    if (Number.isNaN(baseUtc)) return undefined;
+    if (zone === 'Z') return new Date(baseUtc).toISOString();
+
+    const zoneMatch = /^([+\-])(\d{2})(\d{2})$/.exec(zone);
+    if (!zoneMatch) return new Date(baseUtc).toISOString();
+    const sign = zoneMatch[1] === '+' ? 1 : -1;
+    const zoneMinutes = (Number.parseInt(zoneMatch[2], 10) * 60) + Number.parseInt(zoneMatch[3], 10);
+    const utcMillis = baseUtc - (sign * zoneMinutes * 60 * 1000);
+    return new Date(utcMillis).toISOString();
+  }
+
+  return parseOpenSslSigningTimeToIso(text);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeVerifierVatToken(vat: string): string {
+  return vat.trim().replace(/\s+/g, '').toUpperCase();
+}
+
+function buildVerifierVatCandidates(vat: string): string[] {
+  const normalized = normalizeVerifierVatToken(vat);
+  if (!normalized) return [];
+  if (normalized.startsWith('VATES-')) {
+    const short = normalized.slice('VATES-'.length);
+    return [normalized, short];
+  }
+  return [normalized];
+}
+
+export function extractVerifierVisualSigningDate(
+  pdfBytes: Buffer,
+  verifierVatList: string[],
+): { verifierVat: string; matchedVatToken: string; rawDate: string; isoDate?: string } | undefined {
+  if (!verifierVatList.length) return undefined;
+  const text = pdfBytes.toString('latin1');
+  if (!text) return undefined;
+
+  const mDateRegex = /\/M\((D:[^)\r\n]{6,64})\)/g;
+  const visualDateRegex = /\/Date\(([^)\r\n]{6,64})\)/g;
+
+  const findNearestDateInWindow = (
+    regex: RegExp,
+    textSlice: string,
+    windowStart: number,
+    vatIndex: number,
+  ): { rawDate: string; distance: number } | undefined => {
+    let match: RegExpExecArray | null;
+    let best: { rawDate: string; distance: number } | undefined;
+    regex.lastIndex = 0;
+    while (true) {
+      match = regex.exec(textSlice);
+      if (!match) break;
+      const rawDate = match[1].trim();
+      if (!rawDate) continue;
+      const absoluteDatePos = windowStart + match.index;
+      const distance = Math.abs(absoluteDatePos - vatIndex);
+      if (!best || distance < best.distance) {
+        best = { rawDate, distance };
+      }
+    }
+    return best;
+  };
+
+  for (const verifierVat of verifierVatList) {
+    const vatCandidates = buildVerifierVatCandidates(verifierVat);
+    for (const candidate of vatCandidates) {
+      const vatRegex = new RegExp(escapeRegex(candidate), 'g');
+      let vatMatch: RegExpExecArray | null;
+      while (true) {
+        vatMatch = vatRegex.exec(text);
+        if (!vatMatch) break;
+        const vatIndex = vatMatch.index;
+        const windowStart = Math.max(0, vatIndex - 600);
+        const windowEnd = Math.min(text.length, vatIndex + 600);
+        const windowSlice = text.slice(windowStart, windowEnd);
+        const best = findNearestDateInWindow(mDateRegex, windowSlice, windowStart, vatIndex)
+          || findNearestDateInWindow(visualDateRegex, windowSlice, windowStart, vatIndex);
+        if (best) {
+          const isoDate = parsePdfDateToIso(best.rawDate);
+          return {
+            verifierVat: normalizeVerifierVatToken(verifierVat),
+            matchedVatToken: candidate,
+            rawDate: best.rawDate,
+            ...(isoDate ? { isoDate } : {}),
+          };
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 async function extractCmsSigningTimeIso(signatureDerPath: string): Promise<string | undefined> {
   const printed = await runOpenSslSafe(['cms', '-cmsout', '-print', '-inform', 'DER', '-in', signatureDerPath]);
   if (!printed.ok) return undefined;
@@ -480,20 +619,38 @@ type VerifiedPdfSignature = {
 const PDF_VISIBLE_ORGANIZATION_TAX_ID_FIELDS = [
   'organization.taxID',
   'organization.taxId',
+  'organization.tax id',
+  'organization.tax identifier',
+  'organization.taxIdentifier',
+  'organization.taxNumber',
+  'organization.tax number',
   'organization.vat',
   'organization.vatID',
   'organization.vatId',
+  'organization.vat id',
+  'organization.vat number',
   'organization.vatNumber',
+  'organization.vat/cif',
   'organization.cif',
   'organization.nif',
   'taxID',
   'taxId',
+  'tax id',
+  'tax identifier',
+  'taxNumber',
+  'tax number',
   'vat',
   'vatID',
   'vatId',
+  'vat id',
+  'vat number',
   'vatNumber',
+  'vat/cif',
   'cif',
   'nif',
+  'company tax id',
+  'company vat',
+  'organization identifier',
   'identificacion empresa',
   'identificación empresa',
   'identificacion',
@@ -502,16 +659,28 @@ const PDF_VISIBLE_ORGANIZATION_TAX_ID_FIELDS = [
 const PDF_VISIBLE_ORGANIZATION_LEGAL_NAME_FIELDS = [
   'organization.legalName',
   'organization.legalname',
+  'organization.legal name',
   'organization.name',
   'organization.companyName',
+  'organization.company name',
   'organization.company',
+  'organization.businessName',
+  'organization.business name',
+  'organization.organizationName',
+  'organization.organization name',
   'organization.razonSocial',
   'organization.razon social',
   'legalName',
   'legalname',
+  'legal name',
   'name',
   'companyName',
+  'company name',
   'company',
+  'businessName',
+  'business name',
+  'organizationName',
+  'organization name',
   'razonSocial',
   'razon social',
   'razón social',
@@ -534,6 +703,14 @@ function debugVerifyTrace(label: string, payload: Record<string, unknown>): void
 function normalizeVatId(value: string | undefined): string | undefined {
   const normalized = value?.trim().replace(/\s+/g, '').toUpperCase();
   return normalized || undefined;
+}
+
+function resolvePrimaryVerifierVat(verifierVatList: string[]): string | undefined {
+  for (const value of verifierVatList) {
+    const normalized = normalizeVatId(value);
+    if (normalized) return normalized;
+  }
+  return undefined;
 }
 
 function getAnnexFieldValue(annexFormFields: Record<string, string> | undefined, name: string): string | undefined {
@@ -586,23 +763,43 @@ export function selectPrimaryCredentialSignature<T extends { signerVatId?: strin
   verifierVatList: string[],
   verificationPartnersVatList: string[],
 ): T | undefined {
-  const verifierVatSet = new Set(
-    verifierVatList
-      .map((value) => normalizeVatId(value))
-      .filter((value): value is string => Boolean(value)),
-  );
+  const normalizedVerifierVatList = verifierVatList
+    .map((value) => normalizeVatId(value))
+    .filter((value): value is string => Boolean(value));
+  const verifierVatSet = new Set(normalizedVerifierVatList);
   const partnerVatSet = new Set(
     verificationPartnersVatList
       .map((value) => normalizeVatId(value))
       .filter((value): value is string => Boolean(value)),
   );
+
+  const nonVerifierCandidates: Array<{ signature: T; signerVatId?: string }> = [];
   for (let index = signatures.length - 1; index >= 0; index -= 1) {
     const signature = signatures[index];
     const signerVatId = normalizeVatId(signature.signerVatId);
-    if (signerVatId && (verifierVatSet.has(signerVatId) || partnerVatSet.has(signerVatId))) {
-      continue;
+    if (signerVatId && verifierVatSet.has(signerVatId)) continue;
+    nonVerifierCandidates.push({ signature, signerVatId });
+  }
+  if (nonVerifierCandidates.length) {
+    // If there is at least one third-party/non-partner signer, prefer it over partner signers.
+    const nonPartnerCandidate = nonVerifierCandidates.find(
+      (entry) => !entry.signerVatId || !partnerVatSet.has(entry.signerVatId),
+    );
+    if (nonPartnerCandidate) return nonPartnerCandidate.signature;
+    // If only verifier+partner signatures exist, partner becomes the primary counterparty.
+    return nonVerifierCandidates[0]?.signature;
+  }
+
+  // Special case: all signatures belong to verifier VATs.
+  // Choose as counterparty the signer matching the last configured verifier VAT present in the PDF.
+  for (let listIndex = normalizedVerifierVatList.length - 1; listIndex >= 0; listIndex -= 1) {
+    const configuredVerifierVat = normalizedVerifierVatList[listIndex];
+    for (let sigIndex = signatures.length - 1; sigIndex >= 0; sigIndex -= 1) {
+      const signature = signatures[sigIndex];
+      if (normalizeVatId(signature.signerVatId) === configuredVerifierVat) {
+        return signature;
+      }
     }
-    return signature;
   }
   return undefined;
 }
@@ -614,11 +811,10 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
   organizationPayload?: Record<string, unknown>,
   annexFormFields?: Record<string, string>,
 ): void {
-  const verifierVatSet = new Set(
-    verifierVatList
-      .map((value) => normalizeVatId(value))
-      .filter((value): value is string => Boolean(value)),
-  );
+  const normalizedVerifierVatList = verifierVatList
+    .map((value) => normalizeVatId(value))
+    .filter((value): value is string => Boolean(value));
+  const verifierVatSet = new Set(normalizedVerifierVatList);
   if (!verifierVatSet.size) return;
 
   const partnerVatSet = new Set(
@@ -632,17 +828,24 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
     .filter((value): value is string => Boolean(value));
   const verifierSignerVatIds = signerVatIds.filter((value) => verifierVatSet.has(value));
   const partnerSignerVatIds = signerVatIds.filter((value) => partnerVatSet.has(value));
-  const counterpartSignerVatIds = signerVatIds.filter((value) => !verifierVatSet.has(value) && !partnerVatSet.has(value));
+  const counterpartSignerVatIds = signerVatIds.filter((value) => !verifierVatSet.has(value));
+  const nonPartnerCounterpartSignerVatIds = counterpartSignerVatIds.filter((value) => !partnerVatSet.has(value));
+  const allSignaturesAreVerifierVat = signerVatIds.length > 0 && counterpartSignerVatIds.length === 0;
+  const presentVerifierOrder = normalizedVerifierVatList.filter((vat) => signerVatIds.includes(vat));
+  const allVerifierCounterpartyVat = presentVerifierOrder.length ? presentVerifierOrder[presentVerifierOrder.length - 1] : undefined;
   const visibleOrganizationIdentity = collectVisibleOrganizationIdentity(annexFormFields);
 
   debugVerifyTrace('assertVerifierCounterpartySignaturePair.inputs', {
     signaturesCount: signatures.length,
     signerVatIds,
-    verifierVatList: [...verifierVatSet],
+    verifierVatList: normalizedVerifierVatList,
     verificationPartnersVatList: [...partnerVatSet],
     verifierSignerVatIds,
     partnerSignerVatIds,
     counterpartSignerVatIds,
+    nonPartnerCounterpartSignerVatIds,
+    allSignaturesAreVerifierVat,
+    allVerifierCounterpartyVat,
     hasOrganizationPayloadTaxId: Boolean(organizationPayload?.taxID || organizationPayload?.taxId),
     visibleOrganizationIdentity,
   });
@@ -653,24 +856,30 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
     );
   }
 
-  if (partnerVatSet.size > 0 && counterpartSignerVatIds.length > 0) {
+  if (partnerVatSet.size > 0 && nonPartnerCounterpartSignerVatIds.length > 0) {
     if (!partnerSignerVatIds.length) {
       throw new Error(
         'PDF must include at least one verification partner signature whose VAT is listed in VERIFICATION_PARTNERS_VAT_LIST.',
       );
     }
-  } else if (!counterpartSignerVatIds.length && !partnerSignerVatIds.length) {
+  } else if (allSignaturesAreVerifierVat) {
+    if (presentVerifierOrder.length >= 2) {
+      return;
+    }
     if (!organizationPayload?.taxID && !organizationPayload?.taxId && !hasVisibleOrganizationIdentity(annexFormFields)) {
       debugVerifyTrace('assertVerifierCounterpartySignaturePair.failure', {
-        reason: 'missing_non_verifier_counterparty_and_missing_org_identity_fallback',
+        reason: 'missing_counterparty_and_missing_org_identity_fallback',
         verifierSignerVatIds,
         partnerSignerVatIds,
         counterpartSignerVatIds,
+        nonPartnerCounterpartSignerVatIds,
+        allSignaturesAreVerifierVat,
+        allVerifierCounterpartyVat,
         hasOrganizationPayloadTaxId: Boolean(organizationPayload?.taxID || organizationPayload?.taxId),
         visibleOrganizationIdentity,
       });
       throw new Error(
-        'PDF must include at least one non-verifier counterparty signature different from VERIFIERS_VAT_LIST, or visible organization VAT/CIF and legal name fields in the PDF, or provide organization taxID in the payload.',
+        'PDF must include at least one counterparty signature (non-verifier, or a second verifier listed in VERIFIERS_VAT_LIST), or visible organization VAT/CIF and legal name fields in the PDF, or provide organization taxID in the payload.',
       );
     }
   }
@@ -1637,27 +1846,104 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
       );
       if (!primarySignature) {
         if (!submission.organizationPayload?.taxID && !submission.organizationPayload?.taxId) {
-          throw new Error('All PDF signatures belong to verifier or verification partner organizations.');
+          throw new Error('PDF is missing a counterparty signature (non-verifier, or second verifier when multiple verifier VATs are configured).');
         }
         primarySignature = verifiedSignatures[verifiedSignatures.length - 1];
         notes.push('No counterparty signature found in PDF. Using organization payload data and substituting last signature for document integrity.');
       }
 
+      const verifierVatSet = new Set(
+        this.config.verifierVatList
+          .map((value) => normalizeVatId(value))
+          .filter((value): value is string => Boolean(value)),
+      );
+      const partnerVatSet = new Set(
+        this.config.verificationPartnersVatList
+          .map((value) => normalizeVatId(value))
+          .filter((value): value is string => Boolean(value)),
+      );
       for (const signature of verifiedSignatures) {
         if (signature.signatureIndex === primarySignature.signatureIndex) continue;
-        if (signature.signerVatId && this.config.verifierVatList.includes(signature.signerVatId)) {
+        const signerVatId = normalizeVatId(signature.signerVatId);
+        if (signerVatId && verifierVatSet.has(signerVatId)) {
           notes.push(
             `Signature ${signature.signatureIndex + 1} ignored for credential extraction because signer VAT ` +
-            `${signature.signerVatId} is listed in VERIFIERS_VAT_LIST.`,
+            `${signerVatId} is listed in VERIFIERS_VAT_LIST.`,
           );
-        } else if (signature.signerVatId && this.config.verificationPartnersVatList.includes(signature.signerVatId)) {
+        } else if (signerVatId && partnerVatSet.has(signerVatId)) {
           notes.push(
             `Signature ${signature.signatureIndex + 1} ignored for credential extraction because signer VAT ` +
-            `${signature.signerVatId} is listed in VERIFICATION_PARTNERS_VAT_LIST.`,
+            `${signerVatId} is listed in VERIFICATION_PARTNERS_VAT_LIST.`,
           );
         }
       }
       notes.push(`Credential extraction uses signature ${primarySignature.signatureIndex + 1}.`);
+
+      const verifierVisualDate = this.config.verifierVatList.length
+        ? extractVerifierVisualSigningDate(submission.pdfBytes, this.config.verifierVatList)
+        : undefined;
+      const verifierSignature = verifiedSignatures.find((signature) => {
+        const signerVatId = normalizeVatId(signature.signerVatId);
+        return Boolean(signerVatId && verifierVatSet.has(signerVatId));
+      });
+      const verifierVatId = verifierVisualDate?.verifierVat || normalizeVatId(verifierSignature?.signerVatId);
+      const verifierSigningTime = verifierVisualDate?.isoDate || verifierSignature?.signingTime;
+
+      let personSigningTime = primarySignature.signingTime;
+      let organizationSigningTime = primarySignature.signingTime;
+      const primarySignerVatId = normalizeVatId(primarySignature.signerVatId);
+      const primaryIsNonVerifierVat = Boolean(primarySignerVatId && !verifierVatSet.has(primarySignerVatId));
+      let organizationVisualDate:
+        | { verifierVat: string; matchedVatToken: string; rawDate: string; isoDate?: string }
+        | undefined;
+      if (primarySignerVatId && primaryIsNonVerifierVat) {
+        organizationVisualDate = extractVerifierVisualSigningDate(submission.pdfBytes, [primarySignerVatId]);
+        if (organizationVisualDate?.isoDate) {
+          organizationSigningTime = organizationVisualDate.isoDate;
+          notes.push(
+            `Organization signing time resolved from client VAT ${primarySignerVatId} `
+            + `using visual /Date(${organizationVisualDate.rawDate}).`,
+          );
+        }
+      }
+      if (!personSigningTime && organizationVisualDate?.isoDate) {
+        personSigningTime = organizationVisualDate.isoDate;
+        notes.push(
+          `Person signing time fallback resolved from client VAT ${primarySignerVatId} `
+          + `using visual /Date(${organizationVisualDate.rawDate}).`,
+        );
+      }
+      if (parseBoolean(process.env.DETERMINISTIC_VC_BY_CONTRACT, false) && this.config.verifierVatList.length) {
+        const useVerifierVisualDateAsPersonFallback = !personSigningTime || !primarySignerVatId || verifierVatSet.has(primarySignerVatId);
+        if (verifierVisualDate?.isoDate && useVerifierVisualDateAsPersonFallback) {
+          personSigningTime = verifierVisualDate.isoDate;
+          notes.push(
+            `Deterministic signing time resolved from verifier VAT ${verifierVisualDate.verifierVat} `
+            + `(matched token ${verifierVisualDate.matchedVatToken}) using visual /Date(${verifierVisualDate.rawDate}).`,
+          );
+        } else if (verifierVisualDate?.isoDate) {
+          notes.push(
+            `Verifier visual /Date(${verifierVisualDate.rawDate}) found for VAT ${verifierVisualDate.verifierVat}, `
+            + `but primary counterparty signature time (${primarySignature.signingTime}) was preserved.`,
+          );
+        } else if (verifierVisualDate) {
+          notes.push(
+            `Verifier visual /Date(${verifierVisualDate.rawDate}) correlated for VAT ${verifierVisualDate.verifierVat}, `
+            + 'but it could not be normalized to ISO-8601.',
+          );
+        } else {
+          notes.push('No verifier visual /Date(...) correlation found in PDF binary for configured VERIFIERS_VAT_LIST order.');
+        }
+
+        const useVerifierVisualDateAsOrganizationFallback = !organizationSigningTime || !primarySignerVatId || !primaryIsNonVerifierVat;
+        if (verifierVisualDate?.isoDate && useVerifierVisualDateAsOrganizationFallback) {
+          organizationSigningTime = verifierVisualDate.isoDate;
+          notes.push(
+            `Organization signing time fallback resolved from verifier VAT ${verifierVisualDate.verifierVat} `
+            + `(visual /Date(${verifierVisualDate.rawDate})).`,
+          );
+        }
+      }
 
       const skipTemplateValidation = route.resourceType === 'contract';
       let templateUrl = '';
@@ -1743,7 +2029,11 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
         signerCertificateSerialNumber: primarySignature.signerCert.serialNumber,
         signerSubject: primarySignature.signerCert.subject,
         signerIssuer: primarySignature.signerCert.issuer,
-        signerSigningTime: primarySignature.signingTime,
+        signerSigningTime: personSigningTime,
+        personSigningTime,
+        organizationSigningTime,
+        verifierVatId,
+        verifierSigningTime,
         hashes: {
           signedPdfSha256Hex,
           unsignedPdfSha256Hex,

@@ -7,10 +7,10 @@
  * did_bindings, did_documents).
  *
  * Usage:
- *   node scripts/firestore-vat-manager.mjs --vat VATES-B42215152
- *   node scripts/firestore-vat-manager.mjs --vat VATES-B42215152 --prefix st-v2
- *   node scripts/firestore-vat-manager.mjs --vat VATES-B42215152 --delete
- *   node scripts/firestore-vat-manager.mjs --vat VATES-B42215152 --prefix st-v2 --project globaldatacare-ica-dev --delete
+ *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233
+ *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233 --prefix st-v2
+ *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233 --delete
+ *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233 --prefix st-v2 --project globaldatacare-ica-dev --delete
  *
  * Options:
  *   --vat       VAT number to search (required). Case-insensitive.
@@ -44,7 +44,7 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 
 if (!args.vat) {
-  console.error('ERROR: --vat is required. Example: --vat VATES-B42215152');
+  console.error('ERROR: --vat is required. Example: --vat VATES-B00112233');
   process.exit(1);
 }
 

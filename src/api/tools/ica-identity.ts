@@ -1,3 +1,32 @@
+// Construye el DID principal de la ICA como did:web:<domain>:<tenant>
+export function buildIcaDid(req?: IncomingMessage): string {
+  const domain = (process.env.DID_WEB_DOMAIN || '').replace(/^did:web:/, '').trim();
+  const tenant = (process.env.ICA_LOCAL_TENANT_ID || 'ica').trim();
+  if (domain) {
+    return `did:web:${domain.replace(/:/g, '%3A')}:${tenant}`;
+  }
+  // fallback autodetect
+  const host = req && req.headers && req.headers.host ? req.headers.host : 'localhost';
+  return `did:web:${host.replace(/:/g, '%3A')}:${tenant}`;
+}
+
+// Añade alsoKnownAs al did document si MASK_LOCAL_ICA no es true
+export function addAlsoKnownAsToDidDocument(didDocument: any, req?: IncomingMessage): void {
+  const mask = String(process.env.MASK_LOCAL_ICA || '').toLowerCase() === 'true';
+  if (mask) return;
+  const realHost = req && req.headers && req.headers.host ? req.headers.host : '';
+  if (realHost) {
+    didDocument.alsoKnownAs = [`https://${realHost}`];
+  }
+}
+// Devuelve el DID audience para DIDComm, usando la misma lógica que resolveIcaIssuerDid
+export function resolveIcaAudienceDid(req?: IncomingMessage): string {
+  const configuredAudienceDid = (process.env.ICA_DIDCOMM_AUDIENCE_DID || '').trim();
+  if (configuredAudienceDid) return configuredAudienceDid;
+
+  // Reutiliza la lógica de issuer para coherencia
+  return resolveIcaIssuerDid(req);
+}
 import {
   constants as cryptoConstants,
   createHash,
@@ -380,6 +409,19 @@ function stableJsonStringify(value: unknown): string {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`).join(',')}}`;
 }
 
+function canonicalizeJsonValue<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((entry) => canonicalizeJsonValue(entry)) as T;
+  }
+  const record = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  for (const key of Object.keys(record).sort()) {
+    output[key] = canonicalizeJsonValue(record[key]);
+  }
+  return output as T;
+}
+
 function buildDidJwkFromPublicJwk(publicJwk: JsonObject): string | null {
   const didJwkPublic = selectPublicJwkForDidJwk(publicJwk);
   if (!didJwkPublic) return null;
@@ -707,16 +749,18 @@ export function attachProofToCredential(
   vc: VerifiableCredentialV2,
   route: VerifyRouteContext,
   issuerDidInput?: string,
+  proofCreatedAtOverride?: string,
 ): VerifiableCredentialV2 {
   const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
   const deterministicByContract = parseBoolean(process.env.DETERMINISTIC_VC_BY_CONTRACT, false);
   const vcRecord = vc as unknown as Record<string, unknown>;
   const deterministicCreatedAt = typeof vcRecord.validFrom === 'string' ? vcRecord.validFrom : '';
-  const createdAt = deterministicByContract && deterministicCreatedAt
-    ? deterministicCreatedAt
+  const createdAt = deterministicByContract
+    ? (proofCreatedAtOverride || deterministicCreatedAt || new Date().toISOString())
     : new Date().toISOString();
   const vcWithoutProof = { ...vc };
   delete vcWithoutProof.proof;
+  const canonicalVcWithoutProof = canonicalizeJsonValue(vcWithoutProof);
 
   const signing = resolveSigningKeyMaterial();
   const verificationMethod = `${issuerDid}#${signing?.keyId || (process.env.ICA_VC_SIGNING_KEY_ID || 'key-1').trim()}`;
@@ -724,7 +768,7 @@ export function attachProofToCredential(
   const isTestVersion = route.resourceType.toLowerCase().startsWith('test-');
   if (isTestVersion && useInvalidProofForTestResourceVersion()) {
     return {
-      ...vcWithoutProof,
+      ...canonicalVcWithoutProof,
       proof: {
         type: 'JsonWebSignature2020',
         created: createdAt,
@@ -741,13 +785,13 @@ export function attachProofToCredential(
         'Missing active signing key for production VC signing (activate key or configure ICA_VC_SIGNING_PRIVATE_KEY_PEM).',
       );
     }
-    return vcWithoutProof;
+    return canonicalVcWithoutProof;
   }
 
-  const payloadBytes = Buffer.from(JSON.stringify(vcWithoutProof));
+  const payloadBytes = Buffer.from(stableJsonStringify(canonicalVcWithoutProof));
   const detachedJws = buildDetachedJws(payloadBytes, signing, verificationMethod);
   return {
-    ...vcWithoutProof,
+    ...canonicalVcWithoutProof,
     proof: {
       type: 'JsonWebSignature2020',
       created: createdAt,

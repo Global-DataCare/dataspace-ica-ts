@@ -45,10 +45,6 @@ function controllerPublicKeysEqual(left: JsonObject, right: JsonObject): boolean
   return stableStringifyJson(left as JsonLike) === stableStringifyJson(right as JsonLike);
 }
 
-function organizationPublicKeysEqual(left: JsonObject, right: JsonObject): boolean {
-  return stableStringifyJson(left as JsonLike) === stableStringifyJson(right as JsonLike);
-}
-
 function equalsIgnoreCase(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
@@ -317,7 +313,8 @@ export class CreateDidDocumentRequestManager {
               && !controllerPublicKeysEqual(requestedControllerPublicKeyJwk, storedControllerPublicKeyJwk)
             ) {
               throw new Error(
-                `controller.publicKeyJwk must match the controller binding stored during _verify for organization.taxID "${lookupTaxId}".`,
+                `controller.publicKeyJwk must match the controller binding stored during _verify for organization.taxID "${lookupTaxId}". `
+                + `Use the exact key returned by _verify-response body.data[1].publicKeyJwk.`,
               );
             }
             const controllerPublicKeyJwk = requestedControllerPublicKeyJwk || storedControllerPublicKeyJwk;
@@ -328,20 +325,6 @@ export class CreateDidDocumentRequestManager {
             }
             const storedOrganizationKey = resolveStoredOrganizationPublicKeyJwk(didBindingRecords, route, lookupTaxId);
             const requestedOrganizationPublicKeyJwk = item.organization.publicKeyJwk;
-            if (
-              requestedOrganizationPublicKeyJwk
-              && storedOrganizationKey?.publicKeyJwk
-              && !organizationPublicKeysEqual(requestedOrganizationPublicKeyJwk, storedOrganizationKey.publicKeyJwk)
-            ) {
-              throw new Error(
-                `organization.publicKeyJwk must match the organization key stored during _verify for organization.taxID "${lookupTaxId}".`,
-              );
-            }
-            if (!requestedOrganizationPublicKeyJwk && storedOrganizationKey?.keySource === 'generated') {
-              throw new Error(
-                `organization.publicKeyJwk must be sent to confirm the ICA-generated organization key from _verify for organization.taxID "${lookupTaxId}".`,
-              );
-            }
             const organizationPublicKeyJwk = requestedOrganizationPublicKeyJwk
               || storedOrganizationKey?.publicKeyJwk;
             if (!organizationPublicKeyJwk) {
@@ -349,6 +332,9 @@ export class CreateDidDocumentRequestManager {
                 `No organization publicKeyJwk found for organization.taxID "${lookupTaxId}". Send organization.publicKeyJwk or complete _verify v2 with organization key bootstrap first.`,
               );
             }
+            const selectedOrganizationKeySource = requestedOrganizationPublicKeyJwk
+              ? 'attachment'
+              : storedOrganizationKey?.keySource;
             const built = buildOrganizationDidDocument({
               did,
               controller: {
@@ -377,7 +363,7 @@ export class CreateDidDocumentRequestManager {
               ...(item.controller.sameAs ? { controllerSameAs: item.controller.sameAs } : {}),
               controllerPublicKeyJwk,
               organizationPublicKeyJwk,
-              ...(storedOrganizationKey?.keySource ? { organizationKeySource: storedOrganizationKey.keySource } : {}),
+              ...(selectedOrganizationKeySource ? { organizationKeySource: selectedOrganizationKeySource } : {}),
               status: 'confirmed',
               createdAt,
               updatedAt: createdAt,

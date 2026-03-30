@@ -5,7 +5,7 @@
 const { Firestore } = require('@google-cloud/firestore');
 
 const db = new Firestore({ projectId: 'globaldatacare-ica-dev' });
-const taxId = 'B42215152';
+const taxId = 'B00112233';
 const collections = [
   'dev_issued_credentials',
   'dev_evidence_records',

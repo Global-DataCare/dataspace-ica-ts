@@ -411,11 +411,11 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.ok(openApi.paths['/did.json']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{membertype}/{role}/{idHash}/did.json']);
   assert.ok(Array.isArray(openApi.tags));
-  assert.equal(openApi.tags.some((tag) => tag.name === 'terms/pdf'), true);
-  assert.equal(openApi.tags.some((tag) => tag.name === 'network/evidence'), true);
-  assert.equal(openApi.tags.some((tag) => tag.name === 'network/policies'), true);
-  assert.equal(openApi.tags.some((tag) => tag.name === 'catalog/dcat3'), true);
-  assert.equal(openApi.tags.some((tag) => tag.name === 'entity/did/document'), true);
+  assert.equal(openApi.tags.some((tag) => tag.name.endsWith('terms/pdf')), true);
+  assert.equal(openApi.tags.some((tag) => tag.name.endsWith('network/evidence')), true);
+  assert.equal(openApi.tags.some((tag) => tag.name.endsWith('network/policies')), true);
+  assert.equal(openApi.tags.some((tag) => tag.name.endsWith('catalog/dcat3')), true);
+  assert.equal(openApi.tags.some((tag) => tag.name.endsWith('entity/did/document')), true);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request']);
@@ -432,15 +432,19 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response'],
   );
-  assert.equal(
+  const didCreateLocationExample =
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create']?.post?.responses?.['202']?.headers
-      ?.Location?.example,
-    '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001',
+      ?.Location?.example;
+  assert.match(
+    didCreateLocationExample || '',
+    /^\/ica\/cds-ES\/v1\/[^/]+\/entity\/did\/document\/_create-response\?thid=thid-create-did-001$/,
   );
-  assert.equal(
+  const didCreateResponseLocationExample =
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response']?.post?.responses?.['202']
-      ?.headers?.Location?.example,
-    '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001',
+      ?.headers?.Location?.example;
+  assert.match(
+    didCreateResponseLocationExample || '',
+    /^\/ica\/cds-ES\/v1\/[^/]+\/entity\/did\/document\/_create-response\?thid=thid-create-did-001$/,
   );
   assert.equal(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response']?.post?.requestBody
@@ -748,257 +752,287 @@ test('buildDidcommMessage supports empty correlation fields for early errors', (
 });
 
 test('VerifyResponseManager succeeded job returns result inside body', async () => {
-  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
-  assert.ok(parsed);
-  assert.equal(parsed.ok, true);
-  if (!parsed.ok) return;
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
 
-  const verifyResult: VerifyResult = {
-    ok: true,
-    verifiedAt: '2026-03-05T00:00:00.000Z',
-    templateUrl: 'https://example.test/template.pdf',
-    templateMatch: true,
-    signatureValid: true,
-    chainValid: true,
-    revocationStatus: 'good',
-    digest: {
-      alg: 'sha3-384',
-      signedPdfHex: TEST_SHA3_384_HEX,
-      unsignedPdfHex: TEST_SHA3_384_HEX,
-      templateHex: TEST_SHA3_384_HEX,
-    },
-    signerCertificateSerialNumber: '00AA11',
-    signerSubject: 'CN=Signer,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
-    signerIssuer: 'CN=FNMT',
-    hashes: {
-      signedPdfSha256Hex: 'a',
-      unsignedPdfSha256Hex: 'b',
-      templateSha256Hex: 'c',
-    },
-    notes: [],
-  };
+    const verifyResult: VerifyResult = {
+      ok: true,
+      verifiedAt: '2026-03-05T00:00:00.000Z',
+      templateUrl: 'https://example.test/template.pdf',
+      templateMatch: true,
+      signatureValid: true,
+      chainValid: true,
+      revocationStatus: 'good',
+      digest: {
+        alg: 'sha3-384',
+        signedPdfHex: TEST_SHA3_384_HEX,
+        unsignedPdfHex: TEST_SHA3_384_HEX,
+        templateHex: TEST_SHA3_384_HEX,
+      },
+      signerCertificateSerialNumber: '00AA11',
+      signerSubject: 'CN=Signer,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+      signerIssuer: 'CN=FNMT',
+      hashes: {
+        signedPdfSha256Hex: 'a',
+        unsignedPdfSha256Hex: 'b',
+        templateSha256Hex: 'c',
+      },
+      notes: [],
+    };
 
-  const store = new InMemoryVerificationJobStore(60);
-  store.enqueue('thid-ok-001', parsed.context);
-  store.markSucceeded('thid-ok-001', verifyResult);
+    const store = new InMemoryVerificationJobStore(60);
+    store.enqueue('thid-ok-001', parsed.context);
+    store.markSucceeded('thid-ok-001', verifyResult);
 
-  const manager = new VerifyResponseManager(store);
-  const requestUrl = new URL(
-    'http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-ok-001',
-  );
-  const req = { method: 'POST', headers: {} } as unknown as IncomingMessage;
-  const outcome = await manager.poll(parsed.context, req, requestUrl);
-  assert.equal(outcome.type, 'succeeded');
-  if (outcome.type !== 'succeeded') return;
+    const manager = new VerifyResponseManager(store);
+    const requestUrl = new URL(
+      'http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-ok-001',
+    );
+    const req = { method: 'POST', headers: {} } as unknown as IncomingMessage;
+    const outcome = await manager.poll(parsed.context, req, requestUrl);
+    assert.equal(outcome.type, 'succeeded');
+    if (outcome.type !== 'succeeded') return;
 
-  const payload = outcome.payload as {
-    jti?: string;
-    iss?: string;
-    aud?: string;
-    thid?: string;
-    type?: string;
-    attachments?: Array<{
-      id?: string;
-      format?: string;
-      media_type?: string;
-      data?: { json?: { format?: string; jwt?: string } };
-    }>;
-    body?: { total?: number; data?: unknown[] };
-  };
-  assert.match(payload.jti || '', /^urn:uuid:/);
-  assert.match(payload.iss || '', /^did:web:/);
-  assert.match(payload.aud || '', /^did:web:/);
-  assert.equal(payload.thid, 'thid-ok-001');
-  assert.equal(payload.type, 'application/bundle-api+json');
-  assert.equal(payload.body?.total, 2);
-  assert.equal(Array.isArray(payload.body?.data), true);
-  assert.equal(Array.isArray(payload.attachments), true);
-  assert.equal(payload.attachments?.length, 2);
-  assert.equal(payload.attachments?.[0]?.format, 'vc+jwt');
-  assert.equal(payload.attachments?.[0]?.media_type, 'application/vc+jwt');
-  assert.equal(payload.attachments?.[0]?.data?.json?.format, 'vc+jwt');
-  assert.equal((payload.attachments?.[0]?.data?.json?.jwt || '').split('.').length, 3);
-  assert.equal(payload.attachments?.[1]?.format, 'vc+jwt');
-  assert.equal(payload.attachments?.[1]?.media_type, 'application/vc+jwt');
-  assert.equal(payload.attachments?.[1]?.data?.json?.format, 'vc+jwt');
-  assert.equal((payload.attachments?.[1]?.data?.json?.jwt || '').split('.').length, 3);
+    const payload = outcome.payload as {
+      jti?: string;
+      iss?: string;
+      aud?: string;
+      thid?: string;
+      type?: string;
+      attachments?: Array<{
+        id?: string;
+        format?: string;
+        media_type?: string;
+        data?: { json?: { format?: string; jwt?: string } };
+      }>;
+      body?: { total?: number; data?: unknown[] };
+    };
+    assert.match(payload.jti || '', /^urn:uuid:/);
+    assert.match(payload.iss || '', /^did:web:/);
+    assert.match(payload.aud || '', /^did:web:/);
+    assert.equal(payload.thid, 'thid-ok-001');
+    assert.equal(payload.type, 'application/bundle-api+json');
+    assert.equal(payload.body?.total, 2);
+    assert.equal(Array.isArray(payload.body?.data), true);
+    assert.equal(Array.isArray(payload.attachments), true);
+    assert.equal(payload.attachments?.length, 2);
+    assert.equal(payload.attachments?.[0]?.format, 'vc+jwt');
+    assert.equal(payload.attachments?.[0]?.media_type, 'application/vc+jwt');
+    assert.equal(payload.attachments?.[0]?.data?.json?.format, 'vc+jwt');
+    assert.equal((payload.attachments?.[0]?.data?.json?.jwt || '').split('.').length, 3);
+    assert.equal(payload.attachments?.[1]?.format, 'vc+jwt');
+    assert.equal(payload.attachments?.[1]?.media_type, 'application/vc+jwt');
+    assert.equal(payload.attachments?.[1]?.data?.json?.format, 'vc+jwt');
+    assert.equal((payload.attachments?.[1]?.data?.json?.jwt || '').split('.').length, 3);
+  } finally {
+    if (previousDidWebDomain === undefined) {
+      delete process.env.DID_WEB_DOMAIN;
+    } else {
+      process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    }
+  }
 });
 
 test('VerifyResponseManager stores issued credentials and evidence using mem collections adapter', async () => {
-  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
-  assert.ok(parsed);
-  assert.equal(parsed.ok, true);
-  if (!parsed.ok) return;
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
 
-  resetVerificationCollectionsMemStateForTests();
-  const collectionsService = new VerificationCollectionsService({
-    provider: 'mem',
-    required: true,
-    firestoreCollectionPrefix: 'ica',
-  });
+    resetVerificationCollectionsMemStateForTests();
+    const collectionsService = new VerificationCollectionsService({
+      provider: 'mem',
+      required: true,
+      firestoreCollectionPrefix: 'ica',
+    });
 
-  const verifyResult: VerifyResult = {
-    ok: true,
-    verifiedAt: '2026-03-05T00:00:00.000Z',
-    templateUrl: 'https://example.test/template.pdf',
-    templateMatch: true,
-    signatureValid: true,
-    chainValid: true,
-    revocationStatus: 'good',
-    digest: {
-      alg: 'sha3-384',
-      signedPdfHex: TEST_SHA3_384_HEX,
-      unsignedPdfHex: TEST_SHA3_384_HEX_ALT,
-      templateHex: TEST_SHA3_384_HEX,
-    },
-    signerCertificateSerialNumber: '00AA11',
-    signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
-    signerIssuer: 'CN=FNMT Intermediate',
-    hashes: {
-      signedPdfSha256Hex: 'deadbeef',
-      unsignedPdfSha256Hex: 'beadfeed',
-      templateSha256Hex: 'cafebabe',
-    },
-    notes: [],
-  };
+    const verifyResult: VerifyResult = {
+      ok: true,
+      verifiedAt: '2026-03-05T00:00:00.000Z',
+      templateUrl: 'https://example.test/template.pdf',
+      templateMatch: true,
+      signatureValid: true,
+      chainValid: true,
+      revocationStatus: 'good',
+      digest: {
+        alg: 'sha3-384',
+        signedPdfHex: TEST_SHA3_384_HEX,
+        unsignedPdfHex: TEST_SHA3_384_HEX_ALT,
+        templateHex: TEST_SHA3_384_HEX,
+      },
+      signerCertificateSerialNumber: '00AA11',
+      signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+      signerIssuer: 'CN=FNMT Intermediate',
+      hashes: {
+        signedPdfSha256Hex: 'deadbeef',
+        unsignedPdfSha256Hex: 'beadfeed',
+        templateSha256Hex: 'cafebabe',
+      },
+      notes: [],
+    };
 
-  const store = new InMemoryVerificationJobStore(60);
-  store.enqueue('thid-persist-001', parsed.context);
-  store.markSucceeded('thid-persist-001', verifyResult);
+    const store = new InMemoryVerificationJobStore(60);
+    store.enqueue('thid-persist-001', parsed.context);
+    store.markSucceeded('thid-persist-001', verifyResult);
 
-  const manager = new VerifyResponseManager(store, collectionsService);
-  const requestUrl = new URL(
-    'http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-persist-001',
-  );
-  const req = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
-  const outcome = await manager.poll(parsed.context, req, requestUrl);
-  assert.equal(outcome.type, 'succeeded');
+    const manager = new VerifyResponseManager(store, collectionsService);
+    const requestUrl = new URL(
+      'http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-persist-001',
+    );
+    const req = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
+    const outcome = await manager.poll(parsed.context, req, requestUrl);
+    assert.equal(outcome.type, 'succeeded');
 
-  const issued = (await collectionsService.listIssuedCredentials())
-    .filter((item) => item.thid === 'thid-persist-001');
-  const evidence = (await collectionsService.listEvidenceRecords())
-    .filter((item) => item.thid === 'thid-persist-001');
-  assert.equal(issued.length, 2);
-  assert.equal(evidence.length, 4);
-  assert.equal(issued.every((item) => item.tenantId === 'acme'), true);
-  assert.equal(evidence.every((item) => item.tenantId === 'acme'), true);
-  const expectedVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX);
-  assert.equal((issued[0]?.credential?.meta as Record<string, unknown>)?.versionId, expectedVersionId);
-  assert.equal((issued[1]?.credential?.meta as Record<string, unknown>)?.versionId, expectedVersionId);
+    const issued = (await collectionsService.listIssuedCredentials())
+      .filter((item) => item.thid === 'thid-persist-001');
+    const evidence = (await collectionsService.listEvidenceRecords())
+      .filter((item) => item.thid === 'thid-persist-001');
+    assert.equal(issued.length, 2);
+    assert.equal(evidence.length, 4);
+    assert.equal(issued.every((item) => item.tenantId === 'acme'), true);
+    assert.equal(evidence.every((item) => item.tenantId === 'acme'), true);
+    const expectedVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX);
+    assert.equal((issued[0]?.credential?.meta as Record<string, unknown>)?.versionId, expectedVersionId);
+    assert.equal((issued[1]?.credential?.meta as Record<string, unknown>)?.versionId, expectedVersionId);
+  } finally {
+    if (previousDidWebDomain === undefined) {
+      delete process.env.DID_WEB_DOMAIN;
+    } else {
+      process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    }
+  }
 });
 
 test('VerifyResponseManager versions repeated organization PDFs and warns when controller changes', async () => {
-  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
-  assert.ok(parsed);
-  assert.equal(parsed.ok, true);
-  if (!parsed.ok) return;
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
 
-  resetVerificationCollectionsMemStateForTests();
-  const collectionsService = new VerificationCollectionsService({
-    provider: 'mem',
-    required: true,
-    firestoreCollectionPrefix: 'ica',
-  });
+    resetVerificationCollectionsMemStateForTests();
+    const collectionsService = new VerificationCollectionsService({
+      provider: 'mem',
+      required: true,
+      firestoreCollectionPrefix: 'ica',
+    });
 
-  const firstResult: VerifyResult = {
-    ok: true,
-    verifiedAt: '2026-03-05T00:00:00.000Z',
-    templateUrl: '',
-    templateMatch: true,
-    signatureValid: true,
-    chainValid: true,
-    revocationStatus: 'good',
-    digest: {
-      alg: 'sha3-384',
-      signedPdfHex: TEST_SHA3_384_HEX,
-      unsignedPdfHex: TEST_SHA3_384_HEX,
-      templateHex: TEST_SHA3_384_HEX,
-    },
-    signerCertificateSerialNumber: '00AA11',
-    signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
-    signerIssuer: 'CN=FNMT Intermediate',
-    hashes: {
-      signedPdfSha256Hex: 'deadbeef',
-      unsignedPdfSha256Hex: 'beadfeed',
-      templateSha256Hex: 'cafebabe',
-    },
-    notes: [],
-    annexFormFields: {
-      'Person.email': 'controller.one@example.org',
-    },
-  };
+    const firstResult: VerifyResult = {
+      ok: true,
+      verifiedAt: '2026-03-05T00:00:00.000Z',
+      templateUrl: '',
+      templateMatch: true,
+      signatureValid: true,
+      chainValid: true,
+      revocationStatus: 'good',
+      digest: {
+        alg: 'sha3-384',
+        signedPdfHex: TEST_SHA3_384_HEX,
+        unsignedPdfHex: TEST_SHA3_384_HEX,
+        templateHex: TEST_SHA3_384_HEX,
+      },
+      signerCertificateSerialNumber: '00AA11',
+      signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+      signerIssuer: 'CN=FNMT Intermediate',
+      hashes: {
+        signedPdfSha256Hex: 'deadbeef',
+        unsignedPdfSha256Hex: 'beadfeed',
+        templateSha256Hex: 'cafebabe',
+      },
+      notes: [],
+      annexFormFields: {
+        'Person.email': 'controller.one@example.org',
+      },
+    };
 
-  const secondResult: VerifyResult = {
-    ...firstResult,
-    verifiedAt: '2026-03-06T00:00:00.000Z',
-    digest: {
-      alg: 'sha3-384',
-      signedPdfHex: TEST_SHA3_384_HEX_ALT,
-      unsignedPdfHex: TEST_SHA3_384_HEX_ALT,
-      templateHex: TEST_SHA3_384_HEX,
-    },
-    annexFormFields: {
-      'Person.email': 'controller.two@example.org',
-    },
-  };
+    const secondResult: VerifyResult = {
+      ...firstResult,
+      verifiedAt: '2026-03-06T00:00:00.000Z',
+      digest: {
+        alg: 'sha3-384',
+        signedPdfHex: TEST_SHA3_384_HEX_ALT,
+        unsignedPdfHex: TEST_SHA3_384_HEX_ALT,
+        templateHex: TEST_SHA3_384_HEX,
+      },
+      annexFormFields: {
+        'Person.email': 'controller.two@example.org',
+      },
+    };
 
-  const store = new InMemoryVerificationJobStore(60);
-  store.enqueue('thid-persist-v1', parsed.context);
-  store.markSucceeded('thid-persist-v1', firstResult);
-  store.enqueue('thid-persist-v2', parsed.context);
-  store.markSucceeded('thid-persist-v2', secondResult);
+    const store = new InMemoryVerificationJobStore(60);
+    store.enqueue('thid-persist-v1', parsed.context);
+    store.markSucceeded('thid-persist-v1', firstResult);
+    store.enqueue('thid-persist-v2', parsed.context);
+    store.markSucceeded('thid-persist-v2', secondResult);
 
-  const manager = new VerifyResponseManager(store, collectionsService);
-  const req = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
+    const manager = new VerifyResponseManager(store, collectionsService);
+    const req = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
 
-  const outcomeV1 = await manager.poll(
-    parsed.context,
-    req,
-    new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify-response?thid=thid-persist-v1'),
-  );
-  assert.equal(outcomeV1.type, 'succeeded');
+    const outcomeV1 = await manager.poll(
+      parsed.context,
+      req,
+      new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify-response?thid=thid-persist-v1'),
+    );
+    assert.equal(outcomeV1.type, 'succeeded');
 
-  const outcomeV2 = await manager.poll(
-    parsed.context,
-    req,
-    new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify-response?thid=thid-persist-v2'),
-  );
-  assert.equal(outcomeV2.type, 'succeeded');
-  if (outcomeV2.type !== 'succeeded') return;
+    const outcomeV2 = await manager.poll(
+      parsed.context,
+      req,
+      new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify-response?thid=thid-persist-v2'),
+    );
+    assert.equal(outcomeV2.type, 'succeeded');
+    if (outcomeV2.type !== 'succeeded') return;
 
-  const payload = outcomeV2.payload as { body?: { issues?: { issue?: Array<Record<string, unknown>> } } };
-  assert.equal(
-    payload.body?.issues?.issue?.some((issue) => String(issue.diagnostics || '').includes('controllerChanged=true')),
-    true,
-  );
+    const payload = outcomeV2.payload as { body?: { issues?: { issue?: Array<Record<string, unknown>> } } };
+    assert.equal(
+      payload.body?.issues?.issue?.some((issue) => String(issue.diagnostics || '').includes('controllerChanged=true')),
+      true,
+    );
 
-  const issued = (await collectionsService.listIssuedCredentials())
-    .filter((item) => item.thid === 'thid-persist-v2');
-  const evidence = (await collectionsService.listEvidenceRecords())
-    .filter((item) => item.thid === 'thid-persist-v2');
-  assert.equal(issued.length, 2);
-  assert.equal(evidence.length, 4);
+    const issued = (await collectionsService.listIssuedCredentials())
+      .filter((item) => item.thid === 'thid-persist-v2');
+    const evidence = (await collectionsService.listEvidenceRecords())
+      .filter((item) => item.thid === 'thid-persist-v2');
+    assert.equal(issued.length, 2);
+    assert.equal(evidence.length, 4);
 
-  const expectedVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX_ALT);
-  const expectedPreviousVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX);
-  const organizationRecord = issued.find((item) => {
-    const subject = (item.credential?.credentialSubject || {}) as Record<string, unknown>;
-    return subject['@type'] === 'Organization';
-  });
-  const personRecord = issued.find((item) => {
-    const subject = (item.credential?.credentialSubject || {}) as Record<string, unknown>;
-    return subject['@type'] === 'Person';
-  });
-  const organizationMeta = (organizationRecord?.credential?.meta || {}) as Record<string, unknown>;
-  const personMeta = (personRecord?.credential?.meta || {}) as Record<string, unknown>;
-  assert.equal(organizationMeta.versionId, expectedVersionId);
-  assert.equal(organizationMeta.previousVersionId, expectedPreviousVersionId);
-  assert.equal(organizationMeta.controllerChanged, true);
-  assert.equal(personMeta.versionId, expectedVersionId);
-  assert.equal(personMeta.previousVersionId, expectedPreviousVersionId);
-  assert.equal(personMeta.controllerChanged, true);
-  const personSubject = (personRecord?.credential?.credentialSubject || {}) as Record<string, unknown>;
-  assert.equal(personSubject.sameAs, normalizeSameAsHash('controller.two@example.org'));
+    const expectedVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX_ALT);
+    const expectedPreviousVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX);
+    const organizationRecord = issued.find((item) => {
+      const subject = (item.credential?.credentialSubject || {}) as Record<string, unknown>;
+      return subject['@type'] === 'Organization';
+    });
+    const personRecord = issued.find((item) => {
+      const subject = (item.credential?.credentialSubject || {}) as Record<string, unknown>;
+      return subject['@type'] === 'Person';
+    });
+    const organizationMeta = (organizationRecord?.credential?.meta || {}) as Record<string, unknown>;
+    const personMeta = (personRecord?.credential?.meta || {}) as Record<string, unknown>;
+    assert.equal(organizationMeta.versionId, expectedVersionId);
+    assert.equal(organizationMeta.previousVersionId, expectedPreviousVersionId);
+    assert.equal(organizationMeta.controllerChanged, true);
+    assert.equal(personMeta.versionId, expectedVersionId);
+    assert.equal(personMeta.previousVersionId, expectedPreviousVersionId);
+    assert.equal(personMeta.controllerChanged, true);
+    const personSubject = (personRecord?.credential?.credentialSubject || {}) as Record<string, unknown>;
+    assert.equal(personSubject.sameAs, normalizeSameAsHash('controller.two@example.org'));
+  } finally {
+    if (previousDidWebDomain === undefined) {
+      delete process.env.DID_WEB_DOMAIN;
+    } else {
+      process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    }
+  }
 });
 
 test('AddEvidence managers persist evidence records using mem collections adapter', async () => {
