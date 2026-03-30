@@ -605,6 +605,11 @@ type ExtractedPdfSignature = {
   signedData: Buffer;
 };
 
+type ExtractPdfSignaturesResult = {
+  signatures: ExtractedPdfSignature[];
+  malformedCount: number;
+};
+
 type VerifiedPdfSignature = {
   signatureIndex: number;
   signerCert: X509Certificate;
@@ -888,11 +893,12 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
   }
 }
 
-function extractPdfSignatures(pdfBytes: Buffer): ExtractedPdfSignature[] {
+function extractPdfSignatures(pdfBytes: Buffer): ExtractPdfSignaturesResult {
   const pdfAsLatin1 = pdfBytes.toString('latin1');
   const byteRangeRegex = /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g;
   let match: RegExpExecArray | null;
   const signatures: ExtractedPdfSignature[] = [];
+  let malformedCount = 0;
   let signatureIndex = 0;
 
   while (true) {
@@ -994,7 +1000,9 @@ function extractPdfSignatures(pdfBytes: Buffer): ExtractedPdfSignature[] {
     }
 
     if (!signatureDer || !signatureDer.length) {
-      throw new Error('Malformed CMS signature payload inside PDF.');
+      malformedCount += 1;
+      signatureIndex += 1;
+      continue;
     }
 
     signatures.push({
@@ -1006,10 +1014,13 @@ function extractPdfSignatures(pdfBytes: Buffer): ExtractedPdfSignature[] {
   }
 
   if (!signatures.length) {
+    if (malformedCount > 0) {
+      throw new Error('Malformed CMS signature payload inside PDF.');
+    }
     throw new Error('PDF is missing ByteRange, no digital signature found.');
   }
 
-  return signatures;
+  return { signatures, malformedCount };
 }
 
 async function extractCrlUrls(certPemPath: string): Promise<string[]> {
@@ -1876,8 +1887,14 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
       const intermediatePems = trustAnchors.intermediatePems;
       notes.push(`FNMT root loaded from ${trustAnchors.rootSource}`);
       notes.push(`FNMT intermediate loaded from ${trustAnchors.intermediateSources.join(', ')}`);
-      const extractedSignatures = extractPdfSignatures(submission.pdfBytes);
+      const extracted = extractPdfSignatures(submission.pdfBytes);
+      const extractedSignatures = extracted.signatures;
       notes.push(`Detected ${extractedSignatures.length} PDF signature(s).`);
+      if (extracted.malformedCount > 0) {
+        notes.push(
+          `Ignored ${extracted.malformedCount} malformed CMS signature payload(s) while processing remaining signatures.`,
+        );
+      }
 
       const verifiedSignatures: VerifiedPdfSignature[] = [];
       for (const signature of extractedSignatures) {

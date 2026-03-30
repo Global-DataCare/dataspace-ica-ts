@@ -268,6 +268,63 @@ function buildRevocationOutcomeIssues(errorDetails: VerificationErrorDetails | u
   });
 }
 
+function buildFailedVerifyPayload(
+  route: VerifyRouteContext,
+  req: IncomingMessage,
+  thid: string,
+  job: {
+    createdAt: number;
+    updatedAt: number;
+    error?: string;
+    errorDetails?: VerificationErrorDetails;
+  },
+): DidcommPlaintextMessage<VerifyBundleResponse> {
+  const diagnostics = job.error || 'Unknown verification failure.';
+  const outcome = buildOperationOutcome([
+    { severity: 'error', code: 'exception', diagnostics },
+    ...buildRevocationOutcomeIssues(job.errorDetails),
+  ]);
+  const failedBody: VerifyBundleResponse = {
+    resourceType: 'Bundle',
+    type: 'batch-response',
+    issues: outcome,
+    total: 1,
+    data: [
+      {
+        type: 'TermsVerification-v1.0',
+        resource: {
+          id: `urn:uuid:${randomUUID()}`,
+          type: 'terms-verification-v1.0',
+          thid,
+          tenantId: route.tenantId,
+          jurisdiction: route.jurisdiction.toUpperCase(),
+          sector: route.sector,
+          section: route.section,
+          format: route.format,
+          resourceType: route.resourceType,
+          status: 'failed',
+          createdAt: new Date(job.createdAt).toISOString(),
+          updatedAt: new Date(job.updatedAt).toISOString(),
+          audit: {
+            txId: '',
+            txTime: '',
+          },
+          content: [
+            {
+              error: diagnostics,
+            },
+          ],
+        },
+        response: {
+          status: '500',
+          outcome,
+        },
+      },
+    ],
+  };
+  return buildDidcommVerifyMessage(route, thid, failedBody, req);
+}
+
 export class VerifyResponseManager {
   private readonly jobStore: InMemoryVerificationJobStore;
   private readonly collectionsService: VerificationCollectionsService;
@@ -315,61 +372,23 @@ export class VerifyResponseManager {
     }
 
     if (job.status === 'failed') {
-      const diagnostics = job.error || 'Unknown verification failure.';
-      const outcome = buildOperationOutcome([
-        { severity: 'error', code: 'exception', diagnostics },
-        ...buildRevocationOutcomeIssues(job.errorDetails),
-      ]);
-      const failedBody: VerifyBundleResponse = {
-        resourceType: 'Bundle',
-        type: 'batch-response',
-        issues: outcome,
-        total: 1,
-        data: [
-          {
-            type: 'TermsVerification-v1.0',
-            resource: {
-              id: `urn:uuid:${randomUUID()}`,
-              type: 'terms-verification-v1.0',
-              thid,
-              tenantId: route.tenantId,
-              jurisdiction: route.jurisdiction.toUpperCase(),
-              sector: route.sector,
-              section: route.section,
-              format: route.format,
-              resourceType: route.resourceType,
-              status: 'failed',
-              createdAt: new Date(job.createdAt).toISOString(),
-              updatedAt: new Date(job.updatedAt).toISOString(),
-              audit: {
-                txId: '',
-                txTime: '',
-              },
-              content: [
-                {
-                  error: diagnostics,
-                },
-              ],
-            },
-            response: {
-              status: '500',
-              outcome,
-            },
-          },
-        ],
-      };
       return {
         type: 'failed',
-        payload: buildDidcommVerifyMessage(route, thid, failedBody, req),
+        payload: buildFailedVerifyPayload(route, req, thid, job),
       };
     }
 
     const verificationResult = job.result;
     if (!verificationResult) {
+      const message = `Verification job ${thid} finished without result payload.`;
+      this.jobStore.markFailed(thid, message);
       return {
-        type: 'error',
-        statusCode: 500,
-        message: `Verification job ${thid} finished without result payload.`,
+        type: 'failed',
+        payload: buildFailedVerifyPayload(route, req, thid, {
+          ...job,
+          error: message,
+          updatedAt: Date.now(),
+        }),
       };
     }
 
@@ -381,10 +400,15 @@ export class VerifyResponseManager {
       await enrichVerificationBundleWithStoredVersionState(route, verificationResult, body, this.collectionsService);
       await this.collectionsService.persistFromVerificationBundle(route, thid, body);
     } catch (error: unknown) {
+      const message = (error as Error)?.message || 'Verification collections persistence failed.';
+      this.jobStore.markFailed(thid, message);
       return {
-        type: 'error',
-        statusCode: 500,
-        message: (error as Error)?.message || 'Verification collections persistence failed.',
+        type: 'failed',
+        payload: buildFailedVerifyPayload(route, req, thid, {
+          ...job,
+          error: message,
+          updatedAt: Date.now(),
+        }),
       };
     }
 

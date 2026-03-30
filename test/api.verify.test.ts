@@ -1555,6 +1555,58 @@ test('VerifyResponseManager hides version meta in response by default and can ex
   }
 });
 
+test('VerifyResponseManager returns terminal failed payload when persistence throws', async () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  resetVerificationCollectionsMemStateForTests();
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const store = new InMemoryVerificationJobStore(60);
+    store.enqueue('thid-persist-error-001', parsed.context);
+    store.markSucceeded('thid-persist-error-001', {
+      ...buildTestVerifyResult('persist-error'),
+      signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, CN=Signer',
+    });
+
+    const collectionsService = {
+      async listIssuedCredentials() {
+        return [];
+      },
+      async persistFromVerificationBundle() {
+        throw new Error('Persistence backend unavailable');
+      },
+    } as unknown as VerificationCollectionsService;
+
+    const manager = new VerifyResponseManager(store, collectionsService);
+    const req = { method: 'POST', headers: {} } as unknown as IncomingMessage;
+    const outcome = await manager.poll(
+      parsed.context,
+      req,
+      new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-persist-error-001'),
+    );
+    assert.equal(outcome.type, 'failed');
+    if (outcome.type !== 'failed') return;
+
+    const payload = outcome.payload as Record<string, any>;
+    assert.equal(payload.body?.data?.[0]?.response?.status, '500');
+    assert.match(
+      payload.body?.issues?.issue?.[0]?.diagnostics || '',
+      /Persistence backend unavailable/,
+    );
+
+    const job = store.get('thid-persist-error-001');
+    assert.equal(job?.status, 'failed');
+    assert.match(job?.error || '', /Persistence backend unavailable/);
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
 test('VerifyRequestManager rejects non-DIDComm content types', async () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
@@ -2137,6 +2189,54 @@ test('buildVerificationVcBundle (promoter-only signature): can build Organizatio
     assert.equal(organizationSubject.taxID, 'VATES-B12345678');
     assert.equal(organizationSubject.legalName, 'ACME PAYLOAD ORGANIZATION');
     assert.deepEqual(organizationEvidence.map((entry) => entry.type), ['document']);
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    if (previousAllowPayload === undefined) delete process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+    else process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = previousAllowPayload;
+    if (previousDisableStrictIdentity === undefined) delete process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+    else process.env.DISABLE_STRICT_IDENTITY_SOURCE = previousDisableStrictIdentity;
+  }
+});
+
+test('buildVerificationVcBundle (promoter-only signature): accepts SDK unsecureForm* payload aliases when strict identity source mode is disabled', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  const previousAllowPayload = process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+  const previousDisableStrictIdentity = process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = 'true';
+  process.env.DISABLE_STRICT_IDENTITY_SOURCE = 'true';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('promoter-only-payload-unsecure-aliases'),
+      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-TSTVERIFIERA1,C=ES',
+      verifierVatId: 'VATES-TSTVERIFIERA1',
+      annexFormFields: {},
+      organizationPayload: {
+        unsecureFormOrganizationTaxId: 'ES-B12345678',
+        unsecureFormOrganizationLegalName: 'Acme Payload Organization',
+      },
+      legalRepresentativePayload: {
+        unsecureFormLegalRepresentativeName: 'Jane Payload',
+        unsecureFormLegalRepresentativeIdentifier: '99999999X',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    const organizationResource = bundle.data[0]?.resource as Record<string, any>;
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    assert.equal(organizationSubject.taxID, 'VATES-B12345678');
+    assert.equal(organizationSubject.legalName, 'ACME PAYLOAD ORGANIZATION');
+
+    const personResource = bundle.data[1]?.resource as Record<string, any>;
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+    assert.equal(personSubject.name, 'Jane Payload');
+    assert.equal(personSubject.identifier, '99999999X');
   } finally {
     if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
     else process.env.DID_WEB_DOMAIN = previousDidWebDomain;

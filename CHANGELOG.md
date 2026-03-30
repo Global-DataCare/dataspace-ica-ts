@@ -1,19 +1,15 @@
 # Changelog
 
-# 0.8.1 - 2026-03-30
+# 0.8.2 - 2026-03-30
 
-- Added OCR runtime support for contract identity fallback:
-  - Local/runtime extraction can use `pdftoppm + tesseract` when visible/form text is insufficient.
-  - Added OCR language coverage for ES/PT/EN in container build.
-- Improved organization identity extraction rules for ProcureData contracts:
-  - `Razón Social` is mapped as organization legal name.
-  - `CIF/NIF/NIPC` is mapped as organization VAT/tax identifier.
-  - `Representante legal` is extracted and propagated to annex/person fallback mapping.
-  - If fiscal domicile indicates Portugal, generated VAT prefix switches to `VATPT-...` (even in ES jurisdiction routes).
-- Improved tax normalization and routing consistency:
-  - `_verify` parsing uses route jurisdiction consistently.
-  - `vc-bundle` preserves explicit VAT country prefixes (`VATPT-*`, `VATES-*`) without duplicating/reprefixing.
-- Added/updated tests for OCR text parsing and PT fiscal domicile VAT behavior.
+- Improved PDF signature extraction robustness:
+  - `_verify` now ignores malformed CMS payloads from non-primary signatures when at least one valid signature can still be processed.
+  - This fixes mixed-signature PDFs where one signer is valid (promoter/verifier) and other signatures are broken.
+- Improved `_verify-response` terminal behavior:
+  - Internal post-verification persistence errors now return a terminal failed DIDComm bundle instead of a bare transport error.
+  - Jobs are explicitly marked as failed so polling always has a recoverable terminal state.
+- Added tests covering terminal failed payload behavior on persistence failures.
+- Added code TODO for multi-natural-person signer handling (multiple legal representatives in one contract).
 
 # 0.8.0 - 2026-03-30
 
