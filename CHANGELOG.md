@@ -1,5 +1,20 @@
 # Changelog
 
+# 0.8.1 - 2026-03-30
+
+- Added OCR runtime support for contract identity fallback:
+  - Local/runtime extraction can use `pdftoppm + tesseract` when visible/form text is insufficient.
+  - Added OCR language coverage for ES/PT/EN in container build.
+- Improved organization identity extraction rules for ProcureData contracts:
+  - `Razón Social` is mapped as organization legal name.
+  - `CIF/NIF/NIPC` is mapped as organization VAT/tax identifier.
+  - `Representante legal` is extracted and propagated to annex/person fallback mapping.
+  - If fiscal domicile indicates Portugal, generated VAT prefix switches to `VATPT-...` (even in ES jurisdiction routes).
+- Improved tax normalization and routing consistency:
+  - `_verify` parsing uses route jurisdiction consistently.
+  - `vc-bundle` preserves explicit VAT country prefixes (`VATPT-*`, `VATES-*`) without duplicating/reprefixing.
+- Added/updated tests for OCR text parsing and PT fiscal domicile VAT behavior.
+
 # 0.8.0 - 2026-03-30
 
 - Fixed verifier/partner counterparty rules:

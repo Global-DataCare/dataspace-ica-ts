@@ -15,7 +15,6 @@ import type {
   VerifyResult,
   VerifyRouteContext,
 } from '../types.ts';
-import { getConfiguredSupportedJurisdictionIds } from '../supported-jurisdictions.ts';
 import { attachProofToCredential, resolveVcIssuerDid } from './ica-identity.ts';
 import { buildOrganizationDidFromTaxId } from './organization-did.ts';
 import {
@@ -220,6 +219,15 @@ function normalizePdfOrganizationTaxId(
   const jurisdiction = defaultJurisdiction.trim().toUpperCase();
   if (!normalizedValue || !jurisdiction) return undefined;
 
+  const explicitVatCountryMatch = /^VAT([A-Z]{2})[\s-]*([A-Z0-9]+)$/i.exec(normalizedValue.replace(/\s+/g, ''));
+  if (explicitVatCountryMatch) {
+    return `VAT${explicitVatCountryMatch[1].toUpperCase()}-${explicitVatCountryMatch[2].toUpperCase()}`;
+  }
+  const explicitVatesMatch = /^VATES[\s-]*([A-Z0-9]+)$/i.exec(normalizedValue.replace(/\s+/g, ''));
+  if (explicitVatesMatch) {
+    return `VATES-${explicitVatesMatch[1].toUpperCase()}`;
+  }
+
   const vatPrefix = `VAT${jurisdiction}`;
   const withoutVatPrefix = normalizedValue.startsWith(vatPrefix)
     ? normalizedValue.slice(vatPrefix.length)
@@ -234,14 +242,26 @@ function normalizePdfOrganizationTaxId(
 }
 
 function resolveDefaultOrganizationJurisdiction(route: VerifyRouteContext): string {
-  return getConfiguredSupportedJurisdictionIds()[0] || route.jurisdiction.toUpperCase();
+  return route.jurisdiction.toUpperCase();
+}
+
+function resolveOrganizationTaxCountryFromPdf(route: VerifyRouteContext, result: VerifyResult): string {
+  for (const [key, value] of Object.entries(result.annexFormFields || {})) {
+    const normalizedKey = normalizeForMatching(key);
+    if (!normalizedKey.includes('domicilio fiscal') && !normalizedKey.includes('fiscal address')) continue;
+    const normalizedValue = normalizeForMatching(String(value || ''));
+    if (/\bportugal\b/.test(normalizedValue) || /\bportuguesa\b/.test(normalizedValue)) {
+      return 'PT';
+    }
+  }
+  return resolveDefaultOrganizationJurisdiction(route);
 }
 
 function extractOrganizationIdentityFromPdf(
   route: VerifyRouteContext,
   result: VerifyResult,
 ): { taxID?: string; legalName?: string; hasTaxIdField: boolean; hasLegalNameField: boolean } {
-  const jurisdiction = resolveDefaultOrganizationJurisdiction(route);
+  const jurisdiction = resolveOrganizationTaxCountryFromPdf(route, result);
   const rawTaxId = getFirstAnnexField(result, ANNEX_ORGANIZATION_VISIBLE_TAX_ID_FIELDS);
   const rawLegalName = getFirstAnnexField(result, ANNEX_ORGANIZATION_VISIBLE_LEGAL_NAME_FIELDS);
   return {

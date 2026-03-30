@@ -58,7 +58,7 @@ export class VerifyRequestManager {
 
   async submit(route: VerifyRouteContext, req: IncomingMessage): Promise<VerifySubmitOutcome> {
     try {
-      const submission = await parseVerifySubmission(req);
+      const submission = await parseVerifySubmission(req, { jurisdiction: route.jurisdiction });
       this.jobStore.enqueue(submission.thid, route);
 
       setImmediate(async () => {

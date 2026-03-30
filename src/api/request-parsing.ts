@@ -98,12 +98,16 @@ function normalizeVerifierVatToken(value: string): string {
   return withoutVat.startsWith('ES') ? withoutVat.slice(2) : withoutVat;
 }
 
-function normalizeTaxToken(raw: string): string {
+function normalizeTaxToken(raw: string, jurisdiction: string): string {
   const upper = String(raw || '').trim().toUpperCase().replace(/[\s-]+/g, '');
   if (!upper) return '';
   const withoutVates = upper.startsWith('VATES') ? upper.slice(5) : upper;
-  const withoutVat = withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates;
-  return withoutVat.startsWith('ES') ? withoutVat.slice(2) : withoutVat;
+  const withoutVat = /^VAT[A-Z]{2}/.test(withoutVates) ? withoutVates.slice(5) : (withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates);
+  const country = jurisdiction.toUpperCase();
+  if (withoutVat.startsWith(country)) return withoutVat.slice(country.length);
+  if (withoutVat.startsWith('ES')) return withoutVat.slice(2);
+  if (withoutVat.startsWith('PT')) return withoutVat.slice(2);
+  return withoutVat;
 }
 
 function extractTaxTokenFromValue(value: string): string | undefined {
@@ -123,9 +127,32 @@ function looksLikeOrganizationName(value: string): boolean {
   return true;
 }
 
+function normalizeForMatching(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resolveOrganizationTaxCountryFromAnnexFields(
+  annexFields: Record<string, string>,
+  defaultJurisdiction: string,
+): string {
+  for (const [key, value] of Object.entries(annexFields)) {
+    const normalizedKey = normalizeForMatching(key);
+    if (!normalizedKey.includes('domicilio fiscal') && !normalizedKey.includes('fiscal address')) continue;
+    const normalizedValue = normalizeForMatching(value);
+    if (/\bportugal\b/.test(normalizedValue) || /\bportuguesa\b/.test(normalizedValue)) return 'PT';
+  }
+  return defaultJurisdiction.toUpperCase();
+}
+
 function inferOrganizationIdentityFromGenericAnnexFields(
   annexFields: Record<string, string>,
   verifierVatList: string[],
+  jurisdiction: string,
 ): { taxID?: string; legalName?: string } {
   const entries = Object.entries(annexFields);
   if (!entries.length) return {};
@@ -134,14 +161,15 @@ function inferOrganizationIdentityFromGenericAnnexFields(
       .map((value) => normalizeVerifierVatToken(value))
       .filter(Boolean),
   );
+  const effectiveCountry = resolveOrganizationTaxCountryFromAnnexFields(annexFields, jurisdiction);
 
   for (let index = 0; index < entries.length; index += 1) {
     const [, value] = entries[index];
     const token = extractTaxTokenFromValue(value);
     if (!token) continue;
-    const normalizedToken = normalizeTaxToken(token);
+    const normalizedToken = normalizeTaxToken(token, effectiveCountry);
     if (!normalizedToken || verifierSet.has(normalizedToken)) continue;
-    const taxID = `VATES-${normalizedToken}`;
+    const taxID = `VAT${effectiveCountry}-${normalizedToken}`;
     const previousValue = index > 0 ? entries[index - 1][1] : '';
     const legalName = looksLikeOrganizationName(previousValue)
       ? previousValue.trim()
@@ -344,7 +372,10 @@ function resolveOrganizationPublicKeyFromDidcommAttachments(
   return undefined;
 }
 
-export async function parseVerifySubmission(req: IncomingMessage): Promise<VerifySubmission> {
+export async function parseVerifySubmission(
+  req: IncomingMessage,
+  options?: { jurisdiction?: string },
+): Promise<VerifySubmission> {
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
   const contentEncodingHeader = normalizeHeader(req.headers['content-encoding']).trim().toLowerCase();
@@ -398,6 +429,9 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   const annex = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
+  const effectiveJurisdiction = asNonEmptyString(options?.jurisdiction).toUpperCase()
+    || process.env.ICA_SUPPORTED_JURISDICTIONS?.split(',')[0]?.trim()
+    || 'ES';
   const verifierVatList = String(process.env.VERIFIERS_VAT_LIST || '')
     .split(',')
     .map((value) => value.trim())
@@ -405,6 +439,7 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
   const inferredFromGenericFields = inferOrganizationIdentityFromGenericAnnexFields(
     annex.fields,
     verifierVatList,
+    effectiveJurisdiction,
   );
   if (inferredFromGenericFields.taxID && !annex.fields['organization.taxID']) {
     annex.fields['organization.taxID'] = inferredFromGenericFields.taxID;
@@ -418,7 +453,7 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
   const visibleIdentity = await extractVisibleOrganizationIdentityFromPdfText(
     pdfBytes,
     verifierVatList,
-    process.env.ICA_SUPPORTED_JURISDICTIONS?.split(',')[0]?.trim() || 'ES',
+    effectiveJurisdiction,
   );
   if (visibleIdentity.taxID && !annex.fields['organization.taxID']) {
     annex.fields['organization.taxID'] = visibleIdentity.taxID;
@@ -427,6 +462,14 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
     annex.fields['organization.legalName'] = visibleIdentity.legalName;
     if (!annex.fields['organization.name']) {
       annex.fields['organization.name'] = visibleIdentity.legalName;
+    }
+  }
+  if (visibleIdentity.legalRepresentativeName) {
+    if (!annex.fields['Representante legal']) {
+      annex.fields['Representante legal'] = visibleIdentity.legalRepresentativeName;
+    }
+    if (!annex.fields['person.name']) {
+      annex.fields['person.name'] = visibleIdentity.legalRepresentativeName;
     }
   }
   if (visibleIdentity.warnings.length) {
