@@ -1,5 +1,13 @@
 # Changelog
 
+# 0.7.9 - 2026-03-30
+
+- Fixed verifier/partner counterparty rules:
+  - Partner signature is no longer mandatory in two-signature flows.
+  - Partner enforcement now applies to three-actor scenarios (verifier + partner + counterpart).
+  - Kept verifier-list fallback behavior for verifier-only signature sets.
+- Updated verification tests for the new partner enforcement semantics.
+
 # 0.7.8 - 2026-03-30
 
 - Improved `_verify` resilience:

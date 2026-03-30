@@ -386,12 +386,24 @@ test('assertVerifierCounterpartySignaturePair handles verification partners corr
     );
   });
 
+  assert.doesNotThrow(() => {
+    assertVerifierCounterpartySignaturePair(
+      [
+        { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
+        { signatureIndex: 1, signerVatId: 'VATES-MEMBER' },
+      ],
+      ['VATES-VERIFIER'],
+      ['VATES-PARTNER'],
+    );
+  });
+
   assert.throws(
     () => {
       assertVerifierCounterpartySignaturePair(
         [
           { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
-          { signatureIndex: 1, signerVatId: 'VATES-MEMBER' },
+          { signatureIndex: 1, signerVatId: 'VATES-ANOTHER-MEMBER' },
+          { signatureIndex: 2, signerVatId: 'VATES-MEMBER' },
         ],
         ['VATES-VERIFIER'],
         ['VATES-PARTNER'],
