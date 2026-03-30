@@ -102,6 +102,37 @@ function buildControllerChangedIssue(): OperationOutcomeIssue {
   };
 }
 
+function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes') return true;
+  if (normalized === '0' || normalized === 'false' || normalized === 'no') return false;
+  return fallback;
+}
+
+function cloneBundle(bundle: VerifyBundleResponse): VerifyBundleResponse {
+  return JSON.parse(JSON.stringify(bundle)) as VerifyBundleResponse;
+}
+
+function removeInternalVersionMetaFromResponse(bundle: VerifyBundleResponse): void {
+  const includeVersionMeta = parseBooleanEnv(process.env.ICA_VERIFY_RESPONSE_INCLUDE_VERSION_META, false);
+  if (includeVersionMeta) return;
+
+  const data = Array.isArray(bundle.data) ? bundle.data : [];
+  for (const entry of data) {
+    const resource = asObject(entry?.resource);
+    if (!resource) continue;
+    const meta = asObject(resource.meta);
+    if (!meta) continue;
+    delete meta.versionId;
+    delete meta.previousVersionId;
+    if (!Object.keys(meta).length) {
+      delete resource.meta;
+    }
+  }
+}
+
 function attachBootstrapKeysToVerificationEntries(
   result: VerifyResult,
   bundle: VerifyBundleResponse,
@@ -112,7 +143,8 @@ function attachBootstrapKeysToVerificationEntries(
 
   if (organizationEntry && result.organizationPublicKeyJwk) {
     organizationEntry.publicKeyJwk = { ...result.organizationPublicKeyJwk };
-    if (result.organizationPrivateKeyJwk) {
+    const exposePrivateJwk = parseBooleanEnv(process.env.ICA_VERIFY_RESPONSE_INCLUDE_PRIVATE_KEY_JWK, true);
+    if (exposePrivateJwk && result.organizationPrivateKeyJwk) {
       organizationEntry.privateKeyJwk = { ...result.organizationPrivateKeyJwk };
     }
     if (result.organizationKeySource) {
@@ -356,9 +388,17 @@ export class VerifyResponseManager {
       };
     }
 
+    const responseBody = cloneBundle(body);
+    removeInternalVersionMetaFromResponse(responseBody);
     return {
       type: 'succeeded',
-      payload: buildDidcommVerifyMessage(route, thid, body, req, buildVcJwtAttachments(route, body, issuerDid)),
+      payload: buildDidcommVerifyMessage(
+        route,
+        thid,
+        responseBody,
+        req,
+        buildVcJwtAttachments(route, responseBody, issuerDid),
+      ),
     };
   }
 }

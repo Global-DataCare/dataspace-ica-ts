@@ -14,8 +14,12 @@ import {
   parseDcatCatalogRequestRoute,
   parseDelegationPolicyRoute,
   parseCredentialRevokeRoute,
+  parseCredentialRetrieveRoute,
   parseCredentialSearchRoute,
   parseSpacesRoute,
+  parseControllerExchangeRoute,
+  parseApiKeyProvisioningRoute,
+  parseIdentityAuthRoute,
   parseCredentialStatusRoute,
   parseIssueCredentialRoute,
   parseRotateRoute,
@@ -34,6 +38,10 @@ import { CredentialRevokeRequestManager } from './managers/credential-revoke-req
 import { CredentialRevokeResponseManager } from './managers/credential-revoke-response-manager.ts';
 import { CredentialSearchRequestManager } from './managers/credential-search-request-manager.ts';
 import { CredentialSearchResponseManager } from './managers/credential-search-response-manager.ts';
+import { CredentialRetrieveRequestManager } from './managers/credential-retrieve-request-manager.ts';
+import { CredentialRetrieveResponseManager } from './managers/credential-retrieve-response-manager.ts';
+import { BackendAuthRequestManager } from './managers/backend-auth-request-manager.ts';
+import { BackendAuthResponseManager } from './managers/backend-auth-response-manager.ts';
 import { CredentialStatusRequestManager } from './managers/credential-status-request-manager.ts';
 import { CredentialStatusResponseManager } from './managers/credential-status-response-manager.ts';
 import { IssueCredentialRequestManager } from './managers/issue-credential-request-manager.ts';
@@ -52,6 +60,7 @@ import { createDefaultSignatureVerificationManagerFromEnv } from './signature-ve
 import { createAuditDocumentStorageServiceFromEnv } from './tools/audit-document-storage.ts';
 import { validateRotateControllerDidcommProof } from './tools/controller-didcomm-proof.ts';
 import { createVerificationCollectionsServiceFromEnvWithSync } from './tools/verification-collections-storage.ts';
+import { BackendAuthService } from './tools/backend-auth-service.ts';
 import { DataspaceSyncService } from './tools/dataspace-sync.ts';
 import { SpacesRegistry } from './tools/spaces-registry.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from './tools/didcomm-message.ts';
@@ -85,6 +94,8 @@ import type {
   DelegationPolicyUpsertResult,
   CredentialRevokeResult,
   CredentialRevokeRouteContext,
+  CredentialRetrieveResult,
+  CredentialRetrieveRouteContext,
   CredentialSearchResult,
   CredentialSearchRouteContext,
   CredentialStatusResult,
@@ -96,6 +107,9 @@ import type {
   TermsRemoveResult,
   TermsRemoveRouteContext,
   VerifyRouteContext,
+  ControllerExchangeRouteContext,
+  ApiKeyProvisioningRouteContext,
+  IdentityAuthRouteContext,
 } from './types.ts';
 export { buildVerificationVcBundle } from './tools/vc-bundle.ts';
 
@@ -196,9 +210,13 @@ function sendError(
     | IssueCredentialRouteContext
     | CredentialStatusRouteContext
     | CredentialRevokeRouteContext
+    | CredentialRetrieveRouteContext
     | CredentialSearchRouteContext
     | TermsRemoveRouteContext
-    | SpacesRouteContext,
+    | SpacesRouteContext
+    | ControllerExchangeRouteContext
+    | ApiKeyProvisioningRouteContext
+    | IdentityAuthRouteContext,
 ): void {
   const payload = buildDidcommMessage(req, buildErrorBundle(statusCode, message), {
     route,
@@ -500,15 +518,23 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const credentialSearchJobStore = new InMemoryEntityJobStore<CredentialSearchRouteContext, CredentialSearchResult>(
     options.jobResultTtlSeconds || 3600,
   );
+  const credentialRetrieveJobStore = new InMemoryEntityJobStore<CredentialRetrieveRouteContext, CredentialRetrieveResult>(
+    options.jobResultTtlSeconds || 3600,
+  );
   const termsRemoveJobStore = new InMemoryEntityJobStore<TermsRemoveRouteContext, TermsRemoveResult>(
     options.jobResultTtlSeconds || 3600,
   );
+  const backendAuthJobStore = new InMemoryEntityJobStore<
+    ControllerExchangeRouteContext | ApiKeyProvisioningRouteContext | IdentityAuthRouteContext,
+    Record<string, unknown>
+  >(options.jobResultTtlSeconds || 3600);
   const auditStorageService = createAuditDocumentStorageServiceFromEnv();
   const spacesRegistry = new SpacesRegistry();
   const dataspaceSyncService = new DataspaceSyncService({
     targetResolver: (scope) => spacesRegistry.resolveForSync(scope),
   });
   const verificationCollectionsService = createVerificationCollectionsServiceFromEnvWithSync(dataspaceSyncService);
+  const backendAuthService = new BackendAuthService();
   const verifyRequestManager = new VerifyRequestManager(jobStore, verifier, auditStorageService);
   const verifyResponseManager = new VerifyResponseManager(jobStore, verificationCollectionsService);
   const activateRequestManager = new ActivateRequestManager(activationJobStore);
@@ -550,6 +576,13 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
     verificationCollectionsService,
   );
   const credentialSearchResponseManager = new CredentialSearchResponseManager(credentialSearchJobStore);
+  const credentialRetrieveRequestManager = new CredentialRetrieveRequestManager(
+    credentialRetrieveJobStore,
+    verificationCollectionsService,
+  );
+  const credentialRetrieveResponseManager = new CredentialRetrieveResponseManager(credentialRetrieveJobStore);
+  const backendAuthRequestManager = new BackendAuthRequestManager(backendAuthJobStore, backendAuthService);
+  const backendAuthResponseManager = new BackendAuthResponseManager(backendAuthJobStore);
   const apiDocsHtml = buildApiDocsHtml();
 
   async function buildActiveProviderDatasets(route: {
@@ -656,6 +689,42 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
               'GET /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/datasets/{id}',
             icaConfiguration:
               'GET /.well-known/ica-configuration',
+            controllerExchange:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/organization/dataspace/auth/_exchange',
+            controllerExchangeResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/organization/dataspace/auth/_exchange-response',
+            apiKeyCreate:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_create',
+            apiKeyCreateResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_create-response',
+            apiKeyDisable:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_disable',
+            apiKeyDisableResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_disable-response',
+            apiKeyRemove:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_remove',
+            apiKeyRemoveResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_remove-response',
+            apiKeySearch:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_search',
+            apiKeySearchResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_search-response',
+            identityDcr:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_dcr',
+            identityDcrResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_dcr-response',
+            identityCode:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_code',
+            identityCodeResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_code-response',
+            identityToken:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_token',
+            identityTokenResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_token-response',
+            identityExchange:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_exchange',
+            identityExchangeResponse:
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_exchange-response',
           },
         });
         return;
@@ -1001,6 +1070,126 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         return;
       }
 
+      const parsedControllerExchange = parseControllerExchangeRoute(requestUrl.pathname);
+      if (parsedControllerExchange) {
+        if (!parsedControllerExchange.ok) {
+          sendError(req, res, parsedControllerExchange.statusCode, parsedControllerExchange.message);
+          return;
+        }
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', parsedControllerExchange.context);
+          return;
+        }
+        const route = parsedControllerExchange.context;
+        if (route.action === '_exchange') {
+          const outcome = await backendAuthRequestManager.submit(route, req);
+          if (outcome.type === 'error') {
+            sendError(req, res, outcome.statusCode, outcome.message, route);
+            return;
+          }
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        const outcome = await backendAuthResponseManager.poll(route, req, requestUrl);
+        if (outcome.type === 'error') {
+          sendError(req, res, outcome.statusCode, outcome.message, route);
+          return;
+        }
+        if (outcome.type === 'pending') {
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        sendDidcommJson(res, 200, outcome.payload);
+        return;
+      }
+
+      const parsedApiKeyProvisioning = parseApiKeyProvisioningRoute(requestUrl.pathname);
+      if (parsedApiKeyProvisioning) {
+        if (!parsedApiKeyProvisioning.ok) {
+          sendError(req, res, parsedApiKeyProvisioning.statusCode, parsedApiKeyProvisioning.message);
+          return;
+        }
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', parsedApiKeyProvisioning.context);
+          return;
+        }
+        const route = parsedApiKeyProvisioning.context;
+        if (!route.action.endsWith('-response')) {
+          const outcome = await backendAuthRequestManager.submit(route, req);
+          if (outcome.type === 'error') {
+            sendError(req, res, outcome.statusCode, outcome.message, route);
+            return;
+          }
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        const outcome = await backendAuthResponseManager.poll(route, req, requestUrl);
+        if (outcome.type === 'error') {
+          sendError(req, res, outcome.statusCode, outcome.message, route);
+          return;
+        }
+        if (outcome.type === 'pending') {
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        sendDidcommJson(res, 200, outcome.payload);
+        return;
+      }
+
+      const parsedIdentityAuth = parseIdentityAuthRoute(requestUrl.pathname);
+      if (parsedIdentityAuth) {
+        if (!parsedIdentityAuth.ok) {
+          sendError(req, res, parsedIdentityAuth.statusCode, parsedIdentityAuth.message);
+          return;
+        }
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', parsedIdentityAuth.context);
+          return;
+        }
+        const route = parsedIdentityAuth.context;
+        if (!route.action.endsWith('-response')) {
+          const outcome = await backendAuthRequestManager.submit(route, req);
+          if (outcome.type === 'error') {
+            sendError(req, res, outcome.statusCode, outcome.message, route);
+            return;
+          }
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        const outcome = await backendAuthResponseManager.poll(route, req, requestUrl);
+        if (outcome.type === 'error') {
+          sendError(req, res, outcome.statusCode, outcome.message, route);
+          return;
+        }
+        if (outcome.type === 'pending') {
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        sendDidcommJson(res, 200, outcome.payload);
+        return;
+      }
+
       const parsedVerifyRoute = parseVerifyRoute(requestUrl.pathname);
       if (parsedVerifyRoute) {
         if (!parsedVerifyRoute.ok) {
@@ -1014,32 +1203,37 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         }
 
         const route = parsedVerifyRoute.context;
-        if (route.action === '_verify') {
-          const outcome = await verifyRequestManager.submit(route, req);
+        try {
+          if (route.action === '_verify') {
+            const outcome = await verifyRequestManager.submit(route, req);
+            if (outcome.type === 'error') {
+              sendError(req, res, outcome.statusCode, outcome.message, route);
+              return;
+            }
+            res.statusCode = 202;
+            res.setHeader('Location', outcome.location);
+            res.setHeader('Retry-After', String(outcome.retryAfter));
+            res.end();
+            return;
+          }
+
+          const outcome = await verifyResponseManager.poll(route, req, requestUrl);
           if (outcome.type === 'error') {
             sendError(req, res, outcome.statusCode, outcome.message, route);
             return;
           }
-          res.statusCode = 202;
-          res.setHeader('Location', outcome.location);
-          res.setHeader('Retry-After', String(outcome.retryAfter));
-          res.end();
-          return;
+          if (outcome.type === 'pending') {
+            res.statusCode = 202;
+            res.setHeader('Location', outcome.location);
+            res.setHeader('Retry-After', String(outcome.retryAfter));
+            res.end();
+            return;
+          }
+          sendDidcommJson(res, 200, outcome.payload);
+        } catch (error: unknown) {
+          const message = (error as Error)?.message || 'Unexpected verify endpoint failure.';
+          sendError(req, res, 500, message, route);
         }
-
-        const outcome = await verifyResponseManager.poll(route, req, requestUrl);
-        if (outcome.type === 'error') {
-          sendError(req, res, outcome.statusCode, outcome.message, route);
-          return;
-        }
-        if (outcome.type === 'pending') {
-          res.statusCode = 202;
-          res.setHeader('Location', outcome.location);
-          res.setHeader('Retry-After', String(outcome.retryAfter));
-          res.end();
-          return;
-        }
-        sendDidcommJson(res, 200, outcome.payload);
         return;
       }
 
@@ -1406,6 +1600,67 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         }
 
         const outcome = await credentialSearchResponseManager.poll(route, req, requestUrl);
+        if (outcome.type === 'error') {
+          sendError(req, res, outcome.statusCode, outcome.message, route);
+          return;
+        }
+        if (outcome.type === 'pending') {
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+        sendDidcommJson(res, 200, outcome.payload);
+        return;
+      }
+
+      const parsedCredentialRetrieve = parseCredentialRetrieveRoute(requestUrl.pathname);
+      if (parsedCredentialRetrieve) {
+        if (!parsedCredentialRetrieve.ok) {
+          sendError(req, res, parsedCredentialRetrieve.statusCode, parsedCredentialRetrieve.message);
+          return;
+        }
+
+        const route = parsedCredentialRetrieve.context;
+        if (route.action === '_retrieve' && method === 'GET') {
+          const acceptHeader = firstHeaderValue(req.headers.accept);
+          const outcome = await credentialRetrieveRequestManager.retrieveDirect(route, requestUrl, acceptHeader);
+          if (outcome.type === 'error') {
+            sendJson(res, outcome.statusCode, buildErrorBundle(outcome.statusCode, outcome.message));
+            return;
+          }
+          if (outcome.format === 'vc+jwt' && outcome.vcJwt) {
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/vc+jwt');
+            res.setHeader('Content-Length', Buffer.byteLength(outcome.vcJwt));
+            res.end(outcome.vcJwt);
+            return;
+          }
+          sendJson(res, 200, outcome.credential, 'application/vc+json');
+          return;
+        }
+
+        if (method !== 'POST') {
+          res.setHeader('Allow', route.action === '_retrieve' ? 'GET, POST' : 'POST');
+          sendError(req, res, 405, 'Method not allowed. Use POST.', route);
+          return;
+        }
+
+        if (route.action === '_retrieve') {
+          const outcome = await credentialRetrieveRequestManager.submit(route, req);
+          if (outcome.type === 'error') {
+            sendError(req, res, outcome.statusCode, outcome.message, route);
+            return;
+          }
+          res.statusCode = 202;
+          res.setHeader('Location', outcome.location);
+          res.setHeader('Retry-After', String(outcome.retryAfter));
+          res.end();
+          return;
+        }
+
+        const outcome = await credentialRetrieveResponseManager.poll(route, req, requestUrl);
         if (outcome.type === 'error') {
           sendError(req, res, outcome.statusCode, outcome.message, route);
           return;

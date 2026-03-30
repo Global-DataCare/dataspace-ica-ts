@@ -3,7 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-IMAGE_NAME="${IMAGE_NAME:-dataspace-ica:local}"
+DEFAULT_IMAGE_TAG="$(
+  cd "$SCRIPT_DIR"
+  node --input-type=module - <<'EOF'
+import { readFileSync } from 'node:fs';
+const raw = readFileSync(new URL('./package.json', import.meta.url), 'utf8');
+const parsed = JSON.parse(raw);
+process.stdout.write(String(parsed.version || 'latest').trim() || 'latest');
+EOF
+)"
+IMAGE_NAME="${IMAGE_NAME:-dataspace-ica:${DEFAULT_IMAGE_TAG}}"
 CONTAINER_NAME="${CONTAINER_NAME:-dataspace-ica-api}"
 
 resolve_env_file() {
@@ -77,7 +86,15 @@ fi
 
 APP_PORT="$(extract_env_value "$ENV_FILE" "ICA_API_PORT")"
 APP_PORT="${APP_PORT:-3310}"
-HOST_PORT="${HOST_PORT:-$APP_PORT}"
+if [[ -z "${HOST_PORT:-}" ]]; then
+  if [[ "$ENV_SELECTOR" == "local" ]]; then
+    HOST_PORT="8010"
+  else
+    HOST_PORT="$APP_PORT"
+  fi
+else
+  HOST_PORT="${HOST_PORT}"
+fi
 
 echo "Running container"
 echo "  Image:      $IMAGE_NAME"

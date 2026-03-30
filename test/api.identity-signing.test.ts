@@ -567,6 +567,57 @@ test('buildIcaDidDocument and production VC proof use configured signing key', (
   }
 });
 
+test('attachProofToCredential canonicalizes VC keys alphabetically and appends proof last', () => {
+  const parsed = parseVerifyRoute('/ica/cds-ES/v1/animal-care/terms/pdf/202603051133/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed?.ok, true);
+  if (!parsed || !parsed.ok) return;
+
+  const previousPrivateKeyPem = process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+  const previousSigningAlg = process.env.ICA_VC_SIGNING_ALG;
+  const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
+  const previousSigningKeyId = process.env.ICA_VC_SIGNING_KEY_ID;
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  process.env.ICA_VC_SIGNING_ALG = 'RS256';
+  process.env.ICA_DIDCOMM_ISSUER_DID = 'did:web:ica.example.com';
+  process.env.ICA_VC_SIGNING_KEY_ID = 'ica-signing-key-canonical';
+  resetActiveSigningKeysStateForTests();
+
+  try {
+    const vc = attachProofToCredential(
+      {
+        type: ['VerifiableCredential', 'OrganizationCredential'],
+        issuer: 'did:web:ica.example.com',
+        credentialSubject: {
+          z: 'z-value',
+          a: 'a-value',
+          id: 'urn:organization:taxid:VATES-A12345678',
+        },
+        validFrom: '2026-03-05T00:00:00.000Z',
+        '@context': ['https://www.w3.org/ns/credentials/v2'],
+      },
+      parsed.context,
+    ) as unknown as Record<string, unknown>;
+
+    const keys = Object.keys(vc);
+    assert.deepEqual(keys, ['@context', 'credentialSubject', 'issuer', 'type', 'validFrom', 'proof']);
+
+    const subject = vc.credentialSubject as Record<string, unknown>;
+    assert.deepEqual(Object.keys(subject), ['a', 'id', 'z']);
+  } finally {
+    resetActiveSigningKeysStateForTests();
+    if (previousPrivateKeyPem === undefined) delete process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+    else process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM = previousPrivateKeyPem;
+    if (previousSigningAlg === undefined) delete process.env.ICA_VC_SIGNING_ALG;
+    else process.env.ICA_VC_SIGNING_ALG = previousSigningAlg;
+    if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
+    else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
+    if (previousSigningKeyId === undefined) delete process.env.ICA_VC_SIGNING_KEY_ID;
+    else process.env.ICA_VC_SIGNING_KEY_ID = previousSigningKeyId;
+  }
+});
+
 test('activated signing key is reflected in DID document immediately', async () => {
   const previousActiveKeysFile = process.env.ICA_ACTIVE_SIGNING_KEYS_FILE;
   const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;

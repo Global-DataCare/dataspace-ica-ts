@@ -35,7 +35,7 @@ const REVOCATION_DEBUG_CHECK_SCHEMA = {
   required: ['phase', 'status'],
   properties: {
     url: { type: 'string' },
-    phase: { type: 'string', enum: ['discovery', 'download', 'verify'] },
+    phase: { type: 'string', enum: ['01 discovery', 'download', 'verify'] },
     status: {
       type: 'string',
       enum: ['no_urls', 'ok', 'http_error', 'timeout', 'download_error', 'parse_error', 'revoked', 'verify_error'],
@@ -242,6 +242,47 @@ const DIDCOMM_ERROR_RESPONSE_SCHEMA = {
     thid: { type: 'string' },
     type: { type: 'string', enum: ['application/bundle-api+json'] },
     body: ERROR_BUNDLE_BODY_SCHEMA,
+  },
+} as const;
+
+const DIDCOMM_BACKEND_AUTH_REQUEST_SCHEMA = {
+  type: 'object',
+  required: ['type', 'body'],
+  properties: {
+    thid: { type: 'string' },
+    type: { type: 'string', enum: [DIDCOMM_BUNDLE_TYPE] },
+    body: {
+      type: 'object',
+      additionalProperties: true,
+    },
+    meta: {
+      type: 'object',
+      additionalProperties: true,
+    },
+    attachments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: true,
+      },
+    },
+  },
+  additionalProperties: true,
+} as const;
+
+const DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA = {
+  type: 'object',
+  required: ['jti', 'iss', 'aud', 'thid', 'type', 'body'],
+  properties: {
+    jti: { type: 'string' },
+    iss: { type: 'string' },
+    aud: { type: 'string' },
+    thid: { type: 'string' },
+    type: { type: 'string', enum: [DIDCOMM_BUNDLE_TYPE] },
+    body: {
+      type: 'object',
+      additionalProperties: true,
+    },
   },
 } as const;
 
@@ -1431,7 +1472,7 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
                   alg: 'sha3-384',
                   value: 'aafUF1Ne7Zrmg/y1f6jprx4f/n0OiOo9i4j5AXXN4ZotOFsahUHYdr+nZOnESHqH',
                 },
-                url: 'urn:uuid:audit-object-001',
+                url: 'ipfs://zPdfVersionHash001',
               },
               document_details: {
                 type: 'terms-and-conditions',
@@ -1540,7 +1581,7 @@ const VERIFY_RESPONSE_SUCCESS_EXAMPLE = {
                   alg: 'sha3-384',
                   value: 'aafUF1Ne7Zrmg/y1f6jprx4f/n0OiOo9i4j5AXXN4ZotOFsahUHYdr+nZOnESHqH',
                 },
-                url: 'urn:uuid:audit-object-001',
+                url: 'ipfs://zPdfVersionHash001',
               },
               document_details: {
                 type: 'terms-and-conditions',
@@ -2014,7 +2055,7 @@ const CREDENTIAL_REVOKE_RESPONSE_SUCCESS_EXAMPLE = {
 } as const;
 
 function resolveOpenApiInfoVersion(): string {
-  const fromEnv = (process.env.npm_package_version || '').trim();
+  const fromEnv = (process.env.ICA_OPENAPI_INFO_VERSION || '').trim();
   if (fromEnv) return fromEnv;
   try {
     const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
@@ -2024,6 +2065,8 @@ function resolveOpenApiInfoVersion(): string {
   } catch {
     // Fallback used when package metadata cannot be resolved.
   }
+  const fromNpmEnv = (process.env.npm_package_version || '').trim();
+  if (fromNpmEnv) return fromNpmEnv;
   return '0.0.0';
 }
 
@@ -2123,52 +2166,57 @@ export function buildIcaVerifyOpenApiSpec(
     servers: [{ url: serverUrl }],
     tags: [
       {
-        name: 'discovery',
+        name: '01 discovery',
         description: 'Service metadata and DID document endpoints.',
       },
       {
-        name: 'terms/pdf',
+        name: '02 terms/pdf',
         description: 'FNMT PDF verification flow (_verify / _verify-response).',
       },
       {
-        name: 'entity/did/document',
+        name: '03 entity/did/document',
         description: 'Asynchronous organization did:web document creation and polling.',
       },
       {
-        name: 'entity/keys/credentials',
+        name: '04 entity/keys/credentials',
         description: 'ICA credential-signing key lifecycle (_activate / _rotate).',
       },
       {
-        name: 'entity/keys/communications',
+        name: '05 entity/keys/communications',
         description: 'Communication key lifecycle (currently rotate stubs).',
       },
       {
-        name: 'network/evidence',
+        name: '06 network/evidence',
         description: 'Evidence ingestion and polling (_add / _add-response).',
       },
       {
-        name: 'network/policies',
+        name: '07 network/policies',
         description: 'ICA delegation policy upsert and polling (_upsert / _upsert-response).',
       },
       {
-        name: 'network/credentials',
+        name: '08 network/credentials',
         description:
-          'Credential lifecycle over network records: issue, status, revoke and search with async polling (_issue, _status, _revoke, _search + *_response).',
+          'Credential lifecycle over network records: issue, status, revoke, search and retrieve (_issue, _status, _revoke, _search, _retrieve + *_response).',
       },
       {
-        name: 'network/spaces',
+        name: '09 network/spaces',
         description:
           'Sector-scoped spaces targets for metadata sync adapters (list/replace).',
       },
       {
-        name: 'catalog/dcat3',
+        name: '10 catalog/dcat3',
         description: 'DCAT v3 synchronous catalog discovery for ICA member organizations.',
+      },
+      {
+        name: '11 backend/auth',
+        description:
+          'Backend authentication lifecycle: controller bootstrap exchange, API key provisioning, DCR binding, PKCE and tenant identity exchange.',
       },
     ],
     paths: {
       '/.well-known/ica-configuration': {
         get: {
-          tags: ['discovery'],
+          tags: ['01 discovery'],
           summary: 'Get ICA public configuration',
           description:
             'Returns public discovery configuration for this ICA deployment, including the jurisdictions and sectors currently supported by the ICA. Values are resolved from ICA_SUPPORTED_JURISDICTIONS and ICA_SUPPORTED_SECTORS or fall back to the built-in defaults.',
@@ -2216,7 +2264,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/.well-known/did.json': {
         get: {
-          tags: ['discovery'],
+          tags: ['01 discovery'],
           summary: 'Get ICA DID document',
           responses: {
             '200': {
@@ -2260,7 +2308,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/did.json': {
         get: {
-          tags: ['discovery'],
+          tags: ['01 discovery'],
           summary: 'Get ICA DID document (alias)',
           responses: {
             '200': {
@@ -2291,7 +2339,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/.well-known/dspace-version': {
         get: {
-          tags: ['discovery'],
+          tags: ['01 discovery'],
           summary: 'Get data space protocol version document',
           responses: {
             '200': {
@@ -2320,7 +2368,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/{membertype}/{role}/{idHash}/did.json': {
         get: {
-          tags: ['discovery'],
+          tags: ['01 discovery'],
           summary: 'Get controller/member DID document',
           description:
             'Returns the controller DID document when ICA_SELF_CONTROLLER_* DID settings match this route.',
@@ -2392,9 +2440,551 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
+      '/ica/cds-{jurisdiction}/v1/{sector}/organization/dataspace/auth/_exchange': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Controller bootstrap exchange (async)',
+          description:
+            'Step 1 backend auth flow. Requires `Authorization: Bearer <token>` in both modes:\n'
+            + '- `DEMO_MODE=true`: Bearer required, signature validation bypassed.\n'
+            + '- `DEMO_MODE=false`: Bearer required and fully validated.\n'
+            + 'Returns `202` and polling `Location` for `_exchange-response`.',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: DIDCOMM_BACKEND_AUTH_REQUEST_SCHEMA,
+                examples: {
+                  controllerExchangeRequest: {
+                    value: {
+                      thid: 'thid-controller-exchange-001',
+                      type: 'application/bundle-api+json',
+                      body: {},
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted. Poll `_exchange-response`.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  example: '/ica/cds-ES/v1/health-care/organization/dataspace/auth/_exchange-response?thid=thid-controller-exchange-001',
+                },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+            '400': { description: 'Invalid request.', content: { 'application/didcomm-plain+json': { schema: DIDCOMM_ERROR_RESPONSE_SCHEMA } } },
+            '401': { description: 'Bearer required or invalid.', content: { 'application/didcomm-plain+json': { schema: DIDCOMM_ERROR_RESPONSE_SCHEMA } } },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/organization/dataspace/auth/_exchange-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll controller bootstrap exchange',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { thid: { type: 'string' } } },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Pending.',
+              headers: {
+                Location: { schema: { type: 'string' } },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+            '200': {
+              description: 'Completed.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_create': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Controller API key provisioning create (async)',
+          description:
+            'Step 2 backend auth flow. Creates backend API keys and marks initial binding state as `pending_dcr`. '
+            + 'DCR must later transition to `bound`. In DCR flow, `client_id` is the API key value.',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { type: 'object', additionalProperties: true },
+                examples: {
+                  apiKeyCreateRequest: {
+                    value: {
+                      thid: 'thid-api-key-create-001',
+                      data: [
+                        {
+                          resource: {
+                            agent: { email: 'backend.operator@example.org' },
+                            scope: ['ica.backend.read', 'ica.catalog.read'],
+                            target: 'animal-care/backend',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted.',
+              headers: {
+                Location: { schema: { type: 'string' }, example: '/ica/cds-ES/v1/animal-care/api-key/org.schema/action/_create-response?thid=thid-api-key-create-001' },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_create-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll API key create',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '202': { description: 'Pending.' },
+            '200': {
+              description: 'Completed.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_disable': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Controller API key disable (async)',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { type: 'object', additionalProperties: true },
+                examples: {
+                  apiKeyDisableRequest: {
+                    value: {
+                      thid: 'thid-api-key-disable-001',
+                      data: [{ resource: { identifier: 'api-key-uuid-1' } }],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted.',
+              headers: {
+                Location: { schema: { type: 'string' }, example: '/ica/cds-ES/v1/animal-care/api-key/org.schema/action/_disable-response?thid=thid-api-key-disable-001' },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_disable-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll API key disable',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '202': { description: 'Pending.' },
+            '200': { description: 'Completed.', content: { 'application/didcomm-plain+json': { schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA } } },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_remove': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Controller API key remove (async)',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { type: 'object', additionalProperties: true },
+                examples: {
+                  apiKeyRemoveRequest: {
+                    value: {
+                      thid: 'thid-api-key-remove-001',
+                      data: [{ resource: { identifier: 'api-key-uuid-1' } }],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted.',
+              headers: {
+                Location: { schema: { type: 'string' }, example: '/ica/cds-ES/v1/animal-care/api-key/org.schema/action/_remove-response?thid=thid-api-key-remove-001' },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_remove-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll API key remove',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '202': { description: 'Pending.' },
+            '200': { description: 'Completed.', content: { 'application/didcomm-plain+json': { schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA } } },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_search': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Controller API key search (async)',
+          description:
+            'Returns API key registry with DCR binding visibility (`pending_dcr` -> `bound`) and technical identity metadata for backend SDK clients.',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          responses: {
+            '202': {
+              description: 'Accepted.',
+              headers: {
+                Location: { schema: { type: 'string' }, example: '/ica/cds-ES/v1/animal-care/api-key/org.schema/action/_search-response?thid=thid-api-key-search-001' },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/api-key/org.schema/action/_search-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll API key search',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '202': { description: 'Pending.' },
+            '200': { description: 'Completed.', content: { 'application/didcomm-plain+json': { schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA } } },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_dcr': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Identity DCR binding (async)',
+          description:
+            'Step 3 backend auth flow. DIDComm profile `didcomm-plain` with cryptographic binding in `meta.jws.protected.jwk`.\n'
+            + '- Keep `body:{}` when applicable for SDK profile.\n'
+            + '- `client_id` is the backend API key value (do not send `api_key` in DCR payload).\n'
+            + '- Binding lifecycle must be explicit: `pending_dcr -> bound`.',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: DIDCOMM_BACKEND_AUTH_REQUEST_SCHEMA,
+                examples: {
+                  dcrRequestDidcommPlain: {
+                    value: {
+                      thid: 'thid-dcr-001',
+                      type: 'application/bundle-api+json',
+                      client_id: '<api-key-from-_create>',
+                      body: {},
+                      meta: {
+                        jws: {
+                          protected: {
+                            alg: 'ES384',
+                            jwk: { kty: 'EC', crv: 'P-384', x: '<x>', y: '<y>' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted. Poll `_dcr-response`.',
+              headers: {
+                Location: { schema: { type: 'string' }, example: '/ica/cds-ES/v1/animal-care/identity/auth/_dcr-response?thid=thid-dcr-001' },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_dcr-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll DCR binding',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '202': { description: 'Pending.' },
+            '200': { description: 'Completed.', content: { 'application/didcomm-plain+json': { schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA } } },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_code': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'PKCE code (async)',
+          description: 'Step 4 backend auth flow. Keep DIDComm `body:{}` profile support when applicable.',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: DIDCOMM_BACKEND_AUTH_REQUEST_SCHEMA,
+                examples: {
+                  codeRequest: {
+                    value: {
+                      thid: 'thid-code-001',
+                      type: 'application/bundle-api+json',
+                      body: {
+                        client_id: '<api-key-from-_create>',
+                        code_challenge: '<pkce-s256-challenge>',
+                        code_challenge_method: 'S256',
+                      },
+                      meta: {
+                        jws: {
+                          protected: {
+                            alg: 'ES384',
+                            jwk: { kty: 'EC', crv: 'P-384', x: '<x>', y: '<y>' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted.',
+              headers: {
+                Location: { schema: { type: 'string' }, example: '/ica/cds-ES/v1/animal-care/identity/auth/_code-response?thid=thid-code-001' },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_code-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll PKCE code',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '202': { description: 'Pending.' },
+            '200': { description: 'Completed.', content: { 'application/didcomm-plain+json': { schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA } } },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_token': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'PKCE token (async)',
+          description: 'Step 5 backend auth flow. Exchanges code and verifier for id_token.',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: DIDCOMM_BACKEND_AUTH_REQUEST_SCHEMA,
+                examples: {
+                  tokenRequest: {
+                    value: {
+                      thid: 'thid-token-001',
+                      type: 'application/bundle-api+json',
+                      body: {
+                        client_id: '<api-key-from-_create>',
+                        code: '<pkce-code>',
+                        code_verifier: '<pkce-verifier>',
+                      },
+                      meta: {
+                        jws: {
+                          protected: {
+                            alg: 'ES384',
+                            jwk: { kty: 'EC', crv: 'P-384', x: '<x>', y: '<y>' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted.',
+              headers: {
+                Location: { schema: { type: 'string' }, example: '/ica/cds-ES/v1/animal-care/identity/auth/_token-response?thid=thid-token-001' },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_token-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll PKCE token',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '202': { description: 'Pending.' },
+            '200': { description: 'Completed.', content: { 'application/didcomm-plain+json': { schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA } } },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_exchange': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Identity exchange (async)',
+          description: 'Step 6 backend auth flow. Exchanges PKCE `id_token` and bound technical identity for backend bearer token.',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: DIDCOMM_BACKEND_AUTH_REQUEST_SCHEMA,
+                examples: {
+                  identityExchangeRequest: {
+                    value: {
+                      thid: 'thid-identity-exchange-001',
+                      type: 'application/bundle-api+json',
+                      body: {
+                        client_id: '<api-key-from-_create>',
+                        subject_token: '<id_token-from-_token-response>',
+                        subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted.',
+              headers: {
+                Location: { schema: { type: 'string' }, example: '/ica/cds-ES/v1/animal-care/identity/auth/_exchange-response?thid=thid-identity-exchange-001' },
+                'Retry-After': { schema: { type: 'string' }, example: '2' },
+              },
+            },
+          },
+        },
+      },
+      '/ica/cds-{jurisdiction}/v1/{sector}/identity/auth/_exchange-response': {
+        post: {
+          tags: ['11 backend/auth'],
+          summary: 'Poll identity exchange',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'thid', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '202': { description: 'Pending.' },
+            '200': {
+              description: 'Completed.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_BACKEND_AUTH_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create': {
         post: {
-          tags: ['entity/did/document'],
+          tags: ['03 entity/did/document'],
           summary: 'Create organization did:web document asynchronously',
           description:
             'Starts async creation of an organization `did:web` document.\n\n'
@@ -2406,10 +2996,17 @@ export function buildIcaVerifyOpenApiSpec(
             + '**V2 bootstrap**\n'
             + '- controller key may already be stored from `_verify` via `meta.jws.protected.jwk`\n'
             + '- organization key may already be stored from `_verify` via an `application/jwk+json` attachment or an ICA-generated ES384 bootstrap key\n'
+            + '- on successful `_verify-response`, ICA persists a draft DID binding used by `_create`\n'
+            + '- `organization/dataspace/auth/_exchange` is a backend auth bootstrap and does not create this `_create` key binding\n'
+            + '- legacy compatibility remains: controller binding in `_verify` is optional if `_create` sends explicit `controller.publicKeyJwk` and `organization.publicKeyJwk`\n'
             + '- for v1 compatibility, `_create` still accepts explicit `controller.publicKeyJwk` and `organization.publicKeyJwk` when no stored binding/bootstrap key exists yet\n'
             + '- if a controller binding already exists, any explicit `controller.publicKeyJwk` sent to `_create` must match the stored binding and cannot override it\n'
-            + '- if an organization key already exists from `_verify`, any explicit `organization.publicKeyJwk` sent to `_create` must match the stored key and cannot override it\n'
-            + '- if the organization key was ICA-generated during `_verify` (`keySource=generated`), `_create` requires `organization.publicKeyJwk` to be sent again as explicit confirmation\n\n'
+            + '- if an organization key already exists from `_verify`, `_create` can reuse it (when `organization.publicKeyJwk` is omitted)\n'
+            + '- if `organization.publicKeyJwk` is explicitly sent to `_create`, it is used as the organization verification key for the DID document and stored as the new active binding for that organization\n\n'
+            + '**Important**\n'
+            + '- Swagger placeholder coordinates (`<org-x-coordinate>`, etc.) are not valid runtime values\n'
+            + '- if you send explicit JWKs, copy exact values from `_verify-response` (`body.data[0].publicKeyJwk` for organization, `body.data[1].publicKeyJwk` for controller)\n'
+            + '- if `_create` returns `No controller publicKeyJwk found ...`, send `controller.publicKeyJwk` explicitly (copy from `_verify-response body.data[1].publicKeyJwk`)\n\n'
             + '**SDK v2**\n'
             + '- `setControllerMessageSigningPublicKey()` helps `_verify` bind the controller key\n'
             + '- `setOrgCredentialSigningPublicKey()` sends the organization credential key attachment during `_verify`\n'
@@ -2418,6 +3015,9 @@ export function buildIcaVerifyOpenApiSpec(
             + '- Minimal explicit mode: send `organization.identifier` plus `organization.publicKeyJwk`; the identifier must match a stored organization VC `credentialSubject.id`\n'
             + '- Minimal derived mode: send `organization.url`, `organization.taxID`, and optionally `organization.publicKeyJwk`\n'
             + '  Backend derives `did:web:<organization.url>:<sector>:organization:taxid:<VATES-NIF>` and it must match the stored organization VC `credentialSubject.id` for the same `organization.taxID`\n\n'
+            + '**Sample PDF note**\n'
+            + '- if you verified `prueba-TEST-A4-multisign-fnmt.pdf`, use `organization.taxID=VATES-B00112233` in `_create` for that run\n'
+            + '- this only works after successful `_verify-response` in the same tenant/jurisdiction/sector route scope\n\n'
             + '**Controller check**\n'
             + '- optional runtime flag `ICA_CREATE_DID_REQUIRE_CONTROLLER_SAMEAS_MATCH=true` enforces that `controller.sameAs` matches the stored Person credential `credentialSubject.sameAs` for the same organization\n\n'
             + '**Polling**\n'
@@ -2446,8 +3046,8 @@ export function buildIcaVerifyOpenApiSpec(
                   additionalProperties: true,
                 },
                 examples: {
-                  createDidDocumentRequest: {
-                    summary: 'Create one organization did:web document',
+                  createDidDocumentRequestLegacyExplicitKeys: {
+                    summary: 'Legacy-compatible explicit keys (0.4.2 style): works without prior controller binding from _verify',
                     value: {
                       jti: 'req-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
@@ -2456,7 +3056,7 @@ export function buildIcaVerifyOpenApiSpec(
                           {
                             resource: {
                               organization: {
-                                identifier: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                identifier: 'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00000000',
                                 publicKeyJwk: {
                                   kty: 'EC',
                                   crv: 'P-384',
@@ -2481,10 +3081,11 @@ export function buildIcaVerifyOpenApiSpec(
                               controller: {
                                 sameAs: 'urn:multibase:zControllerHash',
                                 publicKeyJwk: {
+                                  kid: 'controller-msg-es384-001',
                                   kty: 'EC',
                                   crv: 'P-384',
-                                  x: '<controller-x-coordinate>',
-                                  y: '<controller-y-coordinate>',
+                                  x: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
+                                  y: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
                                 },
                                 jwks: {
                                   keys: [
@@ -2507,8 +3108,8 @@ export function buildIcaVerifyOpenApiSpec(
                       },
                     },
                   },
-                  createDidDocumentRequestDerivedFromUrl: {
-                    summary: 'Create one organization did:web document deriving identifier from organization.url',
+                  createDidDocumentRequestOnlyVatAndControllerJwk: {
+                    summary: 'Fast path from Swagger: change only VAT and paste controller.publicKeyJwk from _verify-response',
                     value: {
                       jti: 'req-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
@@ -2518,49 +3119,72 @@ export function buildIcaVerifyOpenApiSpec(
                             resource: {
                               organization: {
                                 url: 'globaldatacare.es',
-                                taxID: 'VATES-B00000000',
+                                taxID: 'VATES-B00112233',
+                              },
+                              controller: {
+                                sameAs: 'urn:multibase:zControllerHash-from-_verify-response',
+                                publicKeyJwk: {
+                                  kid: 'controller-msg-es384-001',
+                                  kty: 'EC',
+                                  crv: 'P-384',
+                                  x: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
+                                  y: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  createDidDocumentRequest: {
+                    summary: 'Create one organization did:web document (recommended: reuse keys stored during _verify)',
+                    value: {
+                      jti: 'req-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              organization: {
+                                identifier: 'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233',
+                              },
+                              controller: {
+                                sameAs: 'urn:multibase:zControllerHash',
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  createDidDocumentRequestDerivedFromUrl: {
+                    summary: 'Create one organization did:web document deriving identifier from organization.url (explicit JWK confirmation mode)',
+                    value: {
+                      jti: 'req-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              organization: {
+                                url: 'globaldatacare.es',
+                                taxID: 'VATES-B00112233',
                                 publicKeyJwk: {
                                   kty: 'EC',
                                   crv: 'P-384',
-                                  x: '<org-x-coordinate>',
-                                  y: '<org-y-coordinate>',
-                                },
-                                jwks: {
-                                  keys: [
-                                    {
-                                      kid: 'org-didcomm-enc-p384-001',
-                                      kty: 'EC',
-                                      crv: 'P-384',
-                                      x: '<org-didcomm-enc-x-coordinate>',
-                                      y: '<org-didcomm-enc-y-coordinate>',
-                                      use: 'enc',
-                                      alg: 'ECDH-ES+A256KW',
-                                      purposes: ['didcomm-enc'],
-                                    },
-                                  ],
+                                  x: 'copy-from-_verify-response-body-data-0-publicKeyJwk-x',
+                                  y: 'copy-from-_verify-response-body-data-0-publicKeyJwk-y',
                                 },
                               },
                               controller: {
                                 sameAs: 'urn:multibase:zControllerHash',
                                 publicKeyJwk: {
+                                  kid: 'controller-msg-es384-001',
                                   kty: 'EC',
                                   crv: 'P-384',
-                                  x: '<controller-x-coordinate>',
-                                  y: '<controller-y-coordinate>',
-                                },
-                                jwks: {
-                                  keys: [
-                                    {
-                                      kid: 'controller-didcomm-sign-p384-001',
-                                      kty: 'EC',
-                                      crv: 'P-384',
-                                      x: '<controller-didcomm-sign-x-coordinate>',
-                                      y: '<controller-didcomm-sign-y-coordinate>',
-                                      use: 'sig',
-                                      alg: 'ES384',
-                                      purposes: ['didcomm-sign'],
-                                    },
-                                  ],
+                                  x: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
+                                  y: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
                                 },
                               },
                             },
@@ -2580,10 +3204,38 @@ export function buildIcaVerifyOpenApiSpec(
                             resource: {
                               organization: {
                                 url: 'globaldatacare.es',
-                                taxID: 'VATES-B00000000',
+                                taxID: 'VATES-B00112233',
                               },
                               controller: {
                                 sameAs: 'urn:multibase:zControllerHash',
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  createDidDocumentRequestForSamplePdf: {
+                    summary: 'Runnable sample for prueba-TEST-A4-multisign-fnmt.pdf (replace controller.sameAs)',
+                    value: {
+                      jti: 'req-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              organization: {
+                                url: 'globaldatacare.es',
+                                taxID: 'VATES-B00112233',
+                              },
+                              controller: {
+                                sameAs: 'urn:multibase:zControllerHash-from-_verify-response',
+                                publicKeyJwk: {
+                                  kty: 'EC',
+                                  crv: 'P-384',
+                                  x: 'copy-from-_verify-response-body-data-1-publicKeyJwk-x',
+                                  y: 'copy-from-_verify-response-body-data-1-publicKeyJwk-y',
+                                },
                               },
                             },
                           },
@@ -2602,9 +3254,9 @@ export function buildIcaVerifyOpenApiSpec(
                 Location: {
                   schema: { type: 'string' },
                   description:
-                    'Polling endpoint URL including the generated `thid` query parameter, for example `/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001`.',
+                    'Polling endpoint URL including the generated `thid` query parameter, for example `/ica/cds-ES/v1/health-care/entity/did/document/_create-response?thid=thid-create-did-001`.',
                   example:
-                    '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001',
+                    '/ica/cds-ES/v1/health-care/entity/did/document/_create-response?thid=thid-create-did-001',
                 },
                 'Retry-After': {
                   schema: { type: 'string' },
@@ -2633,7 +3285,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response': {
         post: {
-          tags: ['entity/did/document'],
+          tags: ['03 entity/did/document'],
           summary: 'Poll organization did:web document creation result',
           parameters: [
             {
@@ -2686,7 +3338,7 @@ export function buildIcaVerifyOpenApiSpec(
                   description:
                     'Same `_create-response` polling URL including `?thid=...` so Swagger can keep using the generated thread id.',
                   example:
-                    '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-create-did-001',
+                    '/ica/cds-ES/v1/health-care/entity/did/document/_create-response?thid=thid-create-did-001',
                 },
                 'Retry-After': {
                   schema: { type: 'string' },
@@ -2744,15 +3396,15 @@ export function buildIcaVerifyOpenApiSpec(
                                     'https://www.w3.org/ns/did/v1',
                                     'https://w3id.org/security/suites/jws-2020/v1',
                                   ],
-                                  id: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                  id: 'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233',
                                   controller: 'did:key:z<controller-public-key-multibase>',
                                   verificationMethod: [
                                     {
                                       id:
-                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#<jwk-rfc7638-thumbprint>',
+                                        'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233#<jwk-rfc7638-thumbprint>',
                                       type: 'JsonWebKey2020',
                                       controller:
-                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                        'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233',
                                       publicKeyJwk: {
                                         kty: 'EC',
                                         crv: 'P-384',
@@ -2765,10 +3417,10 @@ export function buildIcaVerifyOpenApiSpec(
                                     },
                                     {
                                       id:
-                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#org-didcomm-sign-p384-001',
+                                        'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233#org-didcomm-sign-p384-001',
                                       type: 'JsonWebKey2020',
                                       controller:
-                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                        'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233',
                                       publicKeyJwk: {
                                         kid: 'org-didcomm-sign-p384-001',
                                         kty: 'EC',
@@ -2782,10 +3434,10 @@ export function buildIcaVerifyOpenApiSpec(
                                     },
                                     {
                                       id:
-                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#org-didcomm-enc-p384-001',
+                                        'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233#org-didcomm-enc-p384-001',
                                       type: 'JsonWebKey2020',
                                       controller:
-                                        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                        'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233',
                                       publicKeyJwk: {
                                         kid: 'org-didcomm-enc-p384-001',
                                         kty: 'EC',
@@ -2799,14 +3451,14 @@ export function buildIcaVerifyOpenApiSpec(
                                     },
                                   ],
                                   assertionMethod: [
-                                    'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#<jwk-rfc7638-thumbprint>',
+                                    'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233#<jwk-rfc7638-thumbprint>',
                                   ],
                                   authentication: [
-                                    'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#<jwk-rfc7638-thumbprint>',
-                                    'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#org-didcomm-sign-p384-001',
+                                    'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233#<jwk-rfc7638-thumbprint>',
+                                    'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233#org-didcomm-sign-p384-001',
                                   ],
                                   keyAgreement: [
-                                    'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000#org-didcomm-enc-p384-001',
+                                    'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233#org-didcomm-enc-p384-001',
                                   ],
                                 },
                                 meta: {
@@ -2851,7 +3503,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request': {
         post: {
-          tags: ['catalog/dcat3'],
+          tags: ['10 catalog/dcat3'],
           summary: 'Request ICA DCAT v3 catalog',
           description:
             'Returns a `dcat:Catalog` with ICA member organization datasets. Optional JSON body supports filters (`sector`, `jurisdiction`). Response format is DCAT JSON-LD (not DIDComm envelope/body.data[]). The publisher DID is the organization real `did:web`; ICA internal membership aliases are not used as primary publisher.',
@@ -2932,7 +3584,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}': {
         get: {
-          tags: ['catalog/dcat3'],
+          tags: ['10 catalog/dcat3'],
           summary: 'Read one dataset from ICA DCAT v3 catalog',
           description:
             'Returns one `dcat:Dataset` entry in DCAT JSON-LD (not DIDComm envelope/body.data[]). The returned `dcterms:publisher.@id` is the organization real `did:web`.',
@@ -2989,7 +3641,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request': {
         post: {
-          tags: ['catalog/dcat3'],
+          tags: ['10 catalog/dcat3'],
           summary: 'Request ICA DDO catalog (parallel format)',
           description:
             'Returns an ICA DDO catalog profile (`urn:ica:ddo:catalog:v1`) in parallel to DCAT endpoints. This does not replace DCAT nor metadata sync formats.',
@@ -3057,7 +3709,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/datasets/{id}': {
         get: {
-          tags: ['catalog/dcat3'],
+          tags: ['10 catalog/dcat3'],
           summary: 'Read one dataset from ICA DDO catalog (parallel format)',
           parameters: [
             {
@@ -3103,7 +3755,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate': {
         post: {
-          tags: ['entity/keys/credentials'],
+          tags: ['04 entity/keys/credentials'],
           summary: 'Activate ICA signing key',
           description:
             'Starts async activation/import of one or more signing keys and returns polling location. Supports controller authorization via body.signature (FHIR Signature with detached compact JWS over canonical body) and validates CA x509 credential chain (x5c/certificateChainPem) per key. For a runnable deterministic test payload use npm run api:example:activate.',
@@ -3236,7 +3888,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add': {
         post: {
-          tags: ['network/evidence'],
+          tags: ['06 network/evidence'],
           summary: 'Add verified evidence record',
           description:
             'Starts async persistence of evidence records (`address`, `official-registry`, `qualification`, etc.) and returns polling location. Canonical input is body.data[]; optionally accepts DIDComm `attachments[]` with vc+jwt entries that are verified against configured vc issuer list (DID/JWKS) before persistence.',
@@ -3465,7 +4117,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert': {
         post: {
-          tags: ['network/policies'],
+          tags: ['07 network/policies'],
           summary: 'Upsert ICA delegation policy (ODRL)',
           description:
             'Starts async upsert of ICA delegation policies using body.data[] batch. Policies are ODRL resources (with optional Gaia-X OVC constraints) that delegate who can add/verify evidence for member organizations. Sector values must match the configured ICA supported sectors list.',
@@ -3591,7 +4243,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue': {
         post: {
-          tags: ['network/credentials'],
+          tags: ['08 network/credentials'],
           summary: 'Issue credential record',
           description:
             'Starts async persistence of issued credential records from body.data[] (resource + optional evidence) and returns polling location.',
@@ -3720,7 +4372,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_status': {
         post: {
-          tags: ['network/credentials'],
+          tags: ['08 network/credentials'],
           summary: 'Resolve credential status',
           description:
             'Starts async credential-status lookup batch (good/revoked/unknown) from body.data[] and returns polling location.',
@@ -3812,7 +4464,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_revoke': {
         post: {
-          tags: ['network/credentials'],
+          tags: ['08 network/credentials'],
           summary: 'Revoke credential record',
           description:
             'Starts async credential revocation batch from body.data[] (sets credentialStatus=revoked) and returns polling location.',
@@ -3906,7 +4558,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search': {
         post: {
-          tags: ['network/credentials'],
+          tags: ['08 network/credentials'],
           summary: 'Search credential records',
           description:
             'Starts async credential search from unit filters (FHIR-style POST _search with form parameters) and returns polling location.',
@@ -3996,9 +4648,282 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_retrieve': {
+        post: {
+          tags: ['08 network/credentials'],
+          summary: 'Retrieve signed credential (async)',
+          description:
+            'Starts async retrieval of one signed credential from stored issued records and returns polling location.\n\n'
+            + 'Input is DIDComm plaintext and supports the same search filters as `_search` (including `identifier` alias for `taxId`).\n'
+            + 'Use query params to control output:\n'
+            + '- `type=OrganizationCredential|LegalRepresentativeCredential|...`\n'
+            + '- `format=vc+json|vc+jwt`\n'
+            + '- `version=v1|v2` (`v1` returns first stored snapshot; `v2` returns deterministic regenerated output based on latest stored verification lineage).',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: supportedJurisdictionSchema,
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: supportedSectorSchema,
+            },
+            {
+              name: 'credentialType',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'contract' },
+              description: 'Route classifier (for compatibility, `contract` does not force VC type filtering).',
+            },
+            {
+              name: 'type',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', example: 'OrganizationCredential' },
+              description: 'Optional VC type filter applied against credential `type` array.',
+            },
+            {
+              name: 'format',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['vc+json', 'vc+jwt'], example: 'vc+jwt' },
+              description: 'Requested output format for signed credential content.',
+            },
+            {
+              name: 'version',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['v1', 'v2'], example: 'v2' },
+              description: '`v1` returns first stored matching credential snapshot; `v2` returns deterministic regenerated output based on latest stored verification lineage.',
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/didcomm-plain+json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: true,
+                },
+                examples: {
+                  retrieveOrganizationByIdentifier: {
+                    summary: 'Retrieve latest organization VC by VATES identifier',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'application/bundle-api+json',
+                      body: {
+                        data: [
+                          {
+                            identifier: 'VATES-A12345678',
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+              'application/x-www-form-urlencoded': {
+                schema: CREDENTIAL_SEARCH_REQUEST_BODY_SCHEMA,
+              },
+              'application/json': {
+                schema: CREDENTIAL_SEARCH_REQUEST_BODY_SCHEMA,
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Accepted. Poll _retrieve-response endpoint using Location header.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Polling endpoint path ending in _retrieve-response (thread id must be sent separately as query/body).',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+        get: {
+          tags: ['08 network/credentials'],
+          summary: 'Retrieve signed credential (direct GET)',
+          description:
+            'Returns one signed credential directly from stored records. '
+            + 'Filter with query parameters (`identifier`/`taxId`, `type`, etc.) and choose output by `Accept` header or `format` query.',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: supportedJurisdictionSchema,
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: supportedSectorSchema,
+            },
+            {
+              name: 'credentialType',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'contract' },
+            },
+            {
+              name: 'identifier',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', example: 'VATES-A12345678' },
+              description: 'Alias of taxId for convenience.',
+            },
+            {
+              name: 'taxId',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Alternative to `identifier`. If both are provided, server tries `identifier` first, then `taxId` as fallback.',
+            },
+            {
+              name: 'type',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', example: 'OrganizationCredential' },
+            },
+            {
+              name: 'format',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['vc+json', 'vc+jwt'], example: 'vc+json' },
+              description: 'Overrides Accept negotiation when provided.',
+            },
+            {
+              name: 'version',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['v1', 'v2'], example: 'v2' },
+              description: '`v1` returns first stored matching credential snapshot; `v2` returns deterministic regenerated output based on latest stored verification lineage.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Signed credential in requested representation.',
+              content: {
+                'application/vc+json': {
+                  schema: { type: 'object', additionalProperties: true },
+                  example: {
+                    '@context': [
+                      'https://www.w3.org/ns/credentials/v2',
+                    ],
+                    id: 'urn:vc:organization:es:animal-care:vates-a12345678:example',
+                    type: ['VerifiableCredential', 'OrganizationCredential'],
+                    issuer: 'did:web:localhost%3A3310',
+                    validFrom: '2026-03-29T10:00:00.000Z',
+                    credentialSubject: {
+                      id: 'did:web:member.example.org',
+                      '@type': 'Organization',
+                      legalName: 'ACME ORG NEW',
+                      taxID: 'VATES-A12345678',
+                    },
+                    proof: {
+                      type: 'JsonWebSignature2020',
+                      cryptosuite: 'ecdsa-jcs-2019',
+                      created: '2026-03-29T10:00:00.000Z',
+                      verificationMethod: 'did:web:localhost%3A3310#<kid>',
+                      proofPurpose: 'assertionMethod',
+                      jws: '<detached-jws>',
+                    },
+                  },
+                },
+                'application/vc+jwt': {
+                  schema: { type: 'string' },
+                  example: 'eyJhbGciOiJFUzM4NCIsInR5cCI6InZjK2p3dCJ9.eyJpc3MiOiJkaWQ6d2ViOi4uLiJ9.signature',
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid request.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: true,
+                  },
+                  example: {
+                    resourceType: 'Bundle',
+                    type: 'batch-response',
+                    total: 0,
+                    data: [],
+                    issues: {
+                      resourceType: 'OperationOutcome',
+                      issue: [
+                        {
+                          severity: 'error',
+                          code: 'invalid',
+                          diagnostics: 'Credential retrieve requires at least one filter: id, identifier/taxId, taxIdHash, legalName, subjectId, issuerId, credentialId, text, or email.',
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Credential not found for provided filters.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: true,
+                  },
+                  example: {
+                    resourceType: 'Bundle',
+                    type: 'batch-response',
+                    total: 0,
+                    data: [],
+                    issues: {
+                      resourceType: 'OperationOutcome',
+                      issue: [
+                        {
+                          severity: 'error',
+                          code: 'not-found',
+                          diagnostics: 'Credential not found for the provided retrieval filters.',
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/spaces/_list': {
         post: {
-          tags: ['network/spaces'],
+          tags: ['09 network/spaces'],
           summary: 'List spaces targets',
           description:
             'Returns current sector-scoped spaces targets used by sync adapters. Includes configured ICA_ROOT_CA_DID in response resource. Sensitive fields (`apiKey`, `license`) are never returned.',
@@ -4056,7 +4981,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/spaces/_replace': {
         post: {
-          tags: ['network/spaces'],
+          tags: ['09 network/spaces'],
           summary: 'Replace spaces targets',
           description:
             'Replaces the full sector-scoped spaces targets list (`body.data[]`). Credentials (`apiKey`/`license`) are accepted as write-only input and never returned.',
@@ -4124,7 +5049,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify': {
         post: {
-          tags: ['terms/pdf'],
+          tags: ['02 terms/pdf'],
           summary: 'Submit PDF verification job',
           description:
             'Starts an async PDF verification job and returns polling location in headers.\n\n'
@@ -4135,6 +5060,8 @@ export function buildIcaVerifyOpenApiSpec(
             + '- organization credential-signing public key travels as a separate `application/jwk+json` attachment\n'
             + '- if the organization JWK attachment is omitted, ICA autogenerates an ES384 organization credential-signing keypair\n'
             + '- the generated `publicKeyJwk` and `privateKeyJwk` are returned in `_verify-response` outside `body.data[].resource`\n\n'
+            + '**Important for _create binding**\n'
+            + '- if you plan to call `entity/did/document/_create` afterwards, include `meta.jws.protected.jwk` in `_verify` (controller key binding source)\n\n'
             + '**SDK v2**\n'
             + '- `setControllerMessageSigningPublicKey()` fills `meta.jws.protected.jwk`\n'
             + '- `setOrgCredentialSigningPublicKey()` adds the organization JWK attachment\n'
@@ -4168,8 +5095,40 @@ export function buildIcaVerifyOpenApiSpec(
             content: {
               'application/didcomm-plain+json': {
                 examples: {
+                  viaUrlWithControllerJwkBinding: {
+                    summary: 'DIDComm via URL with explicit controller JWK binding (recommended before _create)',
+                    value: {
+                      jti: 'req-auto',
+                      thid: 'thid-auto',
+                      type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
+                      meta: {
+                        jws: {
+                          protected: {
+                            alg: 'ES384',
+                            kid: 'controller-msg-es384-001',
+                            jwk: {
+                              kty: 'EC',
+                              crv: 'P-384',
+                              x: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
+                              y: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
+                            },
+                          },
+                        },
+                      },
+                      body: {},
+                      attachments: [
+                        {
+                          id: 'signed-terms',
+                          media_type: 'application/pdf',
+                          data: {
+                            links: ['https://www.dropbox.com/s/example123/terms-signed.pdf?dl=1'],
+                          },
+                        },
+                      ],
+                    },
+                  },
                   viaUrl: {
-                    summary: 'DIDComm con PDF accesible por URL',
+                    summary: 'Legacy v1: DIDComm via URL without controller binding',
                     value: {
                       jti: 'req-auto',
                       thid: 'thid-auto',
@@ -4187,7 +5146,7 @@ export function buildIcaVerifyOpenApiSpec(
                     },
                   },
                   viaDropboxSharedUrl: {
-                    summary: 'DIDComm con URL compartida de Dropbox (Swagger cambia dl=0 a dl=1)',
+                    summary: 'DIDComm with Dropbox shared URL (Swagger normalizes dl=0 to dl=1)',
                     value: {
                       jti: 'req-auto',
                       thid: 'thid-auto',
@@ -4198,7 +5157,7 @@ export function buildIcaVerifyOpenApiSpec(
                           id: 'signed-terms',
                           media_type: 'application/pdf',
                           data: {
-                            links: ['https://www.dropbox.com/s/example123/terms-signed.pdf?dl=0'],
+                            links: ['https://www.dropbox.com/s/example123/terms-signed.pdf?dl=1'],
                           },
                         },
                       ],
@@ -4236,8 +5195,8 @@ export function buildIcaVerifyOpenApiSpec(
                             jwk: {
                               kty: 'EC',
                               crv: 'P-384',
-                              x: '<controller-msg-x-coordinate>',
-                              y: '<controller-msg-y-coordinate>',
+                              x: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
+                              y: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
                             },
                           },
                         },
@@ -4362,7 +5321,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove': {
         post: {
-          tags: ['terms/pdf'],
+          tags: ['02 terms/pdf'],
           summary: 'Remove accepted organization terms asynchronously',
           description:
             'Starts async removal of accepted organization terms for an onboarded organization.\n\n'
@@ -4431,8 +5390,8 @@ export function buildIcaVerifyOpenApiSpec(
                             jwk: {
                               kty: 'EC',
                               crv: 'P-384',
-                              x: '<controller-msg-x-coordinate>',
-                              y: '<controller-msg-y-coordinate>',
+                              x: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
+                              y: 'use-controller-key-in-verify-pdf-and-create-did-document-and-others',
                             },
                           },
                         },
@@ -4442,8 +5401,8 @@ export function buildIcaVerifyOpenApiSpec(
                           {
                             resource: {
                               organization: {
-                                taxID: 'VATES-B00000000',
-                                identifier: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
+                                taxID: 'VATES-B00112233',
+                                identifier: 'did:web:globaldatacare.es:health-care:organization:taxid:VATES-B00112233',
                               },
                               controller: {
                                 sameAs: 'urn:multibase:zControllerHash',
@@ -4495,7 +5454,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate-response': {
         post: {
-          tags: ['entity/keys/credentials'],
+          tags: ['04 entity/keys/credentials'],
           summary: 'Poll signing-key activation result',
           parameters: [
             {
@@ -4576,7 +5535,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/evidence/{evidenceType}/_add-response': {
         post: {
-          tags: ['network/evidence'],
+          tags: ['06 network/evidence'],
           summary: 'Poll evidence add result',
           parameters: [
             {
@@ -4663,7 +5622,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert-response': {
         post: {
-          tags: ['network/policies'],
+          tags: ['07 network/policies'],
           summary: 'Poll delegation policy upsert result',
           parameters: [
             {
@@ -4744,7 +5703,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue-response': {
         post: {
-          tags: ['network/credentials'],
+          tags: ['08 network/credentials'],
           summary: 'Poll credential issue result',
           parameters: [
             {
@@ -4831,7 +5790,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_status-response': {
         post: {
-          tags: ['network/credentials'],
+          tags: ['08 network/credentials'],
           summary: 'Poll credential status result',
           parameters: [
             {
@@ -4918,7 +5877,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_revoke-response': {
         post: {
-          tags: ['network/credentials'],
+          tags: ['08 network/credentials'],
           summary: 'Poll credential revoke result',
           parameters: [
             {
@@ -5005,7 +5964,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove-response': {
         post: {
-          tags: ['terms/pdf'],
+          tags: ['02 terms/pdf'],
           summary: 'Poll organization terms removal result',
           parameters: [
             {
@@ -5086,7 +6045,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_search-response': {
         post: {
-          tags: ['network/credentials'],
+          tags: ['08 network/credentials'],
           summary: 'Poll credential search result',
           parameters: [
             {
@@ -5165,9 +6124,90 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_retrieve-response': {
+        post: {
+          tags: ['08 network/credentials'],
+          summary: 'Poll credential retrieve result',
+          parameters: [
+            {
+              name: 'jurisdiction',
+              in: 'path',
+              required: true,
+              schema: supportedJurisdictionSchema,
+            },
+            {
+              name: 'sector',
+              in: 'path',
+              required: true,
+              schema: supportedSectorSchema,
+            },
+            {
+              name: 'credentialType',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', example: 'contract' },
+            },
+            {
+              name: 'thid',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Credential retrieve thread id. Can also be sent in body as thid.',
+            },
+          ],
+          responses: {
+            '202': {
+              description: 'Still pending.',
+              headers: {
+                Location: {
+                  schema: { type: 'string' },
+                  description:
+                    'Same _retrieve-response endpoint path; continue polling with same thid.',
+                },
+                'Retry-After': {
+                  schema: { type: 'string' },
+                  description: 'Recommended seconds before next poll.',
+                },
+              },
+            },
+            '200': {
+              description: 'Credential retrieve completed (success or handled failure payload).',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '400': {
+              description: 'Missing or invalid thread id.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '404': {
+              description: 'Credential retrieve job not found.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+            '500': {
+              description: 'Internal error.',
+              content: {
+                'application/didcomm-plain+json': {
+                  schema: DIDCOMM_ERROR_RESPONSE_SCHEMA,
+                },
+              },
+            },
+          },
+        },
+      },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_rotate': {
         post: {
-          tags: ['entity/keys/credentials'],
+          tags: ['04 entity/keys/credentials'],
           summary: 'Rotate keys for credential issuance (stub)',
           description:
             'Reserved endpoint for rotating ICA keys used in credential issuance. Current implementation validates controller authorization signature and returns 202 with polling Location.',
@@ -5237,7 +6277,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_rotate-response': {
         post: {
-          tags: ['entity/keys/credentials'],
+          tags: ['04 entity/keys/credentials'],
           summary: 'Poll credential-issuance key rotation result (stub)',
           responses: {
             '501': {
@@ -5253,7 +6293,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate': {
         post: {
-          tags: ['entity/keys/communications'],
+          tags: ['05 entity/keys/communications'],
           summary: 'Rotate keys for communication messages (stub)',
           description:
             'Reserved endpoint for rotating keys used in communication messages. Current implementation validates controller authorization signature and returns 202 with polling Location.',
@@ -5323,7 +6363,7 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate-response': {
         post: {
-          tags: ['entity/keys/communications'],
+          tags: ['05 entity/keys/communications'],
           summary: 'Poll communication-message key rotation result (stub)',
           responses: {
             '501': {
@@ -5339,15 +6379,17 @@ export function buildIcaVerifyOpenApiSpec(
       },
       '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response': {
         post: {
-          tags: ['terms/pdf'],
+          tags: ['02 terms/pdf'],
           summary: 'Poll async verification result',
           description:
             'Returns the verification result.\n\n'
             + '**Organization entry**\n'
             + '- may include `publicKeyJwk`, `privateKeyJwk`, and `keySource` outside `resource`\n'
-            + '- `privateKeyJwk` is present only when ICA generated the organization keypair during `_verify`\n\n'
+            + '- `privateKeyJwk` is present only when ICA generated the organization keypair during `_verify`\n'
+            + '- by default `privateKeyJwk` is returned when available; set `ICA_VERIFY_RESPONSE_INCLUDE_PRIVATE_KEY_JWK=false` to hide it\n\n'
             + '**Legal-representative / controller entry**\n'
-            + '- may include only `publicKeyJwk` for the controller binding key\n\n'
+            + '- may include only `publicKeyJwk` for the controller binding key\n'
+            + '- successful `_verify-response` persists draft DID binding (controller+organization keys) used by `entity/did/document/_create`\n\n'
             + '**SDK v2**\n'
             + '- `pollVerifyTermsResponse()` polls this endpoint\n'
             + '- `getOrganizationKeyMaterialFromVerifyResponse()` reads organization bootstrap keys\n'

@@ -32,7 +32,7 @@ Field lookup is case-insensitive on read, so `Organization.sameAs` and `organiza
 When a signed PDF contains these form fields, the API extracts them and carries them through verification:
 
 - `VerifyResult.annexFormFields` includes the extracted name/value map.
-- `document_details.annexFormFields` inside evidence `type=document` includes the same map.
+- `document_details.annexFormFields` is intentionally not emitted in VCs/public exports.
 - VC mapping uses these fields:
   - `credentialSubject.id` (organization VC) is the canonical dataspace-member DID derived as
     `did:web:<ORG_PUBLIC_DOMAIN_NODE_OPERATOR>:<sector>:organization:taxid:<VATES-NIF>`.

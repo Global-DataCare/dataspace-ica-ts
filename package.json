@@ -1,6 +1,6 @@
 {
   "name": "dataspace-ica",
-  "version": "0.7.1",
+  "version": "0.7.8",
   "private": true,
   "type": "module",
   "description": "Private ICA CLI for onboarding validation, CSR signing and DCAT publication",
@@ -30,13 +30,21 @@
     "api:test": "node --test ./test/*.test.ts"
   },
   "dependencies": {
-    "@google-cloud/firestore": "^7.11.6",
+    "@google-cloud/firestore": "^8.3.0",
     "@google-cloud/storage": "^7.19.0",
     "gdc-common-utils-ts": "^1.1.0",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
+    "dotenv": "^17.3.1",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "retry-request": "8.0.2",
+    "teeny-request": "10.1.2",
+    "http-proxy-agent": "7.0.2",
+    "@tootallnate/once": "3.0.1"
   }
 }

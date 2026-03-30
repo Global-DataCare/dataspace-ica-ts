@@ -54,12 +54,23 @@ type PdfLibModule = {
 
 const require = createRequire(import.meta.url);
 let pdfLibModule: PdfLibModule | null = null;
+let pdfParseModule: { PDFParse?: new (input: { data: Buffer<ArrayBufferLike> }) => {
+  getText: () => Promise<{ text?: string }>;
+  destroy?: () => Promise<void> | void;
+} } | null = null;
 
 async function loadPdfLib(): Promise<PdfLibModule> {
   if (!pdfLibModule) {
     pdfLibModule = require('pdf-lib') as PdfLibModule;
   }
   return pdfLibModule;
+}
+
+async function loadPdfParseModule(): Promise<typeof pdfParseModule> {
+  if (!pdfParseModule) {
+    pdfParseModule = require('pdf-parse') as typeof pdfParseModule;
+  }
+  return pdfParseModule;
 }
 
 export type TermsAnnexFieldSpec = {
@@ -164,6 +175,115 @@ function normalizeFormValue(value: unknown): string {
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (value === undefined || value === null) return '';
   return String(value).trim();
+}
+
+function normalizeVerifierVatToken(value: string): string {
+  const upper = (value || '').trim().toUpperCase().replace(/[\s-]+/g, '');
+  if (!upper) return '';
+  const withoutVates = upper.startsWith('VATES') ? upper.slice(5) : upper;
+  const withoutVatPrefix = withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates;
+  return withoutVatPrefix;
+}
+
+function normalizeVisibleTaxToken(raw: string, jurisdiction: string): string {
+  const upper = (raw || '').trim().toUpperCase().replace(/[\s-]+/g, '');
+  if (!upper) return '';
+  const withoutVates = upper.startsWith('VATES') ? upper.slice(5) : upper;
+  const withoutVat = withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates;
+  const country = jurisdiction.toUpperCase();
+  return withoutVat.startsWith(country) ? withoutVat.slice(country.length) : withoutVat;
+}
+
+function looksLikeLegalName(value: string): boolean {
+  const normalized = (value || '').trim();
+  if (normalized.length < 3) return false;
+  if (!/[A-ZÁÉÍÓÚÜÑ]/i.test(normalized)) return false;
+  const blocked = /digitally\s+signed\s+by|firma(?:do)?\s+digital|date:\s*\d|fecha:\s*\d/i;
+  if (blocked.test(normalized)) return false;
+  return true;
+}
+
+export async function extractVisibleOrganizationIdentityFromPdfText(
+  pdfBytes: Buffer<ArrayBufferLike>,
+  verifierVatList: string[],
+  jurisdiction = 'ES',
+): Promise<{ taxID?: string; legalName?: string; warnings: string[] }> {
+  const warnings: string[] = [];
+  try {
+    const module = await loadPdfParseModule();
+    const PDFParse = module?.PDFParse;
+    if (typeof PDFParse !== 'function') {
+      warnings.push('Visible PDF text extraction skipped: pdf-parse PDFParse class not available.');
+      return { warnings };
+    }
+
+    const parser = new PDFParse({ data: pdfBytes });
+    let text = '';
+    try {
+      const parsed = await parser.getText();
+      text = String(parsed?.text || '');
+    } finally {
+      try { await parser.destroy?.(); } catch { /* no-op */ }
+    }
+    if (!text.trim()) return { warnings };
+
+    const normalizedVerifierVatSet = new Set(
+      verifierVatList
+        .map((entry) => normalizeVerifierVatToken(entry))
+        .filter(Boolean),
+    );
+
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+
+    const labelRegex = /\b(?:CIF|NIF|VAT|TAX\s*ID|TAX\s*NUMBER)\b\s*[:\-]?\s*([A-Z0-9][A-Z0-9\s-]{5,24})/gi;
+    const candidateTokens: Array<{ token: string; line: string; lineIndex: number }> = [];
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const line = lines[lineIndex];
+      let match: RegExpExecArray | null;
+      while ((match = labelRegex.exec(line)) !== null) {
+        const token = normalizeVisibleTaxToken(match[1] || '', jurisdiction);
+        if (!token) continue;
+        candidateTokens.push({ token, line, lineIndex });
+      }
+      labelRegex.lastIndex = 0;
+    }
+
+    const filteredCandidates = candidateTokens.filter((entry) => !normalizedVerifierVatSet.has(entry.token));
+    const selectedCandidate = filteredCandidates[0];
+    if (!selectedCandidate) {
+      if (candidateTokens.length) {
+        warnings.push('Visible tax IDs found in PDF text belong only to verifier VATs; counterparty tax ID not detected.');
+      }
+      return { warnings };
+    }
+
+    const selectedToken = selectedCandidate.token;
+    const taxID = `VAT${jurisdiction.toUpperCase()}-${selectedToken}`;
+
+    let legalName: string | undefined;
+    const onSameLine = selectedCandidate.line.split(/\b(?:CIF|NIF|VAT|TAX\s*ID|TAX\s*NUMBER)\b/i)[0]?.trim();
+    if (onSameLine && looksLikeLegalName(onSameLine)) {
+      legalName = onSameLine;
+    }
+    if (!legalName && selectedCandidate.lineIndex > 0) {
+      const previousLine = lines[selectedCandidate.lineIndex - 1];
+      if (looksLikeLegalName(previousLine)) {
+        legalName = previousLine;
+      }
+    }
+
+    return {
+      taxID,
+      ...(legalName ? { legalName } : {}),
+      warnings,
+    };
+  } catch (error: unknown) {
+    warnings.push(`Visible PDF text extraction skipped: ${(error as Error)?.message || String(error)}`);
+    return { warnings };
+  }
 }
 
 function readFieldValue(field: unknown): string {

@@ -1,3 +1,6 @@
+// Carga automática de variables de entorno desde .env.local para los tests
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
@@ -24,6 +27,25 @@ import type {
   CreateDidDocumentResult,
   CreateDidDocumentRouteContext,
 } from '../src/api/types.ts';
+
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const outdir = path.resolve(__dirname, '../artifacts/tests/output');
+const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+function writeOutput(name: string, data: unknown) {
+  console.log(`[ORG-DID-TEST] About to write output: ${name}`);
+  fs.mkdirSync(outdir, { recursive: true });
+  fs.writeFileSync(
+    path.join(outdir, `organization-did-document.${name}.${timestamp}.json`),
+    JSON.stringify(data, null, 2)
+  );
+  console.log(`[ORG-DID-TEST] Output written: ${name}`);
+}
 
 function buildDidcommRequest(body: unknown, url: string): IncomingMessage {
   const req = Readable.from([JSON.stringify(body)]) as IncomingMessage & Readable;
@@ -323,154 +345,159 @@ test('CreateDidDocument managers build derived did:web document asynchronously',
     if (!parsedRoute || !parsedRoute.ok) return;
 
     const store = new InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>(60);
-    const collectionsService = new VerificationCollectionsService();
-    await collectionsService.storeIssuedCredentials([
-      {
-        id: 'org-record-001',
-        tenantId: parsedRoute.context.tenantId,
-        jurisdiction: parsedRoute.context.jurisdiction,
-        sector: parsedRoute.context.sector,
-        resourceType: 'contract',
-        thid: 'thid-verify-org-001',
-        credentialType: 'Organization-verification-v1.0',
-        credentialId: 'urn:vc:org:001',
-        subjectId: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678',
-        issuerId: 'did:web:localhost%3A3310',
-        credential: {
-          credentialSubject: {
-            '@type': 'Organization',
-            id: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678',
-            taxID: 'VATES-A12345678',
-            legalName: 'Acme Health SL',
-          },
-        },
-        createdAt: '2026-03-12T00:00:00.000Z',
-        updatedAt: '2026-03-12T00:00:00.000Z',
-      },
-    ]);
-    const requestManager = new CreateDidDocumentRequestManager(store, collectionsService);
-    const responseManager = new CreateDidDocumentResponseManager(store);
+    resetVerificationCollectionsMemAdapterStateForTests();
 
-    const submitReq = buildDidcommRequest({
-      jti: 'req-did-create-001',
-      thid: 'thid-did-create-001',
-      type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
-      body: {
-        data: [
+    try {
+      const parsedRoute = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create');
+      assert.ok(parsedRoute);
+      assert.equal(parsedRoute?.ok, true);
+      if (!parsedRoute || !parsedRoute.ok) return;
+
+      const store2 = new InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>(60);
+      const collectionsService2 = new VerificationCollectionsService();
+      await collectionsService2.storeIssuedCredentials([
         {
-          resource: {
-            organization: {
-              identifier: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678',
-              publicKeyJwk: {
-                kty: 'EC',
-                crv: 'P-384',
-                x: 'abc',
-                y: 'def',
-              },
-              jwks: {
-                keys: [
-                  {
-                    kid: 'org-didcomm-sign-001',
-                    kty: 'EC',
-                    crv: 'P-384',
-                    x: 'orgsignx',
-                    y: 'orgsigny',
-                    use: 'sig',
-                    purposes: ['didcomm-sign'],
-                  },
-                  {
-                    kid: 'org-didcomm-enc-001',
-                    kty: 'EC',
-                    crv: 'P-384',
-                    x: 'orgencx',
-                    y: 'orgency',
-                    use: 'enc',
-                    purposes: ['didcomm-enc'],
-                  },
-                ],
-              },
+          id: 'org-record-001',
+          tenantId: parsedRoute.context.tenantId,
+          jurisdiction: parsedRoute.context.jurisdiction,
+          sector: parsedRoute.context.sector,
+          resourceType: 'contract',
+          thid: 'thid-verify-org-001',
+          credentialType: 'Organization-verification-v1.0',
+          credentialId: 'urn:vc:org:001',
+          subjectId: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678',
+          issuerId: 'did:web:localhost%3A3310',
+          credential: {
+            credentialSubject: {
+              '@type': 'Organization',
+              id: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678',
+              taxID: 'VATES-A12345678',
+              legalName: 'Acme Health SL',
             },
-            controller: {
-              sameAs: 'urn:multibase:zControllerHash',
-                publicKeyJwk: {
-                  kty: 'EC',
-                  crv: 'P-384',
-                  x: 'ghi',
-                  y: 'jkl',
+          },
+          createdAt: '2026-03-12T00:00:00.000Z',
+          updatedAt: '2026-03-12T00:00:00.000Z',
+        },
+      ]);
+      const requestManager = new CreateDidDocumentRequestManager(store2, collectionsService2);
+      const responseManager = new CreateDidDocumentResponseManager(store2);
+
+      const submitReq = buildDidcommRequest({
+        jti: 'req-did-create-001',
+        thid: 'thid-did-create-001',
+        type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+        body: {
+          data: [
+            {
+              resource: {
+                organization: {
+                  identifier: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678',
+                  publicKeyJwk: {
+                    kty: 'EC',
+                    crv: 'P-384',
+                    x: 'abc',
+                    y: 'def',
+                  },
+                  jwks: {
+                    keys: [
+                      {
+                        kid: 'org-didcomm-sign-001',
+                        kty: 'EC',
+                        crv: 'P-384',
+                        x: 'orgsignx',
+                        y: 'orgsigny',
+                        use: 'sig',
+                        purposes: ['didcomm-sign'],
+                      },
+                      {
+                        kid: 'org-didcomm-enc-001',
+                        kty: 'EC',
+                        crv: 'P-384',
+                        x: 'orgencx',
+                        y: 'orgency',
+                        use: 'enc',
+                        purposes: ['didcomm-enc'],
+                      },
+                    ],
+                  },
+                },
+                controller: {
+                  sameAs: 'urn:multibase:zControllerHash',
+                  publicKeyJwk: {
+                    kty: 'EC',
+                    crv: 'P-384',
+                    x: 'ghi',
+                    y: 'jkl',
+                  },
                 },
               },
             },
-          },
-        ],
+          ],
+        },
       },
-    }, '/ica/cds-ES/v1/animal-care/entity/did/document/_create');
-
-    const submitOutcome = await requestManager.submit(parsedRoute.context, submitReq);
-    assert.deepEqual(submitOutcome, {
-      type: 'accepted',
-      location: buildCreateDidDocumentResponseLocation({
-        ...parsedRoute.context,
-        action: '_create',
-      }, { thid: 'thid-did-create-001' }),
-      retryAfter: 3,
-    });
-
-    await new Promise((resolve) => setImmediate(resolve));
-
-    const pollRoute = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create-response');
-    assert.ok(pollRoute);
-    assert.equal(pollRoute?.ok, true);
-    if (!pollRoute || !pollRoute.ok) return;
-
-    const pollReq = buildDidcommRequest({}, '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-did-create-001');
-
-    const outcome = await responseManager.poll(
-      pollRoute.context,
-      pollReq,
-      new URL('http://localhost/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-did-create-001'),
+      '/ica/cds-ES/v1/animal-care/entity/did/document/_create'
     );
-    assert.equal(outcome.type, 'succeeded');
-    if (outcome.type !== 'succeeded') return;
-    const payload = outcome.payload as Record<string, any>;
-    const resource = payload.body?.data?.[0]?.resource;
-    assert.equal(typeof resource?.meta?.createdAt, 'string');
-    assert.equal(resource?.meta?.status, undefined);
-    assert.match(resource?.didDocument?.controller || '', /^did:key:z/);
-    assert.equal(
-      resource?.didDocument?.verificationMethod?.[0]?.id,
-      'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#mAHM7GzWdl6cfRveUjFAnDdnhCayzRT8t1mdXxifCHY',
-    );
-    assert.equal(resource?.didDocument?.verificationMethod?.[0]?.publicKeyJwk?.x, 'abc');
-    assert.equal(resource?.didDocument?.verificationMethod?.length, 3);
-    assert.ok(resource?.didDocument?.authentication?.includes('did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#org-didcomm-sign-001'));
-    assert.ok(resource?.didDocument?.keyAgreement?.includes('did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#org-didcomm-enc-001'));
-    assert.equal(resource?.didDocument?.alsoKnownAs, undefined);
+      const submitOutcome = await requestManager.submit(parsedRoute.context, submitReq);
+      writeOutput('create-manager-submit', { submitOutcome });
+      assert.deepEqual(submitOutcome, {
+        type: 'accepted',
+        location: buildCreateDidDocumentResponseLocation({
+          ...parsedRoute.context,
+          action: '_create',
+        }, { thid: 'thid-did-create-001' }),
+        retryAfter: 3,
+      });
 
-    const didBindings = await collectionsService.listDidBindings();
-    const didDocuments = await collectionsService.listDidDocuments();
-    assert.equal(didBindings.length, 1);
-    assert.equal(didBindings[0]?.status, 'confirmed');
-    assert.equal(didBindings[0]?.taxId, 'VATES-A12345678');
-    assert.equal(didDocuments.length, 1);
-    assert.equal(didDocuments[0]?.status, 'confirmed');
-    assert.equal(didDocuments[0]?.did, 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678');
-  } finally {
-    resetVerificationCollectionsMemAdapterStateForTests();
-  }
-});
+      await new Promise((resolve) => setImmediate(resolve));
 
-test('CreateDidDocument falls back to stored organization and controller public keys from verification records', async () => {
-  resetVerificationCollectionsMemAdapterStateForTests();
+      const pollRoute = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create-response');
+      assert.ok(pollRoute);
+      assert.equal(pollRoute?.ok, true);
+      if (!pollRoute || !pollRoute.ok) return;
 
-  try {
-    const parsedRoute = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create');
-    assert.ok(parsedRoute);
+      const pollReq = buildDidcommRequest({}, '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-did-create-001');
+
+      const outcome = await responseManager.poll(
+        pollRoute.context,
+        pollReq,
+        new URL('http://localhost/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-did-create-001'),
+      );
+      writeOutput('create-manager-poll', { outcome });
+      assert.equal(outcome.type, 'succeeded');
+      if (outcome.type !== 'succeeded') return;
+      const payload = outcome.payload as Record<string, any>;
+      const resource = payload.body?.data?.[0]?.resource;
+      assert.equal(typeof resource?.meta?.createdAt, 'string');
+      assert.equal(resource?.meta?.status, undefined);
+      assert.match(resource?.didDocument?.controller || '', /^did:key:z/);
+      assert.equal(
+        resource?.didDocument?.verificationMethod?.[0]?.id,
+        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#mAHM7GzWdl6cfRveUjFAnDdnhCayzRT8t1mdXxifCHY',
+      );
+      assert.equal(resource?.didDocument?.verificationMethod?.[0]?.publicKeyJwk?.x, 'abc');
+      assert.equal(resource?.didDocument?.verificationMethod?.length, 3);
+      assert.ok(resource?.didDocument?.authentication?.includes('did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#org-didcomm-sign-001'));
+      assert.ok(resource?.didDocument?.keyAgreement?.includes('did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#org-didcomm-enc-001'));
+      assert.equal(resource?.didDocument?.alsoKnownAs, undefined);
+
+      const didBindings = await collectionsService2.listDidBindings();
+      const didDocuments = await collectionsService2.listDidDocuments();
+      writeOutput('create-manager-bindings', { didBindings, didDocuments });
+      assert.equal(didBindings.length, 1);
+      assert.equal(didBindings[0]?.status, 'confirmed');
+      assert.equal(didBindings[0]?.taxId, 'VATES-A12345678');
+      assert.equal(didDocuments.length, 1);
+      assert.equal(didDocuments[0]?.status, 'confirmed');
+      assert.equal(didDocuments[0]?.did, 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678');
+    } finally {
+      resetVerificationCollectionsMemAdapterStateForTests();
+    }
     assert.equal(parsedRoute?.ok, true);
     if (!parsedRoute || !parsedRoute.ok) return;
 
-    const store = new InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>(60);
-    const collectionsService = new VerificationCollectionsService();
-    await collectionsService.storeIssuedCredentials([
+    const store3 = new InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>(60);
+    const collectionsService3 = new VerificationCollectionsService();
+    await collectionsService3.storeIssuedCredentials([
       {
         id: 'org-record-key-001',
         tenantId: parsedRoute.context.tenantId,
@@ -535,7 +562,7 @@ test('CreateDidDocument falls back to stored organization and controller public 
         updatedAt: '2026-03-12T00:00:00.000Z',
       },
     ]);
-    await collectionsService.storeDidBindings([
+    await collectionsService3.storeDidBindings([
       {
         id: 'ica::es::animal-care::VATES-A12345678',
         tenantId: parsedRoute.context.tenantId,
@@ -568,8 +595,8 @@ test('CreateDidDocument falls back to stored organization and controller public 
         updatedAt: '2026-03-12T00:00:00.000Z',
       },
     ]);
-    const requestManager = new CreateDidDocumentRequestManager(store, collectionsService);
-    const responseManager = new CreateDidDocumentResponseManager(store);
+    const requestManager2 = new CreateDidDocumentRequestManager(store3, collectionsService3);
+    const responseManager2 = new CreateDidDocumentResponseManager(store3);
 
     const submitReq = buildDidcommRequest({
       jti: 'req-did-create-stored-keys-001',
@@ -591,7 +618,7 @@ test('CreateDidDocument falls back to stored organization and controller public 
       },
     }, '/ica/cds-ES/v1/animal-care/entity/did/document/_create');
 
-    const submitOutcome = await requestManager.submit(parsedRoute.context, submitReq);
+    const submitOutcome = await requestManager2.submit(parsedRoute.context, submitReq);
     assert.equal(submitOutcome.type, 'accepted');
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -601,7 +628,7 @@ test('CreateDidDocument falls back to stored organization and controller public 
     if (!pollRoute || !pollRoute.ok) return;
 
     const pollReq = buildDidcommRequest({}, '/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-did-create-stored-keys-001');
-    const outcome = await responseManager.poll(
+    const outcome = await responseManager2.poll(
       pollRoute.context,
       pollReq,
       new URL('http://localhost/ica/cds-ES/v1/animal-care/entity/did/document/_create-response?thid=thid-did-create-stored-keys-001'),
@@ -1102,7 +1129,7 @@ test('CreateDidDocument rejects controller.publicKeyJwk override when _verify al
   resetVerificationCollectionsMemAdapterStateForTests();
 });
 
-test('CreateDidDocument requires explicit organization.publicKeyJwk confirmation when _verify stored an ICA-generated key', async () => {
+test('CreateDidDocument reuses ICA-generated organization key from _verify when organization.publicKeyJwk is omitted', async () => {
   resetVerificationCollectionsMemAdapterStateForTests();
 
   const parsedRoute = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create');
@@ -1235,13 +1262,12 @@ test('CreateDidDocument requires explicit organization.publicKeyJwk confirmation
 
   await new Promise((resolve) => setImmediate(resolve));
   const job = store.get('req-did-create-007');
-  assert.equal(job?.status, 'failed');
-  assert.match(job?.error || '', /organization\.publicKeyJwk must be sent to confirm the ICA-generated organization key from _verify/i);
+  assert.equal(job?.status, 'succeeded');
 
   resetVerificationCollectionsMemAdapterStateForTests();
 });
 
-test('CreateDidDocument accepts explicit organization.publicKeyJwk confirmation when it matches the ICA-generated key stored during _verify', async () => {
+test('CreateDidDocument accepts explicit organization.publicKeyJwk override when it differs from key stored during _verify', async () => {
   resetVerificationCollectionsMemAdapterStateForTests();
 
   const parsedRoute = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create');
@@ -1256,6 +1282,14 @@ test('CreateDidDocument accepts explicit organization.publicKeyJwk confirmation 
     y: 'generated-org-confirm-y',
     alg: 'ES384',
     kid: 'generated-org-confirm-kid',
+  };
+  const overrideOrganizationPublicKeyJwk = {
+    kty: 'EC',
+    crv: 'P-384',
+    x: 'override-org-confirm-x',
+    y: 'override-org-confirm-y',
+    alg: 'ES384',
+    kid: 'override-org-confirm-kid',
   };
 
   const store = new InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>(60);
@@ -1355,7 +1389,7 @@ test('CreateDidDocument accepts explicit organization.publicKeyJwk confirmation 
           resource: {
             organization: {
               identifier: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-G00000000',
-              publicKeyJwk: generatedOrganizationPublicKeyJwk,
+              publicKeyJwk: overrideOrganizationPublicKeyJwk,
             },
             controller: {
               sameAs: 'urn:multibase:zStoredControllerHash',
@@ -1372,6 +1406,9 @@ test('CreateDidDocument accepts explicit organization.publicKeyJwk confirmation 
   await new Promise((resolve) => setImmediate(resolve));
   const job = store.get('thid-did-create-008');
   assert.equal(job?.status, 'succeeded');
+  const updatedBindings = await collectionsService.listDidBindings();
+  const updated = updatedBindings.find((entry) => entry.taxId === 'VATES-G00000000');
+  assert.equal((updated?.organizationPublicKeyJwk as Record<string, unknown>)?.kid, 'override-org-confirm-kid');
 
   resetVerificationCollectionsMemAdapterStateForTests();
 });

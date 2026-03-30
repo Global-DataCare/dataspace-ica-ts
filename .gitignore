@@ -1,4 +1,7 @@
 # Added
+artifacts
+discovery
+
 response*
 requests/
 *.srl
