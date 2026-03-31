@@ -1,5 +1,11 @@
 # Changelog
 
+# 0.8.4 - 2026-03-30
+
+- Adjusted OIDC4IDA `document.check_details` semantics for promoter-only / non-cryptographic representative extraction flows:
+  - `vcrypt` is now emitted only when electronic signature evidence is present for that credential.
+  - In fallback representative flows (identity inferred from document/form/OCR without person-signature cryptographic validation), evidence now includes `vdig` only.
+
 # 0.8.3 - 2026-03-30
 
 - Added extended failure diagnostics to `_verify-response`:

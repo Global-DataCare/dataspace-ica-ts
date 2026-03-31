@@ -1998,6 +1998,14 @@ test('buildVerificationVcBundle (promoter-only signature): emits Person VC when 
     const personEvidence = personResource.evidence as Array<Record<string, any>>;
     assert.deepEqual(organizationEvidence.map((entry) => entry.type), ['document']);
     assert.deepEqual(personEvidence.map((entry) => entry.type), ['document']);
+    assert.deepEqual(
+      (organizationEvidence[0]?.check_details || []).map((entry: Record<string, unknown>) => entry.check_method),
+      ['vdig'],
+    );
+    assert.deepEqual(
+      (personEvidence[0]?.check_details || []).map((entry: Record<string, unknown>) => entry.check_method),
+      ['vdig'],
+    );
     const personSubject = personResource.credentialSubject as Record<string, any>;
     assert.equal(personSubject.name, 'Client Legal Representative');
     assert.equal(personSubject.identifier, '12345678Z');

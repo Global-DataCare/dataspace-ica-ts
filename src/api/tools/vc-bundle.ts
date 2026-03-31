@@ -657,12 +657,16 @@ function buildOidc4IdaEvidence(
         txn: documentTxnRef,
         time: documentEvidenceTimestamp,
       },
-      {
-        check_method: 'vcrypt',
-        organization: verifierOrganizationDid,
-        txn: documentTxnRef,
-        time: documentEvidenceTimestamp,
-      },
+      ...(includeElectronicSignatureEvidence
+        ? [
+            {
+              check_method: 'vcrypt' as const,
+              organization: verifierOrganizationDid,
+              txn: documentTxnRef,
+              time: documentEvidenceTimestamp,
+            },
+          ]
+        : []),
     ],
     attachments: {
       digest: {
