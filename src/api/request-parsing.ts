@@ -187,6 +187,14 @@ function normalizeContentType(headerValue: string): string {
   return headerValue.split(';')[0].trim().toLowerCase();
 }
 
+function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes') return true;
+  if (normalized === '0' || normalized === 'false' || normalized === 'no') return false;
+  return fallback;
+}
+
 function pad2(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -450,30 +458,33 @@ export async function parseVerifySubmission(
       annex.fields['organization.name'] = inferredFromGenericFields.legalName;
     }
   }
-  const visibleIdentity = await extractVisibleOrganizationIdentityFromPdfText(
-    pdfBytes,
-    verifierVatList,
-    effectiveJurisdiction,
-  );
-  if (visibleIdentity.taxID && !annex.fields['organization.taxID']) {
-    annex.fields['organization.taxID'] = visibleIdentity.taxID;
-  }
-  if (visibleIdentity.legalName && !annex.fields['organization.legalName']) {
-    annex.fields['organization.legalName'] = visibleIdentity.legalName;
-    if (!annex.fields['organization.name']) {
-      annex.fields['organization.name'] = visibleIdentity.legalName;
+  const runInlineVisibleExtraction = parseBooleanEnv(process.env.ICA_VERIFY_INLINE_VISIBLE_EXTRACTION, false);
+  if (runInlineVisibleExtraction) {
+    const visibleIdentity = await extractVisibleOrganizationIdentityFromPdfText(
+      pdfBytes,
+      verifierVatList,
+      effectiveJurisdiction,
+    );
+    if (visibleIdentity.taxID && !annex.fields['organization.taxID']) {
+      annex.fields['organization.taxID'] = visibleIdentity.taxID;
     }
-  }
-  if (visibleIdentity.legalRepresentativeName) {
-    if (!annex.fields['Representante legal']) {
-      annex.fields['Representante legal'] = visibleIdentity.legalRepresentativeName;
+    if (visibleIdentity.legalName && !annex.fields['organization.legalName']) {
+      annex.fields['organization.legalName'] = visibleIdentity.legalName;
+      if (!annex.fields['organization.name']) {
+        annex.fields['organization.name'] = visibleIdentity.legalName;
+      }
     }
-    if (!annex.fields['person.name']) {
-      annex.fields['person.name'] = visibleIdentity.legalRepresentativeName;
+    if (visibleIdentity.legalRepresentativeName) {
+      if (!annex.fields['Representante legal']) {
+        annex.fields['Representante legal'] = visibleIdentity.legalRepresentativeName;
+      }
+      if (!annex.fields['person.name']) {
+        annex.fields['person.name'] = visibleIdentity.legalRepresentativeName;
+      }
     }
-  }
-  if (visibleIdentity.warnings.length) {
-    annex.warnings.push(...visibleIdentity.warnings);
+    if (visibleIdentity.warnings.length) {
+      annex.warnings.push(...visibleIdentity.warnings);
+    }
   }
   const controllerPublicKeyJwk = resolveControllerPublicKeyFromMeta(parsed);
   const organizationPublicKeyJwk = resolveOrganizationPublicKeyFromDidcommAttachments(attachments);

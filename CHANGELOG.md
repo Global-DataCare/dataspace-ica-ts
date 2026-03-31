@@ -1,5 +1,10 @@
 # Changelog
 
+# 0.8.7 - 2026-03-30
+
+- Fixed `_verify` submit-time 502 behind ingress by deferring heavy visible text/OCR extraction to async job execution (post-`202`) when `ICA_VERIFY_DEFER_VISIBLE_EXTRACTION=true`.
+- Added `ICA_VERIFY_DEFER_VISIBLE_EXTRACTION=true` to ProcureData deploy/local env files so fallback extraction still runs, but no longer blocks `_verify` request response.
+
 # 0.8.6 - 2026-03-30
 
 - Fixed OCR runtime temp directory for cloud deployments:

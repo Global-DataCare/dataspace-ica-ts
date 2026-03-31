@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import { buildVerifyResponseLocation } from '../path.ts';
 import { parseVerifySubmission } from '../request-parsing.ts';
 import { InMemoryVerificationJobStore } from '../job-store.ts';
+import { extractVisibleOrganizationIdentityFromPdfText } from '../tools/terms-annex-form.ts';
 import type {
   PdfVerificationService,
   VerificationErrorDetails,
@@ -94,6 +95,70 @@ function buildAnnexDebugDetails(
   };
 }
 
+function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes') return true;
+  if (normalized === '0' || normalized === 'false' || normalized === 'no') return false;
+  return fallback;
+}
+
+function mergeVisibleIdentityIntoSubmission(
+  submission: VerifySubmission,
+  visibleIdentity: { taxID?: string; legalName?: string; legalRepresentativeName?: string; warnings: string[] },
+): VerifySubmission {
+  const annexFormFields = { ...(submission.annexFormFields || {}) };
+  if (visibleIdentity.taxID && !annexFormFields['organization.taxID']) {
+    annexFormFields['organization.taxID'] = visibleIdentity.taxID;
+  }
+  if (visibleIdentity.legalName && !annexFormFields['organization.legalName']) {
+    annexFormFields['organization.legalName'] = visibleIdentity.legalName;
+    if (!annexFormFields['organization.name']) {
+      annexFormFields['organization.name'] = visibleIdentity.legalName;
+    }
+  }
+  if (visibleIdentity.legalRepresentativeName) {
+    if (!annexFormFields['Representante legal']) {
+      annexFormFields['Representante legal'] = visibleIdentity.legalRepresentativeName;
+    }
+    if (!annexFormFields['person.name']) {
+      annexFormFields['person.name'] = visibleIdentity.legalRepresentativeName;
+    }
+  }
+
+  return {
+    ...submission,
+    ...(Object.keys(annexFormFields).length ? { annexFormFields } : {}),
+    ...(visibleIdentity.warnings.length
+      ? { annexExtractionWarnings: [...(submission.annexExtractionWarnings || []), ...visibleIdentity.warnings] }
+      : {}),
+  };
+}
+
+async function enrichSubmissionWithDeferredVisibleIdentity(
+  submission: VerifySubmission,
+  jurisdiction: string,
+): Promise<VerifySubmission> {
+  const existingTaxId = getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.taxID')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.taxId');
+  const existingLegalName = getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.legalName')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.name')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'Razon Social')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'Razón Social');
+  if (existingTaxId && existingLegalName) return submission;
+
+  const verifierVatList = String(process.env.VERIFIERS_VAT_LIST || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const visibleIdentity = await extractVisibleOrganizationIdentityFromPdfText(
+    submission.pdfBytes,
+    verifierVatList,
+    jurisdiction,
+  );
+  return mergeVisibleIdentityIntoSubmission(submission, visibleIdentity);
+}
+
 export class VerifyRequestManager {
   private readonly jobStore: InMemoryVerificationJobStore;
   private readonly verifier: PdfVerificationService;
@@ -117,14 +182,18 @@ export class VerifyRequestManager {
       setImmediate(async () => {
         this.jobStore.markRunning(submission.thid);
         try {
-          const verificationResult = await this.verifier.verify(route, submission);
-          const enrichedResult = await this.auditStorage.persistVerifiedPdf(route, submission, verificationResult);
+          const deferVisibleExtraction = parseBooleanEnv(process.env.ICA_VERIFY_DEFER_VISIBLE_EXTRACTION, false);
+          const effectiveSubmission = deferVisibleExtraction
+            ? await enrichSubmissionWithDeferredVisibleIdentity(submission, route.jurisdiction)
+            : submission;
+          const verificationResult = await this.verifier.verify(route, effectiveSubmission);
+          const enrichedResult = await this.auditStorage.persistVerifiedPdf(route, effectiveSubmission, verificationResult);
           const generatedOrganizationKeyPair = submission.organizationPublicKeyJwk
             ? undefined
             : generateOrganizationCredentialKeyPair();
           const mergedNotes = [
             ...(Array.isArray(enrichedResult.notes) ? enrichedResult.notes : []),
-            ...((submission.annexExtractionWarnings || []).filter(Boolean)),
+            ...((effectiveSubmission.annexExtractionWarnings || []).filter(Boolean)),
           ];
           this.jobStore.markSucceeded(submission.thid, {
             ...enrichedResult,
@@ -142,8 +211,8 @@ export class VerifyRequestManager {
                     organizationKeySource: 'generated' as const,
                   }
                 : {}),
-            ...(submission.annexFormFields && Object.keys(submission.annexFormFields).length
-              ? { annexFormFields: submission.annexFormFields }
+            ...(effectiveSubmission.annexFormFields && Object.keys(effectiveSubmission.annexFormFields).length
+              ? { annexFormFields: effectiveSubmission.annexFormFields }
               : {}),
           });
         } catch (error: unknown) {
