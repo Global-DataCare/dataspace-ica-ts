@@ -1,5 +1,11 @@
 # Changelog
 
+# 0.8.6 - 2026-03-30
+
+- Fixed OCR runtime temp directory for cloud deployments:
+  - OCR workspace now uses OS temp path (`/tmp`) instead of `process.cwd()/artifacts`.
+  - Prevents `EACCES: permission denied, mkdir '/app/artifacts'` in containerized environments.
+
 # 0.8.5 - 2026-03-30
 
 - `_verify` failed-job diagnostics now always include annex extraction summary, even when no fields/warnings were extracted (`fieldCount=0`, `warningCount=0`), to make cloud troubleshooting deterministic.

@@ -343,7 +343,7 @@ async function runCommand(command: string, args: string[]): Promise<{ ok: true; 
 
 async function extractVisibleTextWithOcr(pdfBytes: Buffer<ArrayBufferLike>): Promise<{ text: string; warnings: string[] }> {
   const warnings: string[] = [];
-  const workspaceRoot = path.join(process.cwd(), 'artifacts', 'ocr-tmp');
+  const workspaceRoot = path.join(tmpdir(), 'ica-ocr-tmp');
   await mkdir(workspaceRoot, { recursive: true });
   const workspace = await mkdtemp(path.join(workspaceRoot, 'run-'));
   try {
