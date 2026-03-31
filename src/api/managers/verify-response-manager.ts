@@ -268,6 +268,47 @@ function buildRevocationOutcomeIssues(errorDetails: VerificationErrorDetails | u
   });
 }
 
+function buildAnnexOutcomeIssues(errorDetails: VerificationErrorDetails | undefined): OperationOutcomeIssue[] {
+  const annex = errorDetails?.annex;
+  if (!annex) return [];
+
+  const summaryParts = [
+    `annex.fieldCount=${annex.fieldCount}`,
+    `annex.warningCount=${annex.warningCount}`,
+    `annex.hasOrganizationTaxId=${annex.hasOrganizationTaxId}`,
+    `annex.hasOrganizationLegalName=${annex.hasOrganizationLegalName}`,
+  ];
+  if (annex.organizationTaxId) summaryParts.push(`annex.organizationTaxId=${annex.organizationTaxId}`);
+  if (annex.organizationLegalName) summaryParts.push(`annex.organizationLegalName=${annex.organizationLegalName}`);
+  if (annex.personName) summaryParts.push(`annex.personName=${annex.personName}`);
+
+  const issues: OperationOutcomeIssue[] = [
+    {
+      severity: 'information',
+      code: 'informational',
+      diagnostics: summaryParts.join(' | '),
+    },
+  ];
+
+  const maxWarnings = 8;
+  for (let index = 0; index < annex.warnings.length && index < maxWarnings; index += 1) {
+    issues.push({
+      severity: 'warning',
+      code: 'incomplete',
+      diagnostics: `annex.warning[${index}]=${annex.warnings[index]}`,
+    });
+  }
+  if (annex.warnings.length > maxWarnings) {
+    issues.push({
+      severity: 'information',
+      code: 'informational',
+      diagnostics: `annex.warning[+]=${annex.warnings.length - maxWarnings} additional warning(s) omitted`,
+    });
+  }
+
+  return issues;
+}
+
 function buildFailedVerifyPayload(
   route: VerifyRouteContext,
   req: IncomingMessage,
@@ -283,6 +324,7 @@ function buildFailedVerifyPayload(
   const outcome = buildOperationOutcome([
     { severity: 'error', code: 'exception', diagnostics },
     ...buildRevocationOutcomeIssues(job.errorDetails),
+    ...buildAnnexOutcomeIssues(job.errorDetails),
   ]);
   const failedBody: VerifyBundleResponse = {
     resourceType: 'Bundle',
@@ -312,6 +354,7 @@ function buildFailedVerifyPayload(
           content: [
             {
               error: diagnostics,
+              ...(job.errorDetails?.annex ? { annex: job.errorDetails.annex } : {}),
             },
           ],
         },

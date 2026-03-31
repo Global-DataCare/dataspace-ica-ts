@@ -1,5 +1,14 @@
 # Changelog
 
+# 0.8.3 - 2026-03-30
+
+- Added extended failure diagnostics to `_verify-response`:
+  - Includes annex extraction debug summary (`fieldCount`, detected `organization.taxID/legalName`, key list).
+  - Includes annex extraction warnings (pdf-parse/OCR/tesseract/pdftoppm warnings) as OperationOutcome entries.
+  - Includes annex debug object inside failed `TermsVerification` content for easier troubleshooting.
+- Verification request manager now persists annex debug context into failed jobs so cloud failures expose why verifier-only fallback did not activate.
+- Added tests for annex diagnostics propagation in failed verification responses.
+
 # 0.8.2 - 2026-03-30
 
 - Improved PDF signature extraction robustness:

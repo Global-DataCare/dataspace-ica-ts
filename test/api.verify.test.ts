@@ -1724,6 +1724,11 @@ test('VerifyRequestManager sanitizes verbose openssl chain diagnostics before st
     job?.error,
     'Signature 1 failed: Certificate chain validation failed: unable to get local issuer certificate.',
   );
+  assert.equal(typeof job?.errorDetails?.annex?.fieldCount, 'number');
+  assert.equal(job?.errorDetails?.annex?.hasOrganizationTaxId, false);
+  assert.equal(job?.errorDetails?.annex?.hasOrganizationLegalName, false);
+  assert.equal((job?.errorDetails?.annex?.warningCount || 0) >= 1, true);
+  assert.equal((job?.errorDetails?.annex?.warnings?.[0] || '').length > 0, true);
 });
 
 test(

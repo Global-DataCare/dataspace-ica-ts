@@ -2,7 +2,12 @@ import type { IncomingMessage } from 'node:http';
 import { buildVerifyResponseLocation } from '../path.ts';
 import { parseVerifySubmission } from '../request-parsing.ts';
 import { InMemoryVerificationJobStore } from '../job-store.ts';
-import type { PdfVerificationService, VerificationErrorDetails, VerifyRouteContext } from '../types.ts';
+import type {
+  PdfVerificationService,
+  VerificationErrorDetails,
+  VerifyRouteContext,
+  VerifySubmission,
+} from '../types.ts';
 import { AuditDocumentStorageService } from '../tools/audit-document-storage.ts';
 import { generateOrganizationCredentialKeyPair } from '../tools/bootstrap-organization-key.ts';
 
@@ -39,6 +44,55 @@ function sanitizeVerificationErrorMessage(message: string): string {
   sanitized = sanitized.replace(/\s+/g, ' ').trim();
 
   return sanitized || 'Verification failed.';
+}
+
+function getAnnexFieldCaseInsensitive(
+  annexFormFields: Record<string, string> | undefined,
+  name: string,
+): string | undefined {
+  if (!annexFormFields) return undefined;
+  const direct = annexFormFields[name];
+  const raw = direct !== undefined
+    ? direct
+    : Object.entries(annexFormFields).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+  const normalized = typeof raw === 'string' ? raw.trim() : '';
+  return normalized || undefined;
+}
+
+function buildAnnexDebugDetails(
+  submission: VerifySubmission,
+): VerificationErrorDetails['annex'] | undefined {
+  const fieldKeys = Object.keys(submission.annexFormFields || {})
+    .map((key) => key.trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, 'en'));
+  const warnings = (submission.annexExtractionWarnings || [])
+    .map((warning) => String(warning || '').trim())
+    .filter(Boolean);
+  if (!fieldKeys.length && !warnings.length) return undefined;
+
+  const organizationTaxId = getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.taxID')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.taxId')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.cif')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.nif');
+  const organizationLegalName = getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.legalName')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.name')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'Razon Social')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'Razón Social');
+  const personName = getAnnexFieldCaseInsensitive(submission.annexFormFields, 'person.name')
+    || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'Representante legal');
+
+  return {
+    fieldCount: fieldKeys.length,
+    fieldKeys,
+    warningCount: warnings.length,
+    warnings,
+    hasOrganizationTaxId: Boolean(organizationTaxId),
+    hasOrganizationLegalName: Boolean(organizationLegalName),
+    ...(organizationTaxId ? { organizationTaxId } : {}),
+    ...(organizationLegalName ? { organizationLegalName } : {}),
+    ...(personName ? { personName } : {}),
+  };
 }
 
 export class VerifyRequestManager {
@@ -96,7 +150,14 @@ export class VerifyRequestManager {
         } catch (error: unknown) {
           const message = (error as Error)?.message || String(error);
           const sanitizedMessage = sanitizeVerificationErrorMessage(message);
-          const errorDetails = extractVerificationErrorDetails(error);
+          const extractedErrorDetails = extractVerificationErrorDetails(error);
+          const annexDebugDetails = buildAnnexDebugDetails(submission);
+          const errorDetails = extractedErrorDetails || annexDebugDetails
+            ? {
+                ...(extractedErrorDetails || {}),
+                ...(annexDebugDetails ? { annex: annexDebugDetails } : {}),
+              }
+            : undefined;
           console.error(`Verification job failed (thid=${submission.thid}): ${message}`);
           this.jobStore.markFailed(submission.thid, sanitizedMessage, errorDetails);
         }
