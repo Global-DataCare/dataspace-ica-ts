@@ -1,5 +1,9 @@
 # Changelog
 
+# 0.8.5 - 2026-03-30
+
+- `_verify` failed-job diagnostics now always include annex extraction summary, even when no fields/warnings were extracted (`fieldCount=0`, `warningCount=0`), to make cloud troubleshooting deterministic.
+
 # 0.8.4 - 2026-03-30
 
 - Adjusted OIDC4IDA `document.check_details` semantics for promoter-only / non-cryptographic representative extraction flows:

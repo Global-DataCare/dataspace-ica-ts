@@ -61,7 +61,7 @@ function getAnnexFieldCaseInsensitive(
 
 function buildAnnexDebugDetails(
   submission: VerifySubmission,
-): VerificationErrorDetails['annex'] | undefined {
+): VerificationErrorDetails['annex'] {
   const fieldKeys = Object.keys(submission.annexFormFields || {})
     .map((key) => key.trim())
     .filter(Boolean)
@@ -69,7 +69,6 @@ function buildAnnexDebugDetails(
   const warnings = (submission.annexExtractionWarnings || [])
     .map((warning) => String(warning || '').trim())
     .filter(Boolean);
-  if (!fieldKeys.length && !warnings.length) return undefined;
 
   const organizationTaxId = getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.taxID')
     || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.taxId')
@@ -152,12 +151,10 @@ export class VerifyRequestManager {
           const sanitizedMessage = sanitizeVerificationErrorMessage(message);
           const extractedErrorDetails = extractVerificationErrorDetails(error);
           const annexDebugDetails = buildAnnexDebugDetails(submission);
-          const errorDetails = extractedErrorDetails || annexDebugDetails
-            ? {
-                ...(extractedErrorDetails || {}),
-                ...(annexDebugDetails ? { annex: annexDebugDetails } : {}),
-              }
-            : undefined;
+          const errorDetails = {
+            ...(extractedErrorDetails || {}),
+            annex: annexDebugDetails,
+          };
           console.error(`Verification job failed (thid=${submission.thid}): ${message}`);
           this.jobStore.markFailed(submission.thid, sanitizedMessage, errorDetails);
         }
