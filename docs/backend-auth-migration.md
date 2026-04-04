@@ -18,10 +18,12 @@ This migration adds backend authentication lifecycle endpoints in ICA aligned wi
   - `200` when completed (DIDComm `application/didcomm-plain+json`)
 - DCR/PKCE/identity exchange profile is DIDComm plain (`application/didcomm-plain+json`).
 
-## Security and DEMO_MODE
+## Security Mode
 - Bearer token is required for submit and poll on all new backend auth endpoints.
-- `DEMO_MODE=true`: Bearer required, signature validation bypassed.
-- `DEMO_MODE=false`: Bearer required, HS256 signature + temporal claim validation enforced.
+- `SECURITY_MODE=strict|compat`: Bearer required, HS256 signature + temporal claim validation enforced.
+- `SECURITY_MODE=demo` + `DEMO_ALLOW_INSECURE_BEARER=true`: Bearer required, signature/temporal checks bypassed.
+- `SECURITY_MODE=demo` + `DEMO_ALLOW_INSECURE_BEARER=false` (default): signature/temporal checks are still enforced.
+- Legacy `DEMO_MODE=true` maps to `SECURITY_MODE=demo` when `SECURITY_MODE` is not explicitly set.
 
 ## Binding State
 - API key `_create` returns resources in `bindingStatus: pending_dcr`.

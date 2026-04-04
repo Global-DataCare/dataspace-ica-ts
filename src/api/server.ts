@@ -80,6 +80,10 @@ import {
 import { bootstrapSelfSigningKey } from './tools/self-signing.ts';
 import { getConfiguredSupportedJurisdictionIds } from './supported-jurisdictions.ts';
 import { getSupportedSectorCodings, getSupportedSectorsLanguage } from './supported-sectors.ts';
+import {
+  assertIcaSecurityStartupGuardrails,
+  loadIcaSecurityConfigFromEnv,
+} from './security-mode.ts';
 import type {
   OperationOutcomeIssue,
   OperationOutcomeResource,
@@ -1720,6 +1724,8 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
 }
 
 export function startIcaApiServer(options: IcaApiServerOptions = {}) {
+  const security = loadIcaSecurityConfigFromEnv();
+  assertIcaSecurityStartupGuardrails(security);
   const host = options.host || process.env.ICA_API_HOST || '0.0.0.0';
   const port = options.port || Number.parseInt(process.env.ICA_API_PORT || process.env.PORT || '3310', 10);
   const selfBootstrap = bootstrapSelfSigningKey();
@@ -1739,6 +1745,10 @@ export function startIcaApiServer(options: IcaApiServerOptions = {}) {
   }
   const server = createIcaApiServer(options);
   server.listen(port, host, () => {
+    const searchLegacy = security.securityMode !== 'strict' && security.jsonLegacy;
+    console.log(
+      `ICA security profile mode=${security.securityMode} searchLegacy=${searchLegacy ? 'enabled' : 'disabled'} demoAllowInsecureBearer=${security.demoAllowInsecureBearer ? 'enabled' : 'disabled'}`,
+    );
     console.log(`ICA verify API listening on http://${host}:${port}`);
   });
   return server;

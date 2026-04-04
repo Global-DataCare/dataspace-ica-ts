@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadAuditDocumentStorageConfigFromEnv } from '../src/api/tools/audit-document-storage.ts';
 import {
+  assertIcaSecurityStartupGuardrails,
+  loadIcaSecurityConfigFromEnv,
+} from '../src/api/security-mode.ts';
+import {
   loadVerificationCollectionsConfigFromEnv,
   resolveEvidenceCollectionName,
   resolveIssuedCredentialsCollectionName,
@@ -18,6 +22,11 @@ const ENV_KEYS = [
   'FIRESTORE_PROJECT_ID',
   'ICA_COLLECTIONS_REQUIRED',
   'ICA_COLLECTIONS_PREFIX',
+  'SECURITY_MODE',
+  'JSON_LEGACY',
+  'DEMO_MODE',
+  'DEMO_ALLOW_INSECURE_BEARER',
+  'NODE_ENV',
 ] as const;
 
 function withEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>, fn: () => void): void {
@@ -85,6 +94,49 @@ test('loadVerificationCollectionsConfigFromEnv uses DB_PROVIDER and FIRESTORE_PR
       assert.equal(config.firestoreProjectId, 'globaldatacare-ica-dev');
       assert.equal(resolveIssuedCredentialsCollectionName(config.firestoreCollectionPrefix), 'ica_issued_credentials');
       assert.equal(resolveEvidenceCollectionName(config.firestoreCollectionPrefix), 'ica_evidence_records');
+    },
+  );
+});
+
+test('loadIcaSecurityConfigFromEnv defaults to compat and enables search legacy transport', () => {
+  withEnv(
+    {
+      SECURITY_MODE: undefined,
+      DEMO_MODE: undefined,
+      JSON_LEGACY: undefined,
+      DEMO_ALLOW_INSECURE_BEARER: undefined,
+    },
+    () => {
+      const config = loadIcaSecurityConfigFromEnv();
+      assert.equal(config.securityMode, 'compat');
+      assert.equal(config.jsonLegacy, true);
+      assert.equal(config.demoAllowInsecureBearer, false);
+    },
+  );
+});
+
+test('loadIcaSecurityConfigFromEnv maps legacy DEMO_MODE to SECURITY_MODE=demo', () => {
+  withEnv(
+    {
+      SECURITY_MODE: undefined,
+      DEMO_MODE: 'true',
+    },
+    () => {
+      const config = loadIcaSecurityConfigFromEnv();
+      assert.equal(config.securityMode, 'demo');
+    },
+  );
+});
+
+test('assertIcaSecurityStartupGuardrails blocks demo mode in production', () => {
+  withEnv(
+    {
+      SECURITY_MODE: 'demo',
+      NODE_ENV: 'production',
+    },
+    () => {
+      const config = loadIcaSecurityConfigFromEnv();
+      assert.throws(() => assertIcaSecurityStartupGuardrails(config), /SECURITY_MODE=demo is not allowed/);
     },
   );
 });

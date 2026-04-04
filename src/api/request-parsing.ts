@@ -48,6 +48,7 @@ import {
   normalizeControllerPublicKeyJwk,
   normalizeOrganizationPublicKeyJwk,
 } from './tools/bootstrap-organization-key.ts';
+import { loadIcaSecurityConfigFromEnv } from './security-mode.ts';
 
 type ParsedThreadPayload = {
   thid?: string;
@@ -1413,6 +1414,11 @@ export async function parseCredentialSearchSubmission(
   req: IncomingMessage,
   credentialType: string,
 ): Promise<CredentialSearchSubmission> {
+  const security = loadIcaSecurityConfigFromEnv();
+  const allowLegacySearchTransports = security.securityMode !== 'strict' && security.jsonLegacy;
+  const expectedTransport = allowLegacySearchTransports
+    ? 'application/x-www-form-urlencoded, application/json or application/didcomm-plain+json'
+    : 'application/didcomm-plain+json';
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
   const contentEncodingHeader = normalizeHeader(req.headers['content-encoding']).trim().toLowerCase();
@@ -1444,9 +1450,15 @@ export async function parseCredentialSearchSubmission(
     };
   }
 
+  if (!allowLegacySearchTransports) {
+    throw new Error(
+      `Unsupported Content-Type for _search: ${contentTypeHeader || '(missing)'} (expected ${expectedTransport})`,
+    );
+  }
+
   if (contentType && contentType !== 'application/x-www-form-urlencoded' && contentType !== 'application/json') {
     throw new Error(
-      `Unsupported Content-Type for _search: ${contentTypeHeader || '(missing)'} (expected application/x-www-form-urlencoded, application/json or application/didcomm-plain+json)`,
+      `Unsupported Content-Type for _search: ${contentTypeHeader || '(missing)'} (expected ${expectedTransport})`,
     );
   }
 
