@@ -15,6 +15,7 @@ const ENV_KEYS = [
   'STORAGE_PROVIDER',
   'GCS_BUCKET_NAME',
   'ICA_AUDIT_STORAGE_REQUIRED',
+  'ICA_CONFIDENTIAL_STORAGE_ENABLED',
   'ICA_AUDIT_ATTACHMENT_URL_PATTERN',
   'ICA_AUDIT_STORAGE_FS_DIR',
   'ICA_AUDIT_STORAGE_GCS_PREFIX',
@@ -66,6 +67,19 @@ test('loadAuditDocumentStorageConfigFromEnv uses STORAGE_PROVIDER and GCS_BUCKET
       const config = loadAuditDocumentStorageConfigFromEnv();
       assert.equal(config.mode, 'gcs');
       assert.equal(config.gcsBucketName, 'globaldatacare-ica-dev');
+      assert.equal(config.confidentialStorageEnabled, false);
+    },
+  );
+});
+
+test('loadAuditDocumentStorageConfigFromEnv enables confidential storage flag', () => {
+  withEnv(
+    {
+      ICA_CONFIDENTIAL_STORAGE_ENABLED: 'true',
+    },
+    () => {
+      const config = loadAuditDocumentStorageConfigFromEnv();
+      assert.equal(config.confidentialStorageEnabled, true);
     },
   );
 });

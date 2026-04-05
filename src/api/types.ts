@@ -524,6 +524,7 @@ export interface AuditDocumentReference {
   contentType: string;
   sizeBytes: number;
   storedAt: string;
+  encryptionKeyId?: string;
 }
 
 export interface VerifyResult {

@@ -1270,6 +1270,9 @@ Audit document persistence:
 - `ICA_AUDIT_STORAGE_FS_DIR`
 - `GCS_BUCKET_NAME`
 - `ICA_AUDIT_STORAGE_GCS_PREFIX`
+- `ICA_CONFIDENTIAL_STORAGE_ENABLED` (optional; when `true`, audit PDFs are encrypted at rest)
+- `ICA_CONFIDENTIAL_STORAGE_KEY_SEED` (optional explicit seed; if absent ICA reuses resolved host seed passphrase)
+- `ICA_CONFIDENTIAL_STORAGE_KEY_VERSION` (optional key version label, default `v1`)
 
 Verification collections persistence:
 
