@@ -5,10 +5,10 @@ import {
   generateKeyPairSync,
   scryptSync,
 } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import type { SupportedSigningAlgorithm } from '../types.ts';
 import { getPreferredSigningKey } from './active-signing-keys.ts';
 import { deriveDeterministicEcPrivateKeyPem } from './deterministic-key-material.ts';
+import { resolveSeedPassphrase } from './seed-passphrase-provider.ts';
 
 type BootstrapResult = {
   enabled: boolean;
@@ -222,51 +222,13 @@ function deriveDeterministicPrivateKeyPemFromPassphrase(
   return derived.privateKeyPem;
 }
 
-function resolveSeedPassphrase(): string {
-  const filePath = (process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE || '').trim();
-  if (filePath) {
-    let fileValue = '';
-    try {
-      fileValue = readFileSync(filePath, 'utf8');
-    } catch (error: unknown) {
-      throw new Error(
-        `Failed to read ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE at "${filePath}": ${(error as Error).message}`,
-      );
-    }
-    const trimmed = fileValue.trim();
-    if (!trimmed) {
-      throw new Error(`ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE at "${filePath}" is empty.`);
-    }
-    return trimmed;
-  }
-
-  const secretEnvName = (process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV || '').trim();
-  if (secretEnvName) {
-    const envValue = process.env[secretEnvName];
-    if (envValue === undefined) {
-      throw new Error(
-        `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV points to "${secretEnvName}", but that env var is not set.`,
-      );
-    }
-    const trimmed = envValue.trim();
-    if (!trimmed) {
-      throw new Error(
-        `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV points to "${secretEnvName}", but the value is empty.`,
-      );
-    }
-    return trimmed;
-  }
-
-  return (process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE || '').trim();
-}
-
 export function useInvalidProofForTestResourceVersion(): boolean {
   const validProofFlag = process.env.ICA_SELF_SIGN_TEST_VALID_PROOF;
   if (validProofFlag === undefined) return true;
   return !parseBoolean(validProofFlag, false);
 }
 
-export function bootstrapSelfSigningKey(): BootstrapResult {
+export async function bootstrapSelfSigningKey(): Promise<BootstrapResult> {
   const active = getPreferredSigningKey(undefined);
   if (active) {
     return {
@@ -304,7 +266,8 @@ export function bootstrapSelfSigningKey(): BootstrapResult {
     || parseSupportedSigningAlgorithm(process.env.ICA_SELF_SIGN_TEST_ALG)
     || 'ES384';
   const configuredKid = (process.env.ICA_SELF_SIGN_TEST_KEY_ID || '').trim() || undefined;
-  const seedPassphrase = resolveSeedPassphrase();
+  const seed = await resolveSeedPassphrase();
+  const seedPassphrase = seed.value;
   const privateKeyPem = seedPassphrase
     ? deriveDeterministicPrivateKeyPemFromPassphrase(
       seedPassphrase,

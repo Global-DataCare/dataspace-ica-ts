@@ -86,6 +86,19 @@ export ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET='replace-with-strong-passphrase
 echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE=replace-with-strong-passphrase' >> .env.deploy.dev
 ```
 
+Cloud Secret Manager mode with encrypted runtime cache:
+
+```bash
+echo 'ICA_HOST_SECRET_PROVIDER=gcp-secret-manager' >> .env.deploy.dev
+echo 'ICA_GCP_PROJECT_ID=<gcp-project-id>' >> .env.deploy.dev
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_GCP_SECRET=ica-vc-private-key-seed-passphrase' >> .env.deploy.dev
+echo 'ICA_HOST_SECRET_CACHE_TTL_SECONDS=300' >> .env.deploy.dev
+echo 'ICA_HOST_SECRET_STALE_IF_ERROR_SECONDS=21600' >> .env.deploy.dev
+```
+
+Resolution order is: `*_FILE` -> `*_SECRET_ENV` -> direct env -> GCP Secret Manager.
+When GCP refresh fails, ICA serves stale cached value until `ICA_HOST_SECRET_STALE_IF_ERROR_SECONDS` is exceeded.
+
 In production, disable self-sign mode and use `_activate` (or `ICA_VC_SIGNING_PRIVATE_KEY_PEM`) with CA-issued material.
 
 If the ICA already has an active `ES384` signing key with `x5c`, `_create` can issue the organization leaf certificate from that active ICA key and return inline `x5c` for the organization's primary `publicKeyJwk`.
@@ -1213,6 +1226,12 @@ VC signing:
 - `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE` (optional deterministic seed passphrase)
 - `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE` (optional secret file path; highest priority)
 - `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV` (optional env-var indirection; middle priority)
+- `ICA_HOST_SECRET_PROVIDER` (`gcp-secret-manager` to enable cloud provider mode)
+- `ICA_GCP_PROJECT_ID` (project used when secret is configured by short name)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_GCP_SECRET` (secret short/full resource name)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_GCP_SECRET_VERSION` (optional full version resource; overrides short name)
+- `ICA_HOST_SECRET_CACHE_TTL_SECONDS` (fresh cache TTL, default `300`)
+- `ICA_HOST_SECRET_STALE_IF_ERROR_SECONDS` (stale cache budget when cloud fetch fails, default `21600`)
 - `ICA_VC_PRIVATE_KEY_SEED_CONFIG` (optional scrypt config: `<log2N>:<r>:<p>:<dkLen>` or JSON)
 - `ICA_VC_PRIVATE_KEY_SEED_SALT` (optional salt override, recommended separate from config)
 - `ICA_VC_SEED_ALG` (`ES384` | `ES256K` for seed-derived key)
