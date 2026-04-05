@@ -72,6 +72,20 @@ echo 'ICA_SELF_SIGN_TEST_VALID_PROOF=true' >> .env.deploy.dev
 npm run dev
 ```
 
+Safer seed-passphrase options (to avoid sharing plaintext in `.env`):
+
+```bash
+# Option 1: mounted secret file (highest priority)
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE=/var/run/secrets/ica/vc-seed-passphrase' >> .env.deploy.dev
+
+# Option 2: indirection to another env var (middle priority)
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV=ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET' >> .env.deploy.dev
+export ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET='replace-with-strong-passphrase'
+
+# Legacy fallback (lowest priority)
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE=replace-with-strong-passphrase' >> .env.deploy.dev
+```
+
 In production, disable self-sign mode and use `_activate` (or `ICA_VC_SIGNING_PRIVATE_KEY_PEM`) with CA-issued material.
 
 If the ICA already has an active `ES384` signing key with `x5c`, `_create` can issue the organization leaf certificate from that active ICA key and return inline `x5c` for the organization's primary `publicKeyJwk`.
@@ -1197,6 +1211,8 @@ VC signing:
 - `ICA_SELF_SIGN_TEST_ALG` (`ES384` default)
 - `ICA_SELF_SIGN_TEST_KEY_ID` (optional forced `kid` for bootstrap key)
 - `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE` (optional deterministic seed passphrase)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE` (optional secret file path; highest priority)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV` (optional env-var indirection; middle priority)
 - `ICA_VC_PRIVATE_KEY_SEED_CONFIG` (optional scrypt config: `<log2N>:<r>:<p>:<dkLen>` or JSON)
 - `ICA_VC_PRIVATE_KEY_SEED_SALT` (optional salt override, recommended separate from config)
 - `ICA_VC_SEED_ALG` (`ES384` | `ES256K` for seed-derived key)
