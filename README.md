@@ -1274,6 +1274,9 @@ Audit document persistence:
 - `ICA_CONFIDENTIAL_STORAGE_KEY_SEED` (optional explicit seed; if absent ICA reuses resolved host seed passphrase)
 - `ICA_CONFIDENTIAL_STORAGE_KEY_VERSION` (optional key version label, default `v1`)
 
+Architecture decision note:
+- Confidential storage scope and GW alignment criteria are documented in [`docs/adr-0001-confidential-storage-model.md`](./docs/adr-0001-confidential-storage-model.md).
+
 Verification collections persistence:
 
 - `DB_PROVIDER` (`mem` | `firestore`, default `mem`)
