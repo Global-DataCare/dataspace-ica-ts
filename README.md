@@ -852,23 +852,28 @@ curl -sS -X POST \
   "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/network/credentials/organization-taxid/_search-response?thid=credential-search-001" | jq .
 ```
 
-### 10) Dummy dataspace sync (logs aunque falle)
+### 10) Dummy dataspace sync (logs even on failure)
 
-Puedes forzar llamadas a un endpoint dummy para ver trazas de actualización de metadatos (`credential/evidence/catalog`) por espacio de datos:
+You can force calls to a dummy endpoint to inspect metadata update traces
+(`credential/evidence/catalog`) per dataspace target:
 
 ```bash
 export ICA_SPACES_TARGETS_JSON='{"targets":[{"resourceType":"RuntimePlatform","name":"Pontus-X","identifier":"did:web:pontusx.example.org","url":"https://adapter.example.org/dummy-sync","license":"replace-me-api-key"}]}'
 ```
 
-Con `ICA_SPACES_STRICT=false` (default), el flujo principal no falla si el dummy endpoint devuelve error; se registran logs `spaces-sync` con el motivo.
+With `ICA_SPACES_STRICT=false` (default), the main flow does not fail when the
+dummy endpoint returns an error. ICA logs the reason under `spaces-sync`.
 
-Guia detallada para integracion Pontus-X (payloads salientes, registro de targets y publicacion de catalogo):  
+Detailed Pontus-X integration guide (outbound payloads, target registration,
+and catalog publication):
 [`docs/pontusx-integration.md`](./docs/pontusx-integration.md)
-Nota: los eventos de sync usan `@type: "DataspacePublicationMetadata"` como formato de intercambio ICA/Pontus-X, no un DDO estandar.
 
-### 11) Gestionar lista sectorial de espacios de datos (`spaces`)
+Note: sync events currently use `@type: "DataspacePublicationMetadata"` as the
+ICA adapter exchange format. They are not a standard DDO.
 
-Listar configuración actual:
+### 11) Manage sector-scoped dataspace target list (`spaces`)
+
+List current configuration:
 
 ```bash
 curl -sS -X POST \
@@ -877,7 +882,7 @@ curl -sS -X POST \
   -d '{"jti":"req-auto","thid":"thid-auto","type":"application/bundle-api+json","body":{}}' | jq .
 ```
 
-Reemplazar lista completa (`body.data[]`):
+Replace the full list (`body.data[]`):
 
 ```bash
 curl -sS -X POST \
@@ -901,13 +906,17 @@ curl -sS -X POST \
   }' | jq .
 ```
 
-Notas de seguridad:
-- `apiKey` y `license` son solo de entrada (write-only).
-- `_list` y `_replace` no devuelven nunca secretos ni referencias de secreto.
-- `content[]` en respuestas usa `identifier` (DID) y `url` (endpoint) como forma pública (alineado con schema.org).
-- En `targets`: usar `@type` (JSON-LD) o `resourceType` (JSON plano). No usar `type`.
-- Esta restriccion aplica solo a `body.data[]` de `spaces`; `body.type` del envelope/Bundle (`batch-response`) sigue siendo valido.
-- GKE runtime (ADC, Firestore/GCS IAM, static IP): [`docs/security-gke.md`](./docs/security-gke.md)
+Security notes:
+- `apiKey` and `license` are input-only (write-only).
+- `_list` and `_replace` never return secrets or secret references.
+- `content[]` in responses uses `identifier` (DID) and `url` (endpoint) as the
+  public shape, aligned with `schema.org`.
+- In `targets`, use `@type` (JSON-LD) or `resourceType` (plain JSON). Do not
+  use `type`.
+- This restriction applies only to `body.data[]` entries in `spaces`; it does
+  not change `body.type` in the DIDComm/FHIR Bundle envelope.
+- For GKE runtime notes (ADC, Firestore/GCS IAM, static IP), see
+  [`docs/security-gke.md`](./docs/security-gke.md).
 
 ## Polling Behavior
 
@@ -978,6 +987,7 @@ Notes:
 Discovery:
 
 - `GET /`
+- `GET /.well-known/dcat3/catalog`
 - `GET /openapi.json`
 - `GET /api-docs`
 - `GET /.well-known/did.json`
@@ -1023,6 +1033,35 @@ Network evidence and credentials:
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/spaces/_replace`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request`
 - `GET /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}`
+
+## Catalog Profile Scope
+
+The operational discovery baseline for ICA is `DCAT3`.
+
+`HealthDCAT-AP` is not the default ICA interoperability baseline. Treat it as
+optional profile guidance for richer dataset publication scenarios only.
+
+Reference:
+- [`docs/adr-0002-discovery-catalog-profile.md`](./docs/adr-0002-discovery-catalog-profile.md)
+
+## Key Rotation And VC Re-Issuance Status
+
+Credential and communication `_rotate` routes still exist in pre-`1.0.0`
+status. They must not be treated as a complete production trust lifecycle yet.
+
+The missing pieces still to be defined and implemented are:
+
+- proof of possession of the old key
+- proof of possession of the new key
+- controller/operator authorization semantics
+- VC re-issuance semantics
+- trust-registry / ledger-adapter state transition recording
+
+The documentation intentionally keeps this backlog jurisdiction-agnostic for
+now.
+
+Reference:
+- [`docs/adr-0003-key-rotation-and-vc-reissuance-backlog.md`](./docs/adr-0003-key-rotation-and-vc-reissuance-backlog.md)
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request` (DDO profile in parallel)
 - `GET /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/datasets/{id}` (DDO profile in parallel)
 

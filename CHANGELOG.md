@@ -1,5 +1,18 @@
 # Changelog
 
+# 0.9.1 - 2026-05-29
+
+- Merged `HealthDCAT-APv7` into `main` so the confidential-storage and backend
+  auth line is preserved on the main branch before further follow-up work.
+- Clarified the ICA discovery/catalog baseline:
+  - operational baseline is `DCAT3`
+  - `HealthDCAT-AP` is optional profile guidance, not the default ICA baseline
+- Added backlog ADRs for:
+  - discovery catalog profile scope
+  - key rotation, VC re-issuance, and jurisdiction-agnostic ledger adapter
+- Updated documentation language so the newly added/edited operational guidance
+  is in English only.
+
 # 0.8.7 - 2026-03-30
 
 - Fixed `_verify` submit-time 502 behind ingress by deferring heavy visible text/OCR extraction to async job execution (post-`202`) when `ICA_VERIFY_DEFER_VISIBLE_EXTRACTION=true`.
