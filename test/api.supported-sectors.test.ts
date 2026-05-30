@@ -48,11 +48,11 @@ async function withDataspaceTitleEnv<T>(
   }
 }
 
-function buildMockRequest(url: string, method = 'GET'): IncomingMessage {
+function buildMockRequest(url: string, method = 'GET', headers: Record<string, string> = {}): IncomingMessage {
   const req = Readable.from([]) as IncomingMessage & Readable;
   req.method = method;
   req.url = url;
-  req.headers = {};
+  req.headers = headers;
   return req;
 }
 
@@ -123,6 +123,29 @@ test('createIcaApiServer exposes ICA configuration well-known document', async (
       { code: 'onehealth-insurance', display: 'Seguros de salud y entorno (One Health)' },
     ]);
   });
+});
+
+test('createIcaApiServer exposes host service discovery catalog well-known document', async () => {
+  const server = createIcaApiServer();
+  const handler = server.listeners('request')[0] as ((req: IncomingMessage, res: ServerResponse) => Promise<void> | void);
+  const req = buildMockRequest('/.well-known/dcat3/catalog', 'GET', { host: 'localhost:3310' });
+  const { res, getBody } = buildMockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCode, 200);
+  const payload = JSON.parse(getBody()) as {
+    '@type'?: string;
+    'dcat:service'?: Array<{ '@id'?: string; '@type'?: string; 'dcat:endpointURL'?: string }>;
+  };
+  assert.equal(payload['@type'], 'dcat:Catalog');
+  assert.equal(Array.isArray(payload['dcat:service']), true);
+  assert.equal(
+    payload['dcat:service']?.some((service) =>
+      service['@id'] === 'did:web:localhost%3A3310#dsp-catalog-service'
+      && service['@type'] === 'dcat:DataService'
+      && service['dcat:endpointURL'] === 'http://localhost:3310/.well-known/dcat3/catalog'),
+    true,
+  );
 });
 
 test('buildIcaVerifyOpenApiSpec documents ICA configuration discovery', async () => {

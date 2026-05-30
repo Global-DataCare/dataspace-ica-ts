@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildDcatCatalog,
+  buildDcatDiscoveryCatalog,
   buildProviderDatasetsFromIssuedCredentials,
   filterProviderDatasets,
   findProviderDatasetById,
@@ -128,6 +129,30 @@ test('buildDcatCatalog builds dcat:Catalog with dcat:dataset entries', () => {
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.['@type'], 'dcat:Dataset');
   assert.equal(entries[0]?.['dcterms:identifier'], datasetId);
+});
+
+test('buildDcatDiscoveryCatalog builds dcat:Catalog with dcat:service entries', () => {
+  const catalog = buildDcatDiscoveryCatalog('https://ica.example.org/.well-known/dcat3/catalog', [
+    {
+      id: 'did:web:ica.example.org#dsp-catalog-service',
+      type: 'CatalogService',
+      serviceEndpoint: '/.well-known/dcat3/catalog',
+    },
+    {
+      id: 'did:web:ica.example.org#dsp-data-service',
+      type: 'DataService',
+      serviceEndpoint: 'https://ica.example.org/.well-known/dspace-version',
+    },
+  ]) as Record<string, unknown>;
+
+  assert.equal(catalog['@type'], 'dcat:Catalog');
+  assert.equal(Array.isArray(catalog['dcat:dataset']), true);
+  assert.equal((catalog['dcat:dataset'] as Array<unknown>).length, 0);
+  const services = Array.isArray(catalog['dcat:service']) ? catalog['dcat:service'] as Array<Record<string, unknown>> : [];
+  assert.equal(services.length, 2);
+  assert.equal(services[0]?.['@type'], 'dcat:DataService');
+  assert.equal(services[0]?.['dcat:endpointURL'], 'https://ica.example.org/.well-known/dcat3/catalog');
+  assert.equal(services[1]?.['dcat:endpointURL'], 'https://ica.example.org/.well-known/dspace-version');
 });
 
 test('filterProviderDatasets and findProviderDatasetById work with filters and encoded id', () => {

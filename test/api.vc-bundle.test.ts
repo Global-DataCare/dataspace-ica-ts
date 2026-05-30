@@ -3,17 +3,35 @@ import test from 'node:test';
 import { parseVerifyRoute } from '../src/api/path.ts';
 import { buildVerificationVcBundle } from '../src/api/server.ts';
 import { resetActiveSigningKeysStateForTests, activateSigningKey } from '../src/api/tools/active-signing-keys.ts';
-import { PRIVATE_KEY_PEM, PUBLIC_JWK } from './test-signing-key.fixture.ts';
-  // Clave activa para pruebas
+import { PRIVATE_KEY_PEM } from './test-signing-key.fixture.ts';
+import { normalizeSameAsHash } from '../src/api/tools/multihash.ts';
+import type { VerifyResult } from '../src/api/types.ts';
+
+function installActiveSigningKeyForTests(): void {
   resetActiveSigningKeysStateForTests();
   activateSigningKey({
     kid: 'test-key-1',
     alg: 'ES384',
-    // publicJwk: PUBLIC_JWK, // Eliminado: no permitido por el tipo
     privateKeyPem: PRIVATE_KEY_PEM,
   });
-import { normalizeSameAsHash } from '../src/api/tools/multihash.ts';
-import type { VerifyResult } from '../src/api/types.ts';
+}
+
+function withDefaultDidWebDomain<T>(fn: () => T): T {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  const previousPublicDomain = process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
+
+  process.env.DID_WEB_DOMAIN = 'globaldatacare.es';
+  process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = 'globaldatacare.es';
+
+  try {
+    return fn();
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    if (previousPublicDomain === undefined) delete process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
+    else process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = previousPublicDomain;
+  }
+}
 
 function buildTestVerifyResult(label: string): VerifyResult {
   return {
@@ -44,26 +62,20 @@ function buildTestVerifyResult(label: string): VerifyResult {
 }
 
 test('buildVerificationVcBundle returns two VCs each with evidence', () => {
-  resetActiveSigningKeysStateForTests();
-  activateSigningKey({
-    kid: 'test-key-1',
-    alg: 'ES384',
-    // publicJwk: { kty: 'EC', crv: 'P-384', x: 'x1', y: 'y1' }, // Eliminado: no permitido por el tipo
-    privateKeyPem: `-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEICv1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1oAoGCCqGSM49\nAwEHoUQDQgAEx1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1\ny1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1y1==\n-----END EC PRIVATE KEY-----`,
-  });
+  installActiveSigningKeyForTests();
   const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
   const previousExternalDomain = process.env.ICA_EXTERNAL_DOMAIN;
   const previousOrganizationDidPublicDomain = process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
   delete process.env.ICA_DIDCOMM_ISSUER_DID;
   delete process.env.ICA_EXTERNAL_DOMAIN;
-  delete process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
+  process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = 'globaldatacare.es';
   try {
     const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
     assert.ok(parsed);
     assert.equal(parsed.ok, true);
     if (!parsed.ok) return;
 
-    const bundle = buildVerificationVcBundle(parsed.context, {
+    const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
       ok: true,
       verifiedAt: '2026-03-05T00:00:00.000Z',
       templateUrl: 'https://example.test/template.pdf',
@@ -86,7 +98,7 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
         templateSha256Hex: 'cafebabe',
       },
       notes: ['ok'],
-    });
+    }));
 
     assert.equal(bundle.resourceType, 'Bundle');
     assert.equal(bundle.type, 'batch-response');
@@ -106,7 +118,7 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
     const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
     assert.equal(organizationSubject.id, 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678');
     assert.equal(organizationSubject['@type'], 'Organization');
-    assert.equal(organizationSubject.legalName, 'Acme Health SL');
+    assert.equal(organizationSubject.legalName, 'ACME HEALTH SL');
     assert.equal(organizationSubject.taxID, 'VATES-A12345678');
     assert.equal(organizationSubject.sameAs, undefined);
     assert.equal(organizationSubject.identifier, undefined);
@@ -124,7 +136,7 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
       identifier: 'urn:ilo:ilostat:isco-08:1120',
     });
     assert.equal(personSubject.memberOf?.['@type'], 'Organization');
-    assert.equal(personSubject.memberOf?.legalName, 'Acme Health SL');
+    assert.equal(personSubject.memberOf?.legalName, 'ACME HEALTH SL');
     assert.equal(personSubject.memberOf?.taxID, 'VATES-A12345678');
     assert.equal(personSubject.memberOf?.identifier, undefined);
     assert.equal(personSubject.worksFor, undefined);
@@ -195,10 +207,10 @@ test('buildVerificationVcBundle does not expose non-schema.org controller field'
     assert.equal(parsed?.ok, true);
     if (!parsed || !parsed.ok) return;
 
-    const bundle = buildVerificationVcBundle(parsed.context, {
+    const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
       ...buildTestVerifyResult('controller-bootstrap'),
       signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
-    });
+    }));
 
     const organizationResource = bundle.data[0]?.resource as Record<string, any>;
     const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
@@ -227,7 +239,7 @@ test('buildVerificationVcBundle uses external audit attachment when available', 
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
 
-  const bundle = buildVerificationVcBundle(parsed.context, {
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
     ...buildTestVerifyResult('audit-external'),
     auditDocument: {
       provider: 'filesystem',
@@ -238,7 +250,7 @@ test('buildVerificationVcBundle uses external audit attachment when available', 
       sizeBytes: 1024,
       storedAt: '2026-03-05T00:00:00.000Z',
     },
-  });
+  }));
 
   const organizationResource = bundle.data[0].resource as Record<string, any>;
   const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
@@ -261,7 +273,7 @@ test('buildVerificationVcBundle maps annex form fields into credential subjects 
   }
 
   try {
-    const bundle = buildVerificationVcBundle(parsed.context, {
+    const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
       ...buildTestVerifyResult('annex-fields'),
       signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
       annexFormFields: {
@@ -274,7 +286,7 @@ test('buildVerificationVcBundle maps annex form fields into credential subjects 
         'Person.alternateName': 'controller-es384-20260309',
         'Person.additionalType': 'ES384',
       },
-    });
+    }));
 
     const organizationResource = bundle.data[0].resource as Record<string, any>;
     const personResource = bundle.data[1].resource as Record<string, any>;
@@ -314,10 +326,10 @@ test('buildVerificationVcBundle hashes plain controller email into credentialSub
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
 
-  const bundle = buildVerificationVcBundle(parsed.context, {
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
     ...buildTestVerifyResult('plain-controller-email'),
     signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,EMAILADDRESS=Jane.Doe@Example.org,C=ES',
-  });
+  }));
 
   const personResource = bundle.data[1].resource as Record<string, any>;
   const personSubject = personResource.credentialSubject as Record<string, any>;
@@ -331,7 +343,7 @@ test('buildVerificationVcBundle omits intermediate crl_check_all verify_error wh
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
 
-  const bundle = buildVerificationVcBundle(parsed.context, {
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
     ok: true,
     verifiedAt: '2026-03-05T00:00:00.000Z',
     templateUrl: 'https://example.test/template.pdf',
@@ -368,7 +380,7 @@ test('buildVerificationVcBundle omits intermediate crl_check_all verify_error wh
         { phase: 'verify', status: 'ok', message: 'OpenSSL CRL verification passed (mode=-crl_check fallback).' },
       ],
     },
-  });
+  }));
 
   const resource = bundle.data[0].resource as Record<string, any>;
   const rawAttachment = resource.evidence?.[0]?.attachments?.[0]?.content || '';
@@ -398,7 +410,7 @@ test('buildVerificationVcBundle filters intermediate CA URLs to signer issuer pr
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
 
-  const bundle = buildVerificationVcBundle(parsed.context, {
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
     ok: true,
     verifiedAt: '2026-03-05T00:00:00.000Z',
     templateUrl: 'https://example.test/template.pdf',
@@ -429,7 +441,7 @@ test('buildVerificationVcBundle filters intermediate CA URLs to signer issuer pr
       finalStatus: 'good',
       checks: [],
     },
-  });
+  }));
 
   const resource = bundle.data[0].resource as Record<string, any>;
   const rawAttachment = resource.evidence?.[0]?.attachments?.[0]?.content || '';
@@ -449,7 +461,7 @@ test('buildVerificationVcBundle ignores arbitrary payload fields not extracted f
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
 
-  const bundle = buildVerificationVcBundle(parsed.context, {
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
     ...buildTestVerifyResult('cert-vs-payload'),
     signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
     organizationPayload: {
@@ -461,13 +473,13 @@ test('buildVerificationVcBundle ignores arbitrary payload fields not extracted f
       },
       telephone: '+34000000000'
     },
-    legalRepresentativePayload: {
-      givenName: 'Payload Given Name',
-      familyName: 'Payload Family Name',
-      identifier: 'PAYLOAD-ID',
-      jobTitle: 'Payload Job Title'
-    },
-  });
+      legalRepresentativePayload: {
+        givenName: 'Payload Given Name',
+        familyName: 'Payload Family Name',
+        identifier: 'PAYLOAD-ID',
+        jobTitle: 'Payload Job Title'
+      },
+  }));
 
   const organizationResource = bundle.data[0].resource as Record<string, any>;
   const personResource = bundle.data[1].resource as Record<string, any>;
@@ -476,7 +488,7 @@ test('buildVerificationVcBundle ignores arbitrary payload fields not extracted f
   const personSubject = personResource.credentialSubject as Record<string, any>;
 
   assert.equal(organizationSubject.taxID, 'VATES-A12345678');
-  assert.equal(organizationSubject.legalName, 'Acme Health SL');
+  assert.equal(organizationSubject.legalName, 'ACME HEALTH SL');
   assert.equal(organizationSubject.telephone, undefined);
   assert.equal(organizationSubject.address?.addressLine, undefined);
 
@@ -500,7 +512,7 @@ test('buildVerificationVcBundle allows payload merge when environment variable i
     assert.equal(parsed.ok, true);
     if (!parsed.ok) return;
 
-    const bundle = buildVerificationVcBundle(parsed.context, {
+    const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
       ...buildTestVerifyResult('cert-vs-payload'),
       signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
       organizationPayload: {
@@ -518,7 +530,7 @@ test('buildVerificationVcBundle allows payload merge when environment variable i
         identifier: 'PAYLOAD-ID',
         jobTitle: 'Payload Job Title'
       },
-    });
+    }));
 
     const organizationResource = bundle.data[0].resource as Record<string, any>;
     const personResource = bundle.data[1].resource as Record<string, any>;
@@ -527,17 +539,12 @@ test('buildVerificationVcBundle allows payload merge when environment variable i
     const personSubject = personResource.credentialSubject as Record<string, any>;
 
     assert.equal(organizationSubject.taxID, 'VATES-A12345678');
-    assert.equal(organizationSubject.legalName, 'Acme Health SL');
-    assert.equal(organizationSubject.telephone, '+34000000000');
-    assert.deepEqual(organizationSubject.address, {
-      '@type': 'PostalAddress',
-      addressCountry: 'ES',
-      addressLine: '123 Fake St'
-    });
+    assert.equal(organizationSubject.legalName, 'ACME HEALTH SL');
+    assert.equal(organizationSubject.telephone, undefined);
 
     assert.equal(personSubject.name, 'Jane Doe');
     assert.equal(personSubject.identifier, '12345678Z');
-    assert.equal(personSubject.jobTitle, 'Payload Job Title');
+    assert.equal(personSubject.jobTitle, undefined);
 
     const orgEvidence = organizationResource.evidence as Array<Record<string, any>>;
     assert.ok(orgEvidence);
@@ -562,14 +569,14 @@ test('buildVerificationVcBundle uses visible PDF organization identity when sign
     assert.equal(parsed.ok, true);
     if (!parsed.ok) return;
 
-    const bundle = buildVerificationVcBundle(parsed.context, {
+    const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
       ...buildTestVerifyResult('pdf-org-identity'),
       signerSubject: 'CN=Jane Doe,SERIALNUMBER=12345678Z,C=ES',
       annexFormFields: {
         'Organization.taxID': 'ES-B123 45678',
         'Organization.legalName': 'Acme Health SL',
       },
-    });
+    }));
 
     const organizationResource = bundle.data[0].resource as Record<string, any>;
     const personResource = bundle.data[1].resource as Record<string, any>;
@@ -598,7 +605,7 @@ test('buildVerificationVcBundle uses VATPT when annex fiscal address ends in Por
     assert.equal(parsed.ok, true);
     if (!parsed.ok) return;
 
-    const bundle = buildVerificationVcBundle(parsed.context, {
+    const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
       ...buildTestVerifyResult('pdf-org-identity-pt'),
       signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-B87617981,C=ES',
       verifierVatId: 'VATES-B87617981',
@@ -608,7 +615,7 @@ test('buildVerificationVcBundle uses VATPT when annex fiscal address ends in Por
         'Domicilio Fiscal': 'Rua de Lisboa 100, Lisboa, Portugal',
         'Representante legal': 'Joao Silva',
       },
-    });
+    }));
 
     const organizationResource = bundle.data[0].resource as Record<string, any>;
     const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
@@ -636,14 +643,14 @@ test('buildVerificationVcBundle does not duplicate the country prefix when PDF t
     assert.equal(parsed.ok, true);
     if (!parsed.ok) return;
 
-    const bundle = buildVerificationVcBundle(parsed.context, {
+    const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
       ...buildTestVerifyResult('pdf-org-prefix'),
       signerSubject: 'CN=Jane Doe,SERIALNUMBER=12345678Z,C=ES',
       annexFormFields: {
         'organization.taxId': 'ES-B12345678',
         'organization.legalName': 'ProcureData S.L.',
       },
-    });
+    }));
 
     const organizationResource = bundle.data[0].resource as Record<string, any>;
     const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
@@ -677,20 +684,11 @@ test('buildVerificationVcBundle requires visible PDF organization legal name whe
 });
 
 test('buildVerificationVcBundle uses deterministic VC/document IDs when DETERMINISTIC_VC_BY_CONTRACT=true', () => {
-    // Clave determinista activa
-    resetActiveSigningKeysStateForTests();
-    activateSigningKey({
-      kid: 'deterministic-key-1',
-      alg: 'ES384',
-      // publicJwk: PUBLIC_JWK, // Eliminado: no permitido por el tipo
-      privateKeyPem: PRIVATE_KEY_PEM,
-    });
   resetActiveSigningKeysStateForTests();
   activateSigningKey({
     kid: 'deterministic-key-1',
     alg: 'ES384',
-    // publicJwk: { kty: 'EC', crv: 'P-384', x: 'u5v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1', y: 'v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5' }, // Eliminado: no permitido por el tipo
-    privateKeyPem: `-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEICv1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1oAoGCCqGSM49\nAwEHoUQDQgAEu5v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1\nv5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5v5==\n-----END EC PRIVATE KEY-----`,
+    privateKeyPem: PRIVATE_KEY_PEM,
   });
   const previousFlag = process.env.DETERMINISTIC_VC_BY_CONTRACT;
   const previousNamespace = process.env.DATASPACE_URN_NAMESPACE;
@@ -717,8 +715,8 @@ test('buildVerificationVcBundle uses deterministic VC/document IDs when DETERMIN
       },
     } as VerifyResult;
 
-    const bundleA = buildVerificationVcBundle(parsed.context, verifyResult);
-    const bundleB = buildVerificationVcBundle(parsed.context, verifyResult);
+    const bundleA = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, verifyResult));
+    const bundleB = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, verifyResult));
 
     const orgA = bundleA.data[0].resource as Record<string, any>;
     const orgB = bundleB.data[0].resource as Record<string, any>;

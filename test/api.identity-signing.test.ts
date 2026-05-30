@@ -221,7 +221,7 @@ test('buildIcaDidDocument publishes DCAT catalog service when configured', () =>
   const previousDcatServiceEndpoint = process.env.ICA_DCAT_SERVICE_ENDPOINT;
 
   process.env.ICA_DIDCOMM_ISSUER_DID = 'did:web:ica.example.com';
-  process.env.ICA_DCAT_SERVICE_ENDPOINT = '/ica/cds-ES/v1/onehealth/dcat3/catalog/request';
+  process.env.ICA_DCAT_SERVICE_ENDPOINT = '/.well-known/dcat3/catalog';
 
   try {
     const didDocument = buildIcaDidDocument();
@@ -232,7 +232,7 @@ test('buildIcaDidDocument publishes DCAT catalog service when configured', () =>
       String(entry.id || '') === 'did:web:ica.example.com#dsp-catalog-service');
     assert.ok(dcatService);
     assert.equal(dcatService?.type, 'CatalogService');
-    assert.equal(dcatService?.serviceEndpoint, '/ica/cds-ES/v1/onehealth/dcat3/catalog/request');
+    assert.equal(dcatService?.serviceEndpoint, '/.well-known/dcat3/catalog');
   } finally {
     if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
     else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;

@@ -2376,6 +2376,16 @@ export function buildIcaVerifyOpenApiSpec(
                             type: 'DataSpaceIcaVerifyService',
                             serviceEndpoint: '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify',
                           },
+                          {
+                            id: 'did:web:localhost%3A3310#dsp-catalog-service',
+                            type: 'CatalogService',
+                            serviceEndpoint: '/.well-known/dcat3/catalog',
+                          },
+                          {
+                            id: 'did:web:localhost%3A3310#dsp-data-service',
+                            type: 'DataService',
+                            serviceEndpoint: 'https://localhost:3310/.well-known/dspace-version',
+                          },
                         ],
                       },
                     },
@@ -2407,6 +2417,39 @@ export function buildIcaVerifyOpenApiSpec(
                         openapi: '/openapi.json',
                         icaConfiguration: '/.well-known/ica-configuration',
                       },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/.well-known/dcat3/catalog': {
+        get: {
+          tags: ['01 discovery'],
+          summary: 'Get ICA public discovery catalog',
+          description:
+            'Returns the public host/operator discovery catalog. This surface advertises DID-backed services and stays separate from tenant-scoped dataset catalog request routes.',
+          responses: {
+            '200': {
+              description: 'Public discovery catalog.',
+              content: {
+                'application/ld+json': {
+                  schema: DCAT_CATALOG_SCHEMA,
+                  examples: {
+                    discoveryCatalog: {
+                      summary: 'Public discovery catalog response',
+                      value: DCAT_DISCOVERY_CATALOG_EXAMPLE,
+                    },
+                  },
+                },
+                'application/json': {
+                  schema: DCAT_CATALOG_SCHEMA,
+                  examples: {
+                    discoveryCatalog: {
+                      summary: 'Public discovery catalog response',
+                      value: DCAT_DISCOVERY_CATALOG_EXAMPLE,
                     },
                   },
                 },
@@ -3625,39 +3668,6 @@ export function buildIcaVerifyOpenApiSpec(
               content: {
                 'application/json': {
                   schema: { type: 'object', properties: { error: { type: 'string' } } },
-                },
-              },
-            },
-          },
-        },
-      },
-      '/.well-known/dcat3/catalog': {
-        get: {
-          tags: ['10 catalog/dcat3'],
-          summary: 'Read ICA public service autodiscovery catalog',
-          description:
-            'Returns the public ICA host/operator catalog artifact for service autodiscovery. This public surface is distinct from the scoped member dataset catalog request endpoint, which remains the dataset discovery contract.',
-          responses: {
-            '200': {
-              description: 'DCAT v3 catalog.',
-              content: {
-                'application/ld+json': {
-                  schema: DCAT_CATALOG_SCHEMA,
-                  examples: {
-                    dcatCatalog: {
-                      summary: 'DCAT catalog response',
-                      value: DCAT_CATALOG_EXAMPLE,
-                    },
-                  },
-                },
-                'application/json': {
-                  schema: DCAT_CATALOG_SCHEMA,
-                  examples: {
-                    dcatCatalog: {
-                      summary: 'DCAT catalog response',
-                      value: DCAT_CATALOG_EXAMPLE,
-                    },
-                  },
                 },
               },
             },

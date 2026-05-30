@@ -24,12 +24,6 @@ export type ProviderDataset = {
   accessUrl: string;
 };
 
-export type DcatService = {
-  id: string;
-  type: string;
-  endpointUrl: string;
-};
-
 function asObject(value: unknown): JsonObject | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as JsonObject)
