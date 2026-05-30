@@ -82,6 +82,17 @@ const API_KEY_PROVISIONING_ROUTE_REGEX =
 const IDENTITY_AUTH_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/identity\/auth\/(?<action>_(?:dcr|code|token|exchange)(?:-response)?)$/i;
 
+export const WELL_KNOWN_DCAT_DISCOVERY_CATALOG_PATH = '/.well-known/dcat3/catalog';
+export const DCAT_DISCOVERY_CATALOG_ALIAS_PATH = '/dcat3/catalog/dcat.json';
+
+export function buildDcatDiscoveryCatalogPath(): string {
+  return WELL_KNOWN_DCAT_DISCOVERY_CATALOG_PATH;
+}
+
+export function buildDcatDiscoveryCatalogAliasPath(): string {
+  return DCAT_DISCOVERY_CATALOG_ALIAS_PATH;
+}
+
 function asAction(raw: string): VerifyAction {
   return raw.toLowerCase() === '_verify-response' ? '_verify-response' : '_verify';
 }

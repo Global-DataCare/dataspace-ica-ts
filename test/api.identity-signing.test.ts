@@ -241,6 +241,31 @@ test('buildIcaDidDocument publishes DCAT catalog service when configured', () =>
   }
 });
 
+test('buildIcaDidDocument defaults the catalog service to the public well-known catalog artifact', () => {
+  const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
+  const previousDcatServiceEndpoint = process.env.ICA_DCAT_SERVICE_ENDPOINT;
+
+  process.env.ICA_DIDCOMM_ISSUER_DID = 'did:web:ica.example.com';
+  delete process.env.ICA_DCAT_SERVICE_ENDPOINT;
+
+  try {
+    const didDocument = buildIcaDidDocument();
+    const services = Array.isArray(didDocument.service)
+      ? didDocument.service as Array<Record<string, unknown>>
+      : [];
+    const dcatService = services.find((entry) =>
+      String(entry.id || '') === 'did:web:ica.example.com#dsp-catalog-service');
+    assert.ok(dcatService);
+    assert.equal(dcatService?.type, 'CatalogService');
+    assert.equal(dcatService?.serviceEndpoint, '/.well-known/dcat3/catalog');
+  } finally {
+    if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
+    else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
+    if (previousDcatServiceEndpoint === undefined) delete process.env.ICA_DCAT_SERVICE_ENDPOINT;
+    else process.env.ICA_DCAT_SERVICE_ENDPOINT = previousDcatServiceEndpoint;
+  }
+});
+
 test('attachProofToCredential generates invalid detached JWS proof for test resourceType', () => {
   const parsed = parseVerifyRoute('/ica/cds-ES/v1/animal-care/terms/pdf/test-202603051133/_verify');
   assert.ok(parsed);

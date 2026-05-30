@@ -1,3 +1,4 @@
+import type { DidService } from 'gdc-common-utils-ts/models/did';
 import type { DidDocumentRecord, IssuedCredentialRecord } from './verification-collections/types.ts';
 import { multibase58MultihashSha3_256 } from './multihash.ts';
 
@@ -21,6 +22,12 @@ export type ProviderDataset = {
   sector?: string;
   jurisdiction?: string;
   accessUrl: string;
+};
+
+export type DcatService = {
+  id: string;
+  type: string;
+  endpointUrl: string;
 };
 
 function asObject(value: unknown): JsonObject | undefined {
@@ -82,6 +89,16 @@ function didWebToDidJsonUrl(did: string): string {
     return `https://${host}/.well-known/did.json`;
   }
   return `https://${host}/${path}/did.json`;
+}
+
+function resolveRelativeUrl(baseUrl: string, value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  try {
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return trimmed;
+  }
 }
 
 function toDatasetId(publisherDid: string): string {
@@ -271,6 +288,39 @@ export function buildDcatCatalog(catalogBaseUrl: string, datasets: ProviderDatas
         '@type': 'odrl:Set',
       },
     })),
+  };
+}
+
+function toDcatService(catalogBaseUrl: string, service: DidService): JsonObject | null {
+  const serviceId = String(service.id || '').trim();
+  const endpointUrl = resolveRelativeUrl(catalogBaseUrl, String(service.serviceEndpoint || ''));
+  if (!serviceId || !endpointUrl) return null;
+
+  return {
+    '@id': serviceId,
+    '@type': 'dcat:DataService',
+    'dcterms:title': String(service.type || '').trim() || 'Service',
+    'dcterms:identifier': serviceId,
+    'dcat:endpointURL': endpointUrl,
+  };
+}
+
+export function buildDcatDiscoveryCatalog(
+  catalogBaseUrl: string,
+  services: DidService[],
+): JsonObject {
+  return {
+    '@context': {
+      dcat: 'https://www.w3.org/ns/dcat#',
+      dcterms: 'http://purl.org/dc/terms/',
+      odrl: 'http://www.w3.org/ns/odrl/2/',
+    },
+    '@id': catalogBaseUrl,
+    '@type': 'dcat:Catalog',
+    'dcat:dataset': [],
+    'dcat:service': services
+      .map((service) => toDcatService(catalogBaseUrl, service))
+      .filter((service): service is JsonObject => Boolean(service)),
   };
 }
 

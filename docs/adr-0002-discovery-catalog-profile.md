@@ -31,9 +31,11 @@ ICA adopts the following discovery/catalog baseline:
 
 1. The operational baseline is `DCAT3`.
 2. `/.well-known/dcat3/catalog` is an ICA platform convention for public
-   operational discovery.
-3. `HealthDCAT-AP Release 7` is not the default ICA interoperability baseline.
-4. `HealthDCAT-AP Release 7` may be documented or added later as an optional
+   service autodiscovery.
+3. `/{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request` and
+   `.../datasets/{id}` remain the scoped member dataset catalog surface.
+4. `HealthDCAT-AP Release 7` is not the default ICA interoperability baseline.
+5. `HealthDCAT-AP Release 7` may be documented or added later as an optional
    dataset profile for domains that explicitly need it.
 
 ## Consequences

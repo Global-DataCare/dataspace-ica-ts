@@ -371,6 +371,21 @@ const DCAT_CATALOG_SCHEMA = {
       type: 'array',
       items: DCAT_DATASET_SCHEMA,
     },
+    'dcat:service': {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['@id', '@type', 'dcterms:title', 'dcat:endpointURL'],
+        properties: {
+          '@id': { type: 'string' },
+          '@type': { type: 'string', enum: ['dcat:DataService'] },
+          'dcterms:title': { type: 'string' },
+          'dcterms:identifier': { type: 'string' },
+          'dcat:endpointURL': { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+    },
   },
   additionalProperties: false,
 } as const;
@@ -413,6 +428,40 @@ const DCAT_CATALOG_EXAMPLE = {
   '@id': 'https://ica.example.org/ica/cds-ES/v1/onehealth/dcat3/catalog',
   '@type': 'dcat:Catalog',
   'dcat:dataset': [DCAT_DATASET_EXAMPLE],
+} as const;
+
+const DCAT_DISCOVERY_CATALOG_EXAMPLE = {
+  '@context': {
+    dcat: 'https://www.w3.org/ns/dcat#',
+    dcterms: 'http://purl.org/dc/terms/',
+    odrl: 'http://www.w3.org/ns/odrl/2/',
+  },
+  '@id': 'https://ica.example.org/.well-known/dcat3/catalog',
+  '@type': 'dcat:Catalog',
+  'dcat:dataset': [],
+  'dcat:service': [
+    {
+      '@id': 'did:web:localhost%3A3310#verify-terms',
+      '@type': 'dcat:DataService',
+      'dcterms:title': 'DataSpaceIcaVerifyService',
+      'dcterms:identifier': 'did:web:localhost%3A3310#verify-terms',
+      'dcat:endpointURL': 'https://ica.example.org/ica/cds-ES/v1/{sector}/terms/pdf/{resourceType}/_verify',
+    },
+    {
+      '@id': 'did:web:localhost%3A3310#dsp-catalog-service',
+      '@type': 'dcat:DataService',
+      'dcterms:title': 'CatalogService',
+      'dcterms:identifier': 'did:web:localhost%3A3310#dsp-catalog-service',
+      'dcat:endpointURL': 'https://ica.example.org/.well-known/dcat3/catalog',
+    },
+    {
+      '@id': 'did:web:localhost%3A3310#dsp-data-service',
+      '@type': 'dcat:DataService',
+      'dcterms:title': 'DataService',
+      'dcterms:identifier': 'did:web:localhost%3A3310#dsp-data-service',
+      'dcat:endpointURL': 'https://localhost:3310/.well-known/dspace-version',
+    },
+  ],
 } as const;
 
 const DDO_DATASET_ENTRY_SCHEMA = {
@@ -2289,7 +2338,7 @@ export function buildIcaVerifyOpenApiSpec(
                           {
                             id: 'did:web:localhost%3A3310#dsp-catalog-service',
                             type: 'CatalogService',
-                            serviceEndpoint: '/ica/cds-{jurisdiction}/v1/onehealth/dcat3/catalog/request',
+                            serviceEndpoint: '/.well-known/dcat3/catalog',
                           },
                           {
                             id: 'did:web:localhost%3A3310#dsp-data-service',
@@ -3576,6 +3625,39 @@ export function buildIcaVerifyOpenApiSpec(
               content: {
                 'application/json': {
                   schema: { type: 'object', properties: { error: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/.well-known/dcat3/catalog': {
+        get: {
+          tags: ['10 catalog/dcat3'],
+          summary: 'Read ICA public service autodiscovery catalog',
+          description:
+            'Returns the public ICA host/operator catalog artifact for service autodiscovery. This public surface is distinct from the scoped member dataset catalog request endpoint, which remains the dataset discovery contract.',
+          responses: {
+            '200': {
+              description: 'DCAT v3 catalog.',
+              content: {
+                'application/ld+json': {
+                  schema: DCAT_CATALOG_SCHEMA,
+                  examples: {
+                    dcatCatalog: {
+                      summary: 'DCAT catalog response',
+                      value: DCAT_CATALOG_EXAMPLE,
+                    },
+                  },
+                },
+                'application/json': {
+                  schema: DCAT_CATALOG_SCHEMA,
+                  examples: {
+                    dcatCatalog: {
+                      summary: 'DCAT catalog response',
+                      value: DCAT_CATALOG_EXAMPLE,
+                    },
+                  },
                 },
               },
             },

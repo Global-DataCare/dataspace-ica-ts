@@ -142,14 +142,7 @@ function resolveVerifyServiceEndpoint(): string {
 function resolveDcatCatalogServiceEndpoint(): string {
   const explicit = (process.env.ICA_DCAT_SERVICE_ENDPOINT || process.env.ICA_DCAT_CATALOG_SERVICE_ENDPOINT || '').trim();
   if (explicit) return explicit;
-
-  const tenantId = resolveTenantIdForApiPaths();
-  const jurisdiction = (process.env.ICA_DCAT_JURISDICTION || process.env.ICA_SELF_CONTROLLER_JURISDICTION || '')
-    .trim()
-    .toUpperCase();
-  const sector = (process.env.ICA_DCAT_SECTOR || 'onehealth').trim().toLowerCase();
-  const jurisdictionToken = jurisdiction || '{jurisdiction}';
-  return `/${tenantId}/cds-${jurisdictionToken}/v1/${sector}/dcat3/catalog/request`;
+  return '/.well-known/dcat3/catalog';
 }
 
 function resolveDidWebAuthority(did: string): string {

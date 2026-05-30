@@ -437,6 +437,7 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.equal(openApi.tags.some((tag) => tag.name.endsWith('network/policies')), true);
   assert.equal(openApi.tags.some((tag) => tag.name.endsWith('catalog/dcat3')), true);
   assert.equal(openApi.tags.some((tag) => tag.name.endsWith('entity/did/document')), true);
+  assert.ok(openApi.paths['/.well-known/dcat3/catalog']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request']);

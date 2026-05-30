@@ -5,6 +5,8 @@ import { InMemoryActivationJobStore } from './activation-job-store.ts';
 import { InMemoryEntityJobStore } from './entity-job-store.ts';
 import {
   buildRotateResponseLocation,
+  buildDcatDiscoveryCatalogPath,
+  buildDcatDiscoveryCatalogAliasPath,
   parseActivateRoute,
   parseAddEvidenceRoute,
   parseCreateDidDocumentRoute,
@@ -66,6 +68,7 @@ import { SpacesRegistry } from './tools/spaces-registry.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from './tools/didcomm-message.ts';
 import {
   buildDcatCatalog,
+  buildDcatDiscoveryCatalog,
   buildProviderDatasetsFromIssuedCredentials,
   filterProviderDatasetsByActiveDidDocuments,
   filterProviderDatasets,
@@ -600,6 +603,18 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
     return filterProviderDatasetsByActiveDidDocuments(datasets, didDocuments, route);
   }
 
+  function resolveLocalCatalogRouteScope(): {
+    tenantId: string;
+    jurisdiction: string;
+    sector: string;
+  } {
+    return {
+      tenantId: (process.env.ICA_LOCAL_TENANT_ID || 'ica').trim() || 'ica',
+      jurisdiction: ((process.env.ICA_DCAT_JURISDICTION || process.env.ICA_SELF_CONTROLLER_JURISDICTION || 'ES').trim() || 'ES').toUpperCase(),
+      sector: ((process.env.ICA_DCAT_SECTOR || process.env.ICA_SELF_CONTROLLER_SECTOR || 'onehealth').trim() || 'onehealth').toLowerCase(),
+    };
+  }
+
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const requestUrl = new URL(req.url || '/', 'http://localhost');
@@ -687,6 +702,8 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
               'POST /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request',
             dcatCatalogDataset:
               'GET /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}',
+            hostServiceAutodiscoveryCatalog:
+              'GET /.well-known/dcat3/catalog',
             dcatCatalogDdoRequest:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/ddo/request',
             dcatCatalogDdoDataset:
@@ -777,6 +794,21 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           openapi: '/openapi.json',
           icaConfiguration: '/.well-known/ica-configuration',
         });
+        return;
+      }
+
+      if (pathname === buildDcatDiscoveryCatalogPath() || pathname === buildDcatDiscoveryCatalogAliasPath()) {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const didDocument = buildIcaDidDocument(req);
+        const catalogBaseUrl = `${resolveRequestOrigin(req)}${buildDcatDiscoveryCatalogPath()}`;
+        const catalog = buildDcatDiscoveryCatalog(
+          catalogBaseUrl,
+          Array.isArray(didDocument.service) ? didDocument.service : [],
+        );
+        sendJson(res, 200, catalog, prefersJsonLd(req) ? 'application/ld+json' : 'application/json');
         return;
       }
 

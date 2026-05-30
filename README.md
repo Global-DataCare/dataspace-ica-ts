@@ -988,6 +988,7 @@ Discovery:
 
 - `GET /`
 - `GET /.well-known/dcat3/catalog`
+  - public ICA host/operator service autodiscovery catalog
 - `GET /openapi.json`
 - `GET /api-docs`
 - `GET /.well-known/did.json`
@@ -1033,6 +1034,7 @@ Network evidence and credentials:
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/network/spaces/_replace`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/request`
 - `GET /{tenantId}/cds-{jurisdiction}/v1/{sector}/dcat3/catalog/datasets/{id}`
+  - scoped member dataset catalog discovery
 
 ## Catalog Profile Scope
 
