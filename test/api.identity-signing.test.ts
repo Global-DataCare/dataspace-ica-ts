@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseVerifyRoute } from '../src/api/path.ts';
@@ -295,7 +295,7 @@ test('bootstrapSelfSigningKey auto-generates local ES384 key in self mode', asyn
   resetActiveSigningKeysStateForTests();
 
   try {
-    const first = bootstrapSelfSigningKey();
+    const first = await bootstrapSelfSigningKey();
     assert.equal(first.enabled, true);
     assert.equal(first.activated, true);
     assert.equal(first.alg, 'ES384');
@@ -308,7 +308,7 @@ test('bootstrapSelfSigningKey auto-generates local ES384 key in self mode', asyn
     const preferred = getPreferredSigningKey(undefined);
     assert.equal(preferred, undefined);
 
-    const second = bootstrapSelfSigningKey();
+    const second = await bootstrapSelfSigningKey();
     assert.equal(second.enabled, true);
     assert.equal(second.activated, false);
     assert.equal(second.source, 'env-signing-key');
@@ -413,7 +413,7 @@ test('bootstrapSelfSigningKey derives deterministic kid from ICA_VC_PRIVATE_KEY_
   try {
     process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = '17:8:1:48:ica-seed-salt-v1';
     resetActiveSigningKeysStateForTests();
-    const first = bootstrapSelfSigningKey();
+    const first = await bootstrapSelfSigningKey();
     assert.equal(first.enabled, true);
     assert.equal(first.activated, true);
     assert.equal(first.alg, 'ES384');
@@ -424,7 +424,7 @@ test('bootstrapSelfSigningKey derives deterministic kid from ICA_VC_PRIVATE_KEY_
     process.env.ICA_VC_SIGNING_ALG = '';
     process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = '17:8:1:48:ica-seed-salt-v1';
     resetActiveSigningKeysStateForTests();
-    const second = bootstrapSelfSigningKey();
+    const second = await bootstrapSelfSigningKey();
     assert.equal(second.enabled, true);
     assert.equal(second.activated, true);
     assert.equal(second.alg, 'ES384');
@@ -454,7 +454,7 @@ test('bootstrapSelfSigningKey derives deterministic kid from ICA_VC_PRIVATE_KEY_
   }
 });
 
-test('bootstrapSelfSigningKey honors ICA_VC_PRIVATE_KEY_SEED_SALT override', () => {
+test('bootstrapSelfSigningKey honors ICA_VC_PRIVATE_KEY_SEED_SALT override', async () => {
   const previousSelfSign = process.env.ICA_SELF_SIGN_TEST;
   const previousSelfSignIfMissing = process.env.ICA_SELF_SIGN_IF_MISSING;
   const previousSeedPassphrase = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE;
@@ -477,7 +477,7 @@ test('bootstrapSelfSigningKey honors ICA_VC_PRIVATE_KEY_SEED_SALT override', () 
 
   try {
     resetActiveSigningKeysStateForTests();
-    const first = bootstrapSelfSigningKey();
+    const first = await bootstrapSelfSigningKey();
     assert.equal(first.enabled, true);
     assert.equal(first.activated, true);
     assert.ok(first.kid);
@@ -488,7 +488,7 @@ test('bootstrapSelfSigningKey honors ICA_VC_PRIVATE_KEY_SEED_SALT override', () 
     process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = '17:8:1:48:legacy-salt-ignored';
     process.env.ICA_VC_PRIVATE_KEY_SEED_SALT = 'seed-salt-override-v1';
     resetActiveSigningKeysStateForTests();
-    const second = bootstrapSelfSigningKey();
+    const second = await bootstrapSelfSigningKey();
     assert.equal(second.enabled, true);
     assert.equal(second.activated, true);
     assert.ok(second.kid);
@@ -514,6 +514,184 @@ test('bootstrapSelfSigningKey honors ICA_VC_PRIVATE_KEY_SEED_SALT override', () 
     else process.env.ICA_VC_SIGNING_KEY_ID = previousSigningKeyId;
     if (previousSigningAlg === undefined) delete process.env.ICA_VC_SIGNING_ALG;
     else process.env.ICA_VC_SIGNING_ALG = previousSigningAlg;
+  }
+});
+
+test('bootstrapSelfSigningKey uses ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE with highest priority', async () => {
+  const previousSelfSign = process.env.ICA_SELF_SIGN_TEST;
+  const previousSelfSignIfMissing = process.env.ICA_SELF_SIGN_IF_MISSING;
+  const previousSeedPassphrase = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE;
+  const previousSeedPassphraseFile = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+  const previousSeedPassphraseSecretEnv = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV;
+  const previousSeedConfig = process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG;
+  const previousSeedAlg = process.env.ICA_VC_SEED_ALG;
+  const previousSigningPem = process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+  const previousSigningKeyId = process.env.ICA_VC_SIGNING_KEY_ID;
+  const previousSigningAlg = process.env.ICA_VC_SIGNING_ALG;
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'ica-seed-passphrase-file-'));
+  const passphraseFile = path.join(tempDir, 'vc-seed-passphrase.txt');
+
+  process.env.ICA_SELF_SIGN_TEST = 'true';
+  process.env.ICA_SELF_SIGN_IF_MISSING = 'true';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE = 'legacy-passphrase-should-not-win';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV = 'ICA_VC_PRIVATE_KEY_SEED_SECRET_TEST';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_SECRET_TEST = 'secret-env-passphrase-should-not-win';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = '17:8:1:48:ica-seed-salt-v1';
+  process.env.ICA_VC_SEED_ALG = 'ES384';
+  delete process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+  delete process.env.ICA_VC_SIGNING_KEY_ID;
+  delete process.env.ICA_VC_SIGNING_ALG;
+
+  try {
+    await writeFile(passphraseFile, 'file-priority-passphrase\n', 'utf8');
+    process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE = passphraseFile;
+    resetActiveSigningKeysStateForTests();
+    const fromFile = await bootstrapSelfSigningKey();
+
+    process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM = '';
+    process.env.ICA_VC_SIGNING_KEY_ID = '';
+    process.env.ICA_VC_SIGNING_ALG = '';
+    delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+    delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV;
+    process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE = 'file-priority-passphrase';
+    resetActiveSigningKeysStateForTests();
+    const directSame = await bootstrapSelfSigningKey();
+
+    assert.equal(fromFile.source, 'generated-seed');
+    assert.equal(directSame.source, 'generated-seed');
+    assert.equal(fromFile.kid, directSame.kid);
+  } finally {
+    resetActiveSigningKeysStateForTests();
+    await rm(tempDir, { recursive: true, force: true });
+    delete process.env.ICA_VC_PRIVATE_KEY_SEED_SECRET_TEST;
+    if (previousSelfSign === undefined) delete process.env.ICA_SELF_SIGN_TEST;
+    else process.env.ICA_SELF_SIGN_TEST = previousSelfSign;
+    if (previousSelfSignIfMissing === undefined) delete process.env.ICA_SELF_SIGN_IF_MISSING;
+    else process.env.ICA_SELF_SIGN_IF_MISSING = previousSelfSignIfMissing;
+    if (previousSeedPassphrase === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE = previousSeedPassphrase;
+    if (previousSeedPassphraseFile === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE = previousSeedPassphraseFile;
+    if (previousSeedPassphraseSecretEnv === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV = previousSeedPassphraseSecretEnv;
+    if (previousSeedConfig === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = previousSeedConfig;
+    if (previousSeedAlg === undefined) delete process.env.ICA_VC_SEED_ALG;
+    else process.env.ICA_VC_SEED_ALG = previousSeedAlg;
+    if (previousSigningPem === undefined) delete process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+    else process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM = previousSigningPem;
+    if (previousSigningKeyId === undefined) delete process.env.ICA_VC_SIGNING_KEY_ID;
+    else process.env.ICA_VC_SIGNING_KEY_ID = previousSigningKeyId;
+    if (previousSigningAlg === undefined) delete process.env.ICA_VC_SIGNING_ALG;
+    else process.env.ICA_VC_SIGNING_ALG = previousSigningAlg;
+  }
+});
+
+test('bootstrapSelfSigningKey uses ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV when file is not configured', async () => {
+  const previousSelfSign = process.env.ICA_SELF_SIGN_TEST;
+  const previousSelfSignIfMissing = process.env.ICA_SELF_SIGN_IF_MISSING;
+  const previousSeedPassphrase = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE;
+  const previousSeedPassphraseFile = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+  const previousSeedPassphraseSecretEnv = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV;
+  const previousSeedConfig = process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG;
+  const previousSeedAlg = process.env.ICA_VC_SEED_ALG;
+  const previousSigningPem = process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+  const previousSigningKeyId = process.env.ICA_VC_SIGNING_KEY_ID;
+  const previousSigningAlg = process.env.ICA_VC_SIGNING_ALG;
+
+  process.env.ICA_SELF_SIGN_TEST = 'true';
+  process.env.ICA_SELF_SIGN_IF_MISSING = 'true';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE = 'legacy-passphrase-should-not-win';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV = 'ICA_VC_PRIVATE_KEY_SEED_SECRET_TEST';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_SECRET_TEST = 'secret-env-passphrase-win';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = '17:8:1:48:ica-seed-salt-v1';
+  process.env.ICA_VC_SEED_ALG = 'ES384';
+  delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+  delete process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+  delete process.env.ICA_VC_SIGNING_KEY_ID;
+  delete process.env.ICA_VC_SIGNING_ALG;
+
+  try {
+    resetActiveSigningKeysStateForTests();
+    const fromSecretEnv = await bootstrapSelfSigningKey();
+
+    process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM = '';
+    process.env.ICA_VC_SIGNING_KEY_ID = '';
+    process.env.ICA_VC_SIGNING_ALG = '';
+    delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV;
+    process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE = 'secret-env-passphrase-win';
+    resetActiveSigningKeysStateForTests();
+    const directSame = await bootstrapSelfSigningKey();
+
+    assert.equal(fromSecretEnv.source, 'generated-seed');
+    assert.equal(directSame.source, 'generated-seed');
+    assert.equal(fromSecretEnv.kid, directSame.kid);
+  } finally {
+    resetActiveSigningKeysStateForTests();
+    delete process.env.ICA_VC_PRIVATE_KEY_SEED_SECRET_TEST;
+    if (previousSelfSign === undefined) delete process.env.ICA_SELF_SIGN_TEST;
+    else process.env.ICA_SELF_SIGN_TEST = previousSelfSign;
+    if (previousSelfSignIfMissing === undefined) delete process.env.ICA_SELF_SIGN_IF_MISSING;
+    else process.env.ICA_SELF_SIGN_IF_MISSING = previousSelfSignIfMissing;
+    if (previousSeedPassphrase === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE = previousSeedPassphrase;
+    if (previousSeedPassphraseFile === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE = previousSeedPassphraseFile;
+    if (previousSeedPassphraseSecretEnv === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV = previousSeedPassphraseSecretEnv;
+    if (previousSeedConfig === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = previousSeedConfig;
+    if (previousSeedAlg === undefined) delete process.env.ICA_VC_SEED_ALG;
+    else process.env.ICA_VC_SEED_ALG = previousSeedAlg;
+    if (previousSigningPem === undefined) delete process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+    else process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM = previousSigningPem;
+    if (previousSigningKeyId === undefined) delete process.env.ICA_VC_SIGNING_KEY_ID;
+    else process.env.ICA_VC_SIGNING_KEY_ID = previousSigningKeyId;
+    if (previousSigningAlg === undefined) delete process.env.ICA_VC_SIGNING_ALG;
+    else process.env.ICA_VC_SIGNING_ALG = previousSigningAlg;
+  }
+});
+
+test('bootstrapSelfSigningKey fails fast when ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV points to missing var', async () => {
+  const previousSelfSign = process.env.ICA_SELF_SIGN_TEST;
+  const previousSelfSignIfMissing = process.env.ICA_SELF_SIGN_IF_MISSING;
+  const previousSeedPassphrase = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE;
+  const previousSeedPassphraseFile = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+  const previousSeedPassphraseSecretEnv = process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV;
+  const previousSeedConfig = process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG;
+  const previousSeedAlg = process.env.ICA_VC_SEED_ALG;
+
+  process.env.ICA_SELF_SIGN_TEST = 'true';
+  process.env.ICA_SELF_SIGN_IF_MISSING = 'true';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = '17:8:1:48:ica-seed-salt-v1';
+  process.env.ICA_VC_SEED_ALG = 'ES384';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV = 'ICA_VC_PRIVATE_KEY_SEED_MISSING_TEST';
+  delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+  delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE;
+  delete process.env.ICA_VC_PRIVATE_KEY_SEED_MISSING_TEST;
+
+  try {
+    resetActiveSigningKeysStateForTests();
+    await assert.rejects(
+      () => bootstrapSelfSigningKey(),
+      /ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV points to "ICA_VC_PRIVATE_KEY_SEED_MISSING_TEST"/,
+    );
+  } finally {
+    resetActiveSigningKeysStateForTests();
+    if (previousSelfSign === undefined) delete process.env.ICA_SELF_SIGN_TEST;
+    else process.env.ICA_SELF_SIGN_TEST = previousSelfSign;
+    if (previousSelfSignIfMissing === undefined) delete process.env.ICA_SELF_SIGN_IF_MISSING;
+    else process.env.ICA_SELF_SIGN_IF_MISSING = previousSelfSignIfMissing;
+    if (previousSeedPassphrase === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE = previousSeedPassphrase;
+    if (previousSeedPassphraseFile === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE = previousSeedPassphraseFile;
+    if (previousSeedPassphraseSecretEnv === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV = previousSeedPassphraseSecretEnv;
+    if (previousSeedConfig === undefined) delete process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG;
+    else process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = previousSeedConfig;
+    if (previousSeedAlg === undefined) delete process.env.ICA_VC_SEED_ALG;
+    else process.env.ICA_VC_SEED_ALG = previousSeedAlg;
   }
 });
 

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Storage } from '@google-cloud/storage';
+import { ConfidentialStorageService } from './confidential-storage.ts';
 import type {
   AuditDocumentReference,
   VerifyResult,
@@ -14,6 +15,7 @@ export type AuditStorageMode = 'none' | 'filesystem' | 'gcs';
 export type AuditDocumentStorageConfig = {
   mode: AuditStorageMode;
   required: boolean;
+  confidentialStorageEnabled: boolean;
   attachmentUrlPattern: string;
   filesystemDirectory: string;
   gcsBucketName?: string;
@@ -26,6 +28,9 @@ type AuditStoreInput = {
   result: VerifyResult;
   objectId: string;
   objectKey: string;
+  payloadBytes: Buffer<ArrayBufferLike>;
+  payloadContentType: string;
+  encryptionKeyId?: string;
 };
 
 interface AuditStorageAdapter {
@@ -110,15 +115,16 @@ class FileSystemAuditStorageAdapter implements AuditStorageAdapter {
   async store(input: AuditStoreInput): Promise<Pick<AuditDocumentReference, 'provider' | 'objectKey' | 'objectId' | 'bucket' | 'contentType' | 'sizeBytes' | 'storedAt'>> {
     const fullPath = path.join(this.baseDirectory, input.objectKey);
     await mkdir(path.dirname(fullPath), { recursive: true });
-    await writeFile(fullPath, input.submission.pdfBytes, { mode: 0o600 });
+    await writeFile(fullPath, input.payloadBytes, { mode: 0o600 });
 
     return {
       provider: 'filesystem',
       objectId: input.objectId,
       objectKey: input.objectKey,
-      contentType: input.submission.contentType || 'application/pdf',
-      sizeBytes: input.submission.pdfBytes.length,
+      contentType: input.payloadContentType,
+      sizeBytes: input.payloadBytes.length,
       storedAt: new Date().toISOString(),
+      ...(input.encryptionKeyId ? { encryptionKeyId: input.encryptionKeyId } : {}),
     };
   }
 }
@@ -134,9 +140,9 @@ class GcsAuditStorageAdapter implements AuditStorageAdapter {
 
   async store(input: AuditStoreInput): Promise<Pick<AuditDocumentReference, 'provider' | 'objectKey' | 'objectId' | 'bucket' | 'contentType' | 'sizeBytes' | 'storedAt'>> {
     const file = this.storage.bucket(this.bucketName).file(input.objectKey);
-    await file.save(input.submission.pdfBytes, {
+    await file.save(input.payloadBytes, {
       resumable: false,
-      contentType: input.submission.contentType || 'application/pdf',
+      contentType: input.payloadContentType,
       metadata: {
         metadata: {
           thid: input.submission.thid,
@@ -145,6 +151,7 @@ class GcsAuditStorageAdapter implements AuditStorageAdapter {
           sector: input.route.sector,
           digestSha3_384: input.result.digest?.signedPdfHex || '',
           digestSha256: input.result.hashes?.signedPdfSha256Hex || createHash('sha256').update(input.submission.pdfBytes).digest('hex'),
+          ...(input.encryptionKeyId ? { encryptionKeyId: input.encryptionKeyId } : {}),
         },
       },
     });
@@ -154,9 +161,10 @@ class GcsAuditStorageAdapter implements AuditStorageAdapter {
       bucket: this.bucketName,
       objectId: input.objectId,
       objectKey: input.objectKey,
-      contentType: input.submission.contentType || 'application/pdf',
-      sizeBytes: input.submission.pdfBytes.length,
+      contentType: input.payloadContentType,
+      sizeBytes: input.payloadBytes.length,
       storedAt: new Date().toISOString(),
+      ...(input.encryptionKeyId ? { encryptionKeyId: input.encryptionKeyId } : {}),
     };
   }
 }
@@ -167,9 +175,10 @@ class NoopAuditStorageAdapter implements AuditStorageAdapter {
       provider: 'filesystem',
       objectId: input.objectId,
       objectKey: input.objectKey,
-      contentType: input.submission.contentType || 'application/pdf',
-      sizeBytes: input.submission.pdfBytes.length,
+      contentType: input.payloadContentType,
+      sizeBytes: input.payloadBytes.length,
       storedAt: new Date().toISOString(),
+      ...(input.encryptionKeyId ? { encryptionKeyId: input.encryptionKeyId } : {}),
     };
   }
 }
@@ -197,6 +206,7 @@ export function loadAuditDocumentStorageConfigFromEnv(): AuditDocumentStorageCon
   return {
     mode,
     required,
+    confidentialStorageEnabled: parseBoolean(process.env.ICA_CONFIDENTIAL_STORAGE_ENABLED, false),
     attachmentUrlPattern: (process.env.ICA_AUDIT_ATTACHMENT_URL_PATTERN || 'urn:uuid:{objectId}').trim(),
     filesystemDirectory: path.resolve(process.env.ICA_AUDIT_STORAGE_FS_DIR || path.join('data', 'audit-pdf')),
     gcsBucketName: (process.env.GCS_BUCKET_NAME || '').trim() || undefined,
@@ -207,10 +217,15 @@ export function loadAuditDocumentStorageConfigFromEnv(): AuditDocumentStorageCon
 export class AuditDocumentStorageService {
   private readonly config: AuditDocumentStorageConfig;
   private readonly adapter: AuditStorageAdapter;
+  private readonly confidentialStorage: ConfidentialStorageService;
 
   constructor(config: AuditDocumentStorageConfig = loadAuditDocumentStorageConfigFromEnv()) {
     this.config = config;
     this.adapter = createAuditStorageAdapter(config);
+    this.confidentialStorage = new ConfidentialStorageService({
+      enabled: config.confidentialStorageEnabled,
+      keyVersion: (process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION || 'v1').trim() || 'v1',
+    });
   }
 
   async persistVerifiedPdf(
@@ -223,7 +238,13 @@ export class AuditDocumentStorageService {
     }
 
     const objectId = randomUUID();
-    const objectKey = buildObjectKey(route, result, objectId, this.config.gcsObjectPrefix);
+    const protectedPayload = await this.confidentialStorage.protectBinary(
+      route.tenantId,
+      'audit-pdf',
+      submission.pdfBytes,
+    );
+    const objectKeyBase = buildObjectKey(route, result, objectId, this.config.gcsObjectPrefix);
+    const objectKey = this.confidentialStorage.isEnabled() ? `${objectKeyBase}.enc` : objectKeyBase;
 
     try {
       const stored = await this.adapter.store({
@@ -232,6 +253,9 @@ export class AuditDocumentStorageService {
         result,
         objectId,
         objectKey,
+        payloadBytes: protectedPayload.ciphertext,
+        payloadContentType: protectedPayload.contentType,
+        ...(protectedPayload.keyId ? { encryptionKeyId: protectedPayload.keyId } : {}),
       });
 
       const referenceBase: AuditDocumentReference = {
@@ -248,7 +272,7 @@ export class AuditDocumentStorageService {
         auditDocument: reference,
         notes: [
           ...result.notes,
-          `Audit document stored (${reference.provider}) as ${reference.objectKey}.`,
+          `Audit document stored (${reference.provider}) as ${reference.objectKey}${protectedPayload.keyId ? ` [encrypted kid=${protectedPayload.keyId}]` : ''}.`,
         ],
       };
     } catch (error: unknown) {

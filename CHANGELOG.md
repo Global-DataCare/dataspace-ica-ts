@@ -1,5 +1,54 @@
 # Changelog
 
+# 0.8.7 - 2026-03-30
+
+- Fixed `_verify` submit-time 502 behind ingress by deferring heavy visible text/OCR extraction to async job execution (post-`202`) when `ICA_VERIFY_DEFER_VISIBLE_EXTRACTION=true`.
+- Added `ICA_VERIFY_DEFER_VISIBLE_EXTRACTION=true` to ProcureData deploy/local env files so fallback extraction still runs, but no longer blocks `_verify` request response.
+
+# 0.8.6 - 2026-03-30
+
+- Fixed OCR runtime temp directory for cloud deployments:
+  - OCR workspace now uses OS temp path (`/tmp`) instead of `process.cwd()/artifacts`.
+  - Prevents `EACCES: permission denied, mkdir '/app/artifacts'` in containerized environments.
+
+# 0.8.5 - 2026-03-30
+
+- `_verify` failed-job diagnostics now always include annex extraction summary, even when no fields/warnings were extracted (`fieldCount=0`, `warningCount=0`), to make cloud troubleshooting deterministic.
+
+# 0.8.4 - 2026-03-30
+
+- Adjusted OIDC4IDA `document.check_details` semantics for promoter-only / non-cryptographic representative extraction flows:
+  - `vcrypt` is now emitted only when electronic signature evidence is present for that credential.
+  - In fallback representative flows (identity inferred from document/form/OCR without person-signature cryptographic validation), evidence now includes `vdig` only.
+
+# 0.8.3 - 2026-03-30
+
+- Added extended failure diagnostics to `_verify-response`:
+  - Includes annex extraction debug summary (`fieldCount`, detected `organization.taxID/legalName`, key list).
+  - Includes annex extraction warnings (pdf-parse/OCR/tesseract/pdftoppm warnings) as OperationOutcome entries.
+  - Includes annex debug object inside failed `TermsVerification` content for easier troubleshooting.
+- Verification request manager now persists annex debug context into failed jobs so cloud failures expose why verifier-only fallback did not activate.
+- Added tests for annex diagnostics propagation in failed verification responses.
+
+# 0.8.2 - 2026-03-30
+
+- Improved PDF signature extraction robustness:
+  - `_verify` now ignores malformed CMS payloads from non-primary signatures when at least one valid signature can still be processed.
+  - This fixes mixed-signature PDFs where one signer is valid (promoter/verifier) and other signatures are broken.
+- Improved `_verify-response` terminal behavior:
+  - Internal post-verification persistence errors now return a terminal failed DIDComm bundle instead of a bare transport error.
+  - Jobs are explicitly marked as failed so polling always has a recoverable terminal state.
+- Added tests covering terminal failed payload behavior on persistence failures.
+- Added code TODO for multi-natural-person signer handling (multiple legal representatives in one contract).
+
+# 0.8.0 - 2026-03-30
+
+- Fixed verifier/partner counterparty rules:
+  - Partner signature is no longer mandatory in two-signature flows.
+  - Partner enforcement now applies to three-actor scenarios (verifier + partner + counterpart).
+  - Kept verifier-list fallback behavior for verifier-only signature sets.
+- Updated verification tests for the new partner enforcement semantics.
+
 # 0.7.8 - 2026-03-30
 
 - Improved `_verify` resilience:

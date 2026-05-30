@@ -66,8 +66,21 @@ export interface RevocationDebugInfo {
   checks: RevocationDebugCheck[];
 }
 
+export interface AnnexExtractionDebugInfo {
+  fieldCount: number;
+  fieldKeys: string[];
+  warningCount: number;
+  warnings: string[];
+  hasOrganizationTaxId: boolean;
+  hasOrganizationLegalName: boolean;
+  organizationTaxId?: string;
+  organizationLegalName?: string;
+  personName?: string;
+}
+
 export interface VerificationErrorDetails {
   revocation?: RevocationDebugInfo;
+  annex?: AnnexExtractionDebugInfo;
 }
 
 export interface VerifyRouteContext {
@@ -511,6 +524,7 @@ export interface AuditDocumentReference {
   contentType: string;
   sizeBytes: number;
   storedAt: string;
+  encryptionKeyId?: string;
 }
 
 export interface VerifyResult {

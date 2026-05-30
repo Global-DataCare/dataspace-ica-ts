@@ -386,12 +386,24 @@ test('assertVerifierCounterpartySignaturePair handles verification partners corr
     );
   });
 
+  assert.doesNotThrow(() => {
+    assertVerifierCounterpartySignaturePair(
+      [
+        { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
+        { signatureIndex: 1, signerVatId: 'VATES-MEMBER' },
+      ],
+      ['VATES-VERIFIER'],
+      ['VATES-PARTNER'],
+    );
+  });
+
   assert.throws(
     () => {
       assertVerifierCounterpartySignaturePair(
         [
           { signatureIndex: 0, signerVatId: 'VATES-VERIFIER' },
-          { signatureIndex: 1, signerVatId: 'VATES-MEMBER' },
+          { signatureIndex: 1, signerVatId: 'VATES-ANOTHER-MEMBER' },
+          { signatureIndex: 2, signerVatId: 'VATES-MEMBER' },
         ],
         ['VATES-VERIFIER'],
         ['VATES-PARTNER'],
@@ -1071,6 +1083,7 @@ test('AuditDocumentStorageService stores verified pdf using filesystem adapter',
     const service = new AuditDocumentStorageService({
       mode: 'filesystem',
       required: true,
+      confidentialStorageEnabled: false,
       attachmentUrlPattern: 'urn:uuid:{objectId}',
       filesystemDirectory: tempDir,
       gcsObjectPrefix: 'ica-audit',
@@ -1094,6 +1107,60 @@ test('AuditDocumentStorageService stores verified pdf using filesystem adapter',
     assert.deepEqual(stored, submission.pdfBytes);
     assert.equal(enriched.notes.some((note) => note.includes('Audit document stored')), true);
   } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('AuditDocumentStorageService encrypts audit pdf when confidential storage is enabled', async () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const previousSeed = process.env.ICA_CONFIDENTIAL_STORAGE_KEY_SEED;
+  const previousVersion = process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION;
+  process.env.ICA_CONFIDENTIAL_STORAGE_KEY_SEED = 'test-confidential-storage-seed-v1';
+  process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION = 'v1';
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'ica-audit-storage-enc-test-'));
+
+  try {
+    const service = new AuditDocumentStorageService({
+      mode: 'filesystem',
+      required: true,
+      confidentialStorageEnabled: true,
+      attachmentUrlPattern: 'urn:uuid:{objectId}',
+      filesystemDirectory: tempDir,
+      gcsObjectPrefix: 'ica-audit',
+    });
+    const submission: VerifySubmission = {
+      thid: 'thid-audit-storage-enc-001',
+      pdfBytes: Buffer.from('%PDF-1.4\nfake-pdf\n%%EOF\n', 'latin1'),
+      contentType: 'application/pdf',
+    };
+
+    const enriched = await service.persistVerifiedPdf(
+      parsed.context,
+      submission,
+      buildTestVerifyResult('audit-storage-encrypted'),
+    );
+
+    assert.equal(enriched.auditDocument?.provider, 'filesystem');
+    assert.match(String(enriched.auditDocument?.objectKey || ''), /\.enc$/);
+    assert.equal(enriched.auditDocument?.contentType, 'application/vnd.globaldatacare.encrypted+json');
+    assert.equal(typeof enriched.auditDocument?.encryptionKeyId, 'string');
+    assert.ok(enriched.auditDocument?.encryptionKeyId);
+
+    const stored = await readFile(path.join(tempDir, enriched.auditDocument?.objectKey || ''));
+    assert.notDeepEqual(stored, submission.pdfBytes);
+    const parsedEnvelope = JSON.parse(stored.toString('utf8')) as Record<string, unknown>;
+    assert.equal(parsedEnvelope.alg, 'A256GCM');
+    assert.equal(typeof parsedEnvelope.ciphertext, 'string');
+    assert.equal(enriched.notes.some((note) => note.includes('[encrypted kid=')), true);
+  } finally {
+    if (previousSeed === undefined) delete process.env.ICA_CONFIDENTIAL_STORAGE_KEY_SEED;
+    else process.env.ICA_CONFIDENTIAL_STORAGE_KEY_SEED = previousSeed;
+    if (previousVersion === undefined) delete process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION;
+    else process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION = previousVersion;
     await rm(tempDir, { recursive: true, force: true });
   }
 });
@@ -1543,6 +1610,58 @@ test('VerifyResponseManager hides version meta in response by default and can ex
   }
 });
 
+test('VerifyResponseManager returns terminal failed payload when persistence throws', async () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  resetVerificationCollectionsMemStateForTests();
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const store = new InMemoryVerificationJobStore(60);
+    store.enqueue('thid-persist-error-001', parsed.context);
+    store.markSucceeded('thid-persist-error-001', {
+      ...buildTestVerifyResult('persist-error'),
+      signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, CN=Signer',
+    });
+
+    const collectionsService = {
+      async listIssuedCredentials() {
+        return [];
+      },
+      async persistFromVerificationBundle() {
+        throw new Error('Persistence backend unavailable');
+      },
+    } as unknown as VerificationCollectionsService;
+
+    const manager = new VerifyResponseManager(store, collectionsService);
+    const req = { method: 'POST', headers: {} } as unknown as IncomingMessage;
+    const outcome = await manager.poll(
+      parsed.context,
+      req,
+      new URL('http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-persist-error-001'),
+    );
+    assert.equal(outcome.type, 'failed');
+    if (outcome.type !== 'failed') return;
+
+    const payload = outcome.payload as Record<string, any>;
+    assert.equal(payload.body?.data?.[0]?.response?.status, '500');
+    assert.match(
+      payload.body?.issues?.issue?.[0]?.diagnostics || '',
+      /Persistence backend unavailable/,
+    );
+
+    const job = store.get('thid-persist-error-001');
+    assert.equal(job?.status, 'failed');
+    assert.match(job?.error || '', /Persistence backend unavailable/);
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
 test('VerifyRequestManager rejects non-DIDComm content types', async () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
@@ -1660,6 +1779,11 @@ test('VerifyRequestManager sanitizes verbose openssl chain diagnostics before st
     job?.error,
     'Signature 1 failed: Certificate chain validation failed: unable to get local issuer certificate.',
   );
+  assert.equal(typeof job?.errorDetails?.annex?.fieldCount, 'number');
+  assert.equal(job?.errorDetails?.annex?.hasOrganizationTaxId, false);
+  assert.equal(job?.errorDetails?.annex?.hasOrganizationLegalName, false);
+  assert.equal((job?.errorDetails?.annex?.warningCount || 0) >= 1, true);
+  assert.equal((job?.errorDetails?.annex?.warnings?.[0] || '').length > 0, true);
 });
 
 test(
@@ -1929,6 +2053,14 @@ test('buildVerificationVcBundle (promoter-only signature): emits Person VC when 
     const personEvidence = personResource.evidence as Array<Record<string, any>>;
     assert.deepEqual(organizationEvidence.map((entry) => entry.type), ['document']);
     assert.deepEqual(personEvidence.map((entry) => entry.type), ['document']);
+    assert.deepEqual(
+      (organizationEvidence[0]?.check_details || []).map((entry: Record<string, unknown>) => entry.check_method),
+      ['vdig'],
+    );
+    assert.deepEqual(
+      (personEvidence[0]?.check_details || []).map((entry: Record<string, unknown>) => entry.check_method),
+      ['vdig'],
+    );
     const personSubject = personResource.credentialSubject as Record<string, any>;
     assert.equal(personSubject.name, 'Client Legal Representative');
     assert.equal(personSubject.identifier, '12345678Z');
@@ -2125,6 +2257,54 @@ test('buildVerificationVcBundle (promoter-only signature): can build Organizatio
     assert.equal(organizationSubject.taxID, 'VATES-B12345678');
     assert.equal(organizationSubject.legalName, 'ACME PAYLOAD ORGANIZATION');
     assert.deepEqual(organizationEvidence.map((entry) => entry.type), ['document']);
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    if (previousAllowPayload === undefined) delete process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+    else process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = previousAllowPayload;
+    if (previousDisableStrictIdentity === undefined) delete process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+    else process.env.DISABLE_STRICT_IDENTITY_SOURCE = previousDisableStrictIdentity;
+  }
+});
+
+test('buildVerificationVcBundle (promoter-only signature): accepts SDK unsecureForm* payload aliases when strict identity source mode is disabled', () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  const previousAllowPayload = process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS;
+  const previousDisableStrictIdentity = process.env.DISABLE_STRICT_IDENTITY_SOURCE;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  process.env.ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS = 'true';
+  process.env.DISABLE_STRICT_IDENTITY_SOURCE = 'true';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const result: VerifyResult = {
+      ...buildTestVerifyResult('promoter-only-payload-unsecure-aliases'),
+      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-TSTVERIFIERA1,C=ES',
+      verifierVatId: 'VATES-TSTVERIFIERA1',
+      annexFormFields: {},
+      organizationPayload: {
+        unsecureFormOrganizationTaxId: 'ES-B12345678',
+        unsecureFormOrganizationLegalName: 'Acme Payload Organization',
+      },
+      legalRepresentativePayload: {
+        unsecureFormLegalRepresentativeName: 'Jane Payload',
+        unsecureFormLegalRepresentativeIdentifier: '99999999X',
+      },
+    };
+
+    const bundle = buildVerificationVcBundle(parsed.context, result);
+    const organizationResource = bundle.data[0]?.resource as Record<string, any>;
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    assert.equal(organizationSubject.taxID, 'VATES-B12345678');
+    assert.equal(organizationSubject.legalName, 'ACME PAYLOAD ORGANIZATION');
+
+    const personResource = bundle.data[1]?.resource as Record<string, any>;
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+    assert.equal(personSubject.name, 'Jane Payload');
+    assert.equal(personSubject.identifier, '99999999X');
   } finally {
     if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
     else process.env.DID_WEB_DOMAIN = previousDidWebDomain;

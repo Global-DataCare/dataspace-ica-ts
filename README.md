@@ -72,6 +72,33 @@ echo 'ICA_SELF_SIGN_TEST_VALID_PROOF=true' >> .env.deploy.dev
 npm run dev
 ```
 
+Safer seed-passphrase options (to avoid sharing plaintext in `.env`):
+
+```bash
+# Option 1: mounted secret file (highest priority)
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE=/var/run/secrets/ica/vc-seed-passphrase' >> .env.deploy.dev
+
+# Option 2: indirection to another env var (middle priority)
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV=ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET' >> .env.deploy.dev
+export ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET='replace-with-strong-passphrase'
+
+# Legacy fallback (lowest priority)
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE=replace-with-strong-passphrase' >> .env.deploy.dev
+```
+
+Cloud Secret Manager mode with encrypted runtime cache:
+
+```bash
+echo 'ICA_HOST_SECRET_PROVIDER=gcp-secret-manager' >> .env.deploy.dev
+echo 'ICA_GCP_PROJECT_ID=<gcp-project-id>' >> .env.deploy.dev
+echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_GCP_SECRET=ica-vc-private-key-seed-passphrase' >> .env.deploy.dev
+echo 'ICA_HOST_SECRET_CACHE_TTL_SECONDS=300' >> .env.deploy.dev
+echo 'ICA_HOST_SECRET_STALE_IF_ERROR_SECONDS=21600' >> .env.deploy.dev
+```
+
+Resolution order is: `*_FILE` -> `*_SECRET_ENV` -> direct env -> GCP Secret Manager.
+When GCP refresh fails, ICA serves stale cached value until `ICA_HOST_SECRET_STALE_IF_ERROR_SECONDS` is exceeded.
+
 In production, disable self-sign mode and use `_activate` (or `ICA_VC_SIGNING_PRIVATE_KEY_PEM`) with CA-issued material.
 
 If the ICA already has an active `ES384` signing key with `x5c`, `_create` can issue the organization leaf certificate from that active ICA key and return inline `x5c` for the organization's primary `publicKeyJwk`.
@@ -1197,6 +1224,14 @@ VC signing:
 - `ICA_SELF_SIGN_TEST_ALG` (`ES384` default)
 - `ICA_SELF_SIGN_TEST_KEY_ID` (optional forced `kid` for bootstrap key)
 - `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE` (optional deterministic seed passphrase)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE` (optional secret file path; highest priority)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV` (optional env-var indirection; middle priority)
+- `ICA_HOST_SECRET_PROVIDER` (`gcp-secret-manager` to enable cloud provider mode)
+- `ICA_GCP_PROJECT_ID` (project used when secret is configured by short name)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_GCP_SECRET` (secret short/full resource name)
+- `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_GCP_SECRET_VERSION` (optional full version resource; overrides short name)
+- `ICA_HOST_SECRET_CACHE_TTL_SECONDS` (fresh cache TTL, default `300`)
+- `ICA_HOST_SECRET_STALE_IF_ERROR_SECONDS` (stale cache budget when cloud fetch fails, default `21600`)
 - `ICA_VC_PRIVATE_KEY_SEED_CONFIG` (optional scrypt config: `<log2N>:<r>:<p>:<dkLen>` or JSON)
 - `ICA_VC_PRIVATE_KEY_SEED_SALT` (optional salt override, recommended separate from config)
 - `ICA_VC_SEED_ALG` (`ES384` | `ES256K` for seed-derived key)
@@ -1235,6 +1270,12 @@ Audit document persistence:
 - `ICA_AUDIT_STORAGE_FS_DIR`
 - `GCS_BUCKET_NAME`
 - `ICA_AUDIT_STORAGE_GCS_PREFIX`
+- `ICA_CONFIDENTIAL_STORAGE_ENABLED` (optional; when `true`, audit PDFs are encrypted at rest)
+- `ICA_CONFIDENTIAL_STORAGE_KEY_SEED` (optional explicit seed; if absent ICA reuses resolved host seed passphrase)
+- `ICA_CONFIDENTIAL_STORAGE_KEY_VERSION` (optional key version label, default `v1`)
+
+Architecture decision note:
+- Confidential storage scope and GW alignment criteria are documented in [`docs/adr-0001-confidential-storage-model.md`](./docs/adr-0001-confidential-storage-model.md).
 
 Verification collections persistence:
 

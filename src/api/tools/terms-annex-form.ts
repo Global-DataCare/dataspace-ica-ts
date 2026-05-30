@@ -1,6 +1,9 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 type PdfRgbColor = { type: 'RGB'; red: number; green: number; blue: number };
 
@@ -58,6 +61,7 @@ let pdfParseModule: { PDFParse?: new (input: { data: Buffer<ArrayBufferLike> }) 
   getText: () => Promise<{ text?: string }>;
   destroy?: () => Promise<void> | void;
 } } | null = null;
+const execFileAsync = promisify(execFile);
 
 async function loadPdfLib(): Promise<PdfLibModule> {
   if (!pdfLibModule) {
@@ -189,9 +193,12 @@ function normalizeVisibleTaxToken(raw: string, jurisdiction: string): string {
   const upper = (raw || '').trim().toUpperCase().replace(/[\s-]+/g, '');
   if (!upper) return '';
   const withoutVates = upper.startsWith('VATES') ? upper.slice(5) : upper;
-  const withoutVat = withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates;
+  const withoutVat = /^VAT[A-Z]{2}/.test(withoutVates) ? withoutVates.slice(5) : (withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates);
   const country = jurisdiction.toUpperCase();
-  return withoutVat.startsWith(country) ? withoutVat.slice(country.length) : withoutVat;
+  if (withoutVat.startsWith(country)) return withoutVat.slice(country.length);
+  if (withoutVat.startsWith('ES')) return withoutVat.slice(2);
+  if (withoutVat.startsWith('PT')) return withoutVat.slice(2);
+  return withoutVat;
 }
 
 function looksLikeLegalName(value: string): boolean {
@@ -203,11 +210,195 @@ function looksLikeLegalName(value: string): boolean {
   return true;
 }
 
+function stripLegalNameLabel(value: string): string {
+  return normalizeSpacing(String(value || '').replace(/^(?:Razon|Raz[oó]n|Raz[aã]o)\s+Social\s*[:\-]?\s*/i, ''));
+}
+
+function normalizeSpacing(value: string): string {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeForMatching(value: string): string {
+  return normalizeSpacing(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function detectDomicileCountryFromLines(lines: string[]): 'PT' | 'ES' | undefined {
+  const normalizedLines = lines.map((line) => normalizeForMatching(line));
+  const hasDomicilioLabel = normalizedLines.some((line) =>
+    line.includes('domicilio fiscal') || line.includes('domiciliofiscal') || line.includes('fiscal address'),
+  );
+  if (hasDomicilioLabel) {
+    if (normalizedLines.some((line) => /\bportugal\b/.test(line) || /\bportuguesa\b/.test(line))) return 'PT';
+    if (normalizedLines.some((line) => /\bespana\b/.test(line) || /\bspain\b/.test(line))) return 'ES';
+  }
+
+  for (const line of lines) {
+    const normalized = normalizeForMatching(line);
+    if (!normalized.includes('domicilio fiscal') && !normalized.includes('domiciliofiscal') && !normalized.includes('fiscal address')) {
+      continue;
+    }
+    if (/\bportugal\b/.test(normalized) || /\bportuguesa\b/.test(normalized)) return 'PT';
+    if (/\bespana\b|\bspain\b|\bes\b/.test(normalized)) return 'ES';
+  }
+  return undefined;
+}
+
+export function parseOrganizationIdentityFromPlainText(
+  text: string,
+  verifierVatList: string[],
+  jurisdiction = 'ES',
+): { taxID?: string; legalName?: string; legalRepresentativeName?: string; warnings: string[] } {
+  const warnings: string[] = [];
+  const normalizedVerifierVatSet = new Set(
+    verifierVatList
+      .map((entry) => normalizeVerifierVatToken(entry))
+      .filter(Boolean),
+  );
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => normalizeSpacing(line))
+    .filter(Boolean);
+  if (!lines.length) return { warnings };
+
+  const domicileCountry = detectDomicileCountryFromLines(lines);
+  const effectiveJurisdiction = domicileCountry || jurisdiction.toUpperCase();
+  const taxLabelRegex = /\b(?:CIF|NIF|NIPC|VAT|TAX\s*ID|TAX\s*NUMBER)\b\s*[:\-]?\s*([A-Z0-9][A-Z0-9\s-]{5,24})/gi;
+  const candidateTokens: Array<{ token: string; line: string; lineIndex: number }> = [];
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    let match: RegExpExecArray | null;
+    while ((match = taxLabelRegex.exec(line)) !== null) {
+      const token = normalizeVisibleTaxToken(match[1] || '', effectiveJurisdiction);
+      if (!token) continue;
+      candidateTokens.push({ token, line, lineIndex });
+    }
+    taxLabelRegex.lastIndex = 0;
+  }
+
+  const filteredCandidates = candidateTokens.filter((entry) => !normalizedVerifierVatSet.has(entry.token));
+  const selectedCandidate = filteredCandidates[0];
+  let taxID: string | undefined;
+  let legalName: string | undefined;
+  if (selectedCandidate) {
+    taxID = `VAT${effectiveJurisdiction}-${selectedCandidate.token}`;
+    const legalNameFromLabel = stripLegalNameLabel(
+      selectedCandidate.line.split(/\b(?:CIF|NIF|NIPC|VAT|TAX\s*ID|TAX\s*NUMBER)\b/i)[0]?.trim() || '',
+    );
+    if (legalNameFromLabel && looksLikeLegalName(legalNameFromLabel)) {
+      legalName = legalNameFromLabel;
+    }
+    if (!legalName && selectedCandidate.lineIndex > 0) {
+      const previousLine = stripLegalNameLabel(lines[selectedCandidate.lineIndex - 1]);
+      if (looksLikeLegalName(previousLine)) {
+        legalName = previousLine;
+      }
+    }
+  } else if (candidateTokens.length) {
+    warnings.push('Visible tax IDs found in PDF text belong only to verifier VATs; counterparty tax ID not detected.');
+  }
+
+  if (!legalName) {
+    for (const line of lines) {
+      const match = /\b(?:Razon|Raz[oó]n|Raz[aã]o)\s+Social\b\s*[:\-]?\s*(.+)$/i.exec(line);
+      if (!match) continue;
+      const candidate = stripLegalNameLabel(match[1] || '');
+      if (looksLikeLegalName(candidate)) {
+        legalName = candidate;
+        break;
+      }
+    }
+  }
+
+  let legalRepresentativeName: string | undefined;
+  for (const line of lines) {
+    const match = /\b(?:Representante\s+legal|Legal\s+representative)\b\s*[:\-]?\s*(.+)$/i.exec(line);
+    if (!match) continue;
+    const candidate = normalizeSpacing(match[1] || '');
+    if (candidate && !/^(?:n\/a|na|none)$/i.test(candidate)) {
+      legalRepresentativeName = candidate;
+      break;
+    }
+  }
+
+  return {
+    ...(taxID ? { taxID } : {}),
+    ...(legalName ? { legalName } : {}),
+    ...(legalRepresentativeName ? { legalRepresentativeName } : {}),
+    warnings,
+  };
+}
+
+async function runCommand(command: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; message: string }> {
+  try {
+    const { stdout } = await execFileAsync(command, args, { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+    return { ok: true, stdout };
+  } catch (error: unknown) {
+    return { ok: false, message: (error as Error)?.message || String(error) };
+  }
+}
+
+async function extractVisibleTextWithOcr(pdfBytes: Buffer<ArrayBufferLike>): Promise<{ text: string; warnings: string[] }> {
+  const warnings: string[] = [];
+  const workspaceRoot = path.join(tmpdir(), 'ica-ocr-tmp');
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await mkdtemp(path.join(workspaceRoot, 'run-'));
+  try {
+    const pdfPath = path.join(workspace, 'document.pdf');
+    await writeFile(pdfPath, pdfBytes);
+
+    const pdftoppmCheck = await runCommand('pdftoppm', ['-v']);
+    if (!pdftoppmCheck.ok) {
+      warnings.push('OCR skipped: pdftoppm is not available in runtime.');
+      return { text: '', warnings };
+    }
+    const tesseractCheck = await runCommand('tesseract', ['--version']);
+    if (!tesseractCheck.ok) {
+      warnings.push('OCR skipped: tesseract is not available in runtime.');
+      return { text: '', warnings };
+    }
+
+    const imagePrefix = path.join(workspace, 'page');
+    const render = await runCommand('pdftoppm', ['-png', pdfPath, imagePrefix]);
+    if (!render.ok) {
+      warnings.push(`OCR skipped: pdftoppm failed (${render.message}).`);
+      return { text: '', warnings };
+    }
+
+    const pngFiles = (await readdir(workspace))
+      .filter((name) => /^page-\d+\.png$/i.test(name))
+      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+    if (!pngFiles.length) {
+      warnings.push('OCR skipped: no PNG pages were rendered from PDF.');
+      return { text: '', warnings };
+    }
+
+    const maxPages = Number.parseInt(process.env.ICA_OCR_MAX_PAGES || '3', 10);
+    const selectedFiles = pngFiles.slice(0, Number.isFinite(maxPages) && maxPages > 0 ? maxPages : 3);
+    const chunks: string[] = [];
+    for (const fileName of selectedFiles) {
+      const imagePath = path.join(workspace, fileName);
+      const ocr = await runCommand('tesseract', [imagePath, 'stdout', '-l', 'spa+por+eng', '--psm', '6']);
+      if (!ocr.ok) {
+        warnings.push(`OCR warning on ${fileName}: ${ocr.message}`);
+        continue;
+      }
+      chunks.push(ocr.stdout);
+    }
+    return { text: chunks.join('\n').trim(), warnings };
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+}
+
 export async function extractVisibleOrganizationIdentityFromPdfText(
   pdfBytes: Buffer<ArrayBufferLike>,
   verifierVatList: string[],
   jurisdiction = 'ES',
-): Promise<{ taxID?: string; legalName?: string; warnings: string[] }> {
+): Promise<{ taxID?: string; legalName?: string; legalRepresentativeName?: string; warnings: string[] }> {
   const warnings: string[] = [];
   try {
     const module = await loadPdfParseModule();
@@ -225,59 +416,28 @@ export async function extractVisibleOrganizationIdentityFromPdfText(
     } finally {
       try { await parser.destroy?.(); } catch { /* no-op */ }
     }
-    if (!text.trim()) return { warnings };
-
-    const normalizedVerifierVatSet = new Set(
-      verifierVatList
-        .map((entry) => normalizeVerifierVatToken(entry))
-        .filter(Boolean),
-    );
-
-    const lines = text
-      .split(/\r?\n/)
-      .map((line) => line.replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
-
-    const labelRegex = /\b(?:CIF|NIF|VAT|TAX\s*ID|TAX\s*NUMBER)\b\s*[:\-]?\s*([A-Z0-9][A-Z0-9\s-]{5,24})/gi;
-    const candidateTokens: Array<{ token: string; line: string; lineIndex: number }> = [];
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-      const line = lines[lineIndex];
-      let match: RegExpExecArray | null;
-      while ((match = labelRegex.exec(line)) !== null) {
-        const token = normalizeVisibleTaxToken(match[1] || '', jurisdiction);
-        if (!token) continue;
-        candidateTokens.push({ token, line, lineIndex });
-      }
-      labelRegex.lastIndex = 0;
+    const parsedFromVisibleText = parseOrganizationIdentityFromPlainText(text, verifierVatList, jurisdiction);
+    warnings.push(...parsedFromVisibleText.warnings);
+    if (parsedFromVisibleText.taxID || parsedFromVisibleText.legalName || parsedFromVisibleText.legalRepresentativeName) {
+      return {
+        ...(parsedFromVisibleText.taxID ? { taxID: parsedFromVisibleText.taxID } : {}),
+        ...(parsedFromVisibleText.legalName ? { legalName: parsedFromVisibleText.legalName } : {}),
+        ...(parsedFromVisibleText.legalRepresentativeName
+          ? { legalRepresentativeName: parsedFromVisibleText.legalRepresentativeName }
+          : {}),
+        warnings,
+      };
     }
 
-    const filteredCandidates = candidateTokens.filter((entry) => !normalizedVerifierVatSet.has(entry.token));
-    const selectedCandidate = filteredCandidates[0];
-    if (!selectedCandidate) {
-      if (candidateTokens.length) {
-        warnings.push('Visible tax IDs found in PDF text belong only to verifier VATs; counterparty tax ID not detected.');
-      }
-      return { warnings };
-    }
-
-    const selectedToken = selectedCandidate.token;
-    const taxID = `VAT${jurisdiction.toUpperCase()}-${selectedToken}`;
-
-    let legalName: string | undefined;
-    const onSameLine = selectedCandidate.line.split(/\b(?:CIF|NIF|VAT|TAX\s*ID|TAX\s*NUMBER)\b/i)[0]?.trim();
-    if (onSameLine && looksLikeLegalName(onSameLine)) {
-      legalName = onSameLine;
-    }
-    if (!legalName && selectedCandidate.lineIndex > 0) {
-      const previousLine = lines[selectedCandidate.lineIndex - 1];
-      if (looksLikeLegalName(previousLine)) {
-        legalName = previousLine;
-      }
-    }
-
+    const ocr = await extractVisibleTextWithOcr(pdfBytes);
+    warnings.push(...ocr.warnings);
+    if (!ocr.text) return { warnings };
+    const parsedFromOcr = parseOrganizationIdentityFromPlainText(ocr.text, verifierVatList, jurisdiction);
+    warnings.push(...parsedFromOcr.warnings);
     return {
-      taxID,
-      ...(legalName ? { legalName } : {}),
+      ...(parsedFromOcr.taxID ? { taxID: parsedFromOcr.taxID } : {}),
+      ...(parsedFromOcr.legalName ? { legalName: parsedFromOcr.legalName } : {}),
+      ...(parsedFromOcr.legalRepresentativeName ? { legalRepresentativeName: parsedFromOcr.legalRepresentativeName } : {}),
       warnings,
     };
   } catch (error: unknown) {

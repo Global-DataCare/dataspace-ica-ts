@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   TERMS_ANNEX_FIELD_SPECS,
+  parseOrganizationIdentityFromPlainText,
   extractTermsAnnexFormFieldsFromPdf,
   generateTermsAnnexPdf,
 } from '../src/api/tools/terms-annex-form.ts';
@@ -157,3 +158,17 @@ test(
     );
   },
 );
+
+test('parseOrganizationIdentityFromPlainText maps VATPT when Domicilio Fiscal ends in Portugal and extracts Representante legal', () => {
+  const text = [
+    'Razón Social: FALCK PORTUGAL, S.A.',
+    'CIF: 507910626',
+    'Domicilio Fiscal: Rua de Lisboa 100, 1000-100 Lisboa, Portugal',
+    'Representante legal: Joao Silva',
+  ].join('\n');
+
+  const parsed = parseOrganizationIdentityFromPlainText(text, ['VATES-B87617981'], 'ES');
+  assert.equal(parsed.taxID, 'VATPT-507910626');
+  assert.equal(parsed.legalName, 'FALCK PORTUGAL, S.A.');
+  assert.equal(parsed.legalRepresentativeName, 'Joao Silva');
+});

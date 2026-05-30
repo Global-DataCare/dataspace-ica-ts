@@ -15,7 +15,6 @@ import type {
   VerifyResult,
   VerifyRouteContext,
 } from '../types.ts';
-import { getConfiguredSupportedJurisdictionIds } from '../supported-jurisdictions.ts';
 import { attachProofToCredential, resolveVcIssuerDid } from './ica-identity.ts';
 import { buildOrganizationDidFromTaxId } from './organization-did.ts';
 import {
@@ -88,6 +87,10 @@ function parseOrganizationTaxIdFromPayload(
   const raw = firstDefined(
     typeof payload?.taxID === 'string' ? payload.taxID : undefined,
     typeof payload?.taxId === 'string' ? payload.taxId : undefined,
+    typeof payload?.unsecureFormOrganizationTaxID === 'string' ? payload.unsecureFormOrganizationTaxID : undefined,
+    typeof payload?.unsecureFormOrganizationTaxId === 'string' ? payload.unsecureFormOrganizationTaxId : undefined,
+    typeof payload?.unsecureFormOrganizationCif === 'string' ? payload.unsecureFormOrganizationCif : undefined,
+    typeof payload?.unsecureFormOrganizationNif === 'string' ? payload.unsecureFormOrganizationNif : undefined,
   );
   if (!raw) return undefined;
   return normalizePdfOrganizationTaxId(raw, resolveDefaultOrganizationJurisdiction(route));
@@ -98,8 +101,29 @@ function parseOrganizationLegalNameFromPayload(payload: Record<string, unknown> 
     typeof payload?.legalName === 'string' ? payload.legalName : undefined,
     typeof payload?.name === 'string' ? payload.name : undefined,
     typeof payload?.companyName === 'string' ? payload.companyName : undefined,
+    typeof payload?.unsecureFormOrganizationLegalName === 'string' ? payload.unsecureFormOrganizationLegalName : undefined,
+    typeof payload?.unsecureFormOrganizationName === 'string' ? payload.unsecureFormOrganizationName : undefined,
   );
   return normalizePdfOrganizationLegalName(raw);
+}
+
+function parseLegalRepresentativeNameFromPayload(payload: Record<string, unknown> | undefined): string | undefined {
+  return firstDefined(
+    typeof payload?.name === 'string' ? payload.name : undefined,
+    typeof payload?.fullName === 'string' ? payload.fullName : undefined,
+    typeof payload?.unsecureFormLegalRepresentativeName === 'string' ? payload.unsecureFormLegalRepresentativeName : undefined,
+  );
+}
+
+function parseLegalRepresentativeIdentifierFromPayload(payload: Record<string, unknown> | undefined): string | undefined {
+  return firstDefined(
+    typeof payload?.identifier === 'string' ? payload.identifier : undefined,
+    typeof payload?.id === 'string' ? payload.id : undefined,
+    typeof payload?.serialNumber === 'string' ? payload.serialNumber : undefined,
+    typeof payload?.unsecureFormLegalRepresentativeIdentifier === 'string'
+      ? payload.unsecureFormLegalRepresentativeIdentifier
+      : undefined,
+  );
 }
 
 const ANNEX_ORGANIZATION_ADDITIONAL_TYPE = 'organization.additionalType';
@@ -220,6 +244,15 @@ function normalizePdfOrganizationTaxId(
   const jurisdiction = defaultJurisdiction.trim().toUpperCase();
   if (!normalizedValue || !jurisdiction) return undefined;
 
+  const explicitVatCountryMatch = /^VAT([A-Z]{2})[\s-]*([A-Z0-9]+)$/i.exec(normalizedValue.replace(/\s+/g, ''));
+  if (explicitVatCountryMatch) {
+    return `VAT${explicitVatCountryMatch[1].toUpperCase()}-${explicitVatCountryMatch[2].toUpperCase()}`;
+  }
+  const explicitVatesMatch = /^VATES[\s-]*([A-Z0-9]+)$/i.exec(normalizedValue.replace(/\s+/g, ''));
+  if (explicitVatesMatch) {
+    return `VATES-${explicitVatesMatch[1].toUpperCase()}`;
+  }
+
   const vatPrefix = `VAT${jurisdiction}`;
   const withoutVatPrefix = normalizedValue.startsWith(vatPrefix)
     ? normalizedValue.slice(vatPrefix.length)
@@ -234,14 +267,26 @@ function normalizePdfOrganizationTaxId(
 }
 
 function resolveDefaultOrganizationJurisdiction(route: VerifyRouteContext): string {
-  return getConfiguredSupportedJurisdictionIds()[0] || route.jurisdiction.toUpperCase();
+  return route.jurisdiction.toUpperCase();
+}
+
+function resolveOrganizationTaxCountryFromPdf(route: VerifyRouteContext, result: VerifyResult): string {
+  for (const [key, value] of Object.entries(result.annexFormFields || {})) {
+    const normalizedKey = normalizeForMatching(key);
+    if (!normalizedKey.includes('domicilio fiscal') && !normalizedKey.includes('fiscal address')) continue;
+    const normalizedValue = normalizeForMatching(String(value || ''));
+    if (/\bportugal\b/.test(normalizedValue) || /\bportuguesa\b/.test(normalizedValue)) {
+      return 'PT';
+    }
+  }
+  return resolveDefaultOrganizationJurisdiction(route);
 }
 
 function extractOrganizationIdentityFromPdf(
   route: VerifyRouteContext,
   result: VerifyResult,
 ): { taxID?: string; legalName?: string; hasTaxIdField: boolean; hasLegalNameField: boolean } {
-  const jurisdiction = resolveDefaultOrganizationJurisdiction(route);
+  const jurisdiction = resolveOrganizationTaxCountryFromPdf(route, result);
   const rawTaxId = getFirstAnnexField(result, ANNEX_ORGANIZATION_VISIBLE_TAX_ID_FIELDS);
   const rawLegalName = getFirstAnnexField(result, ANNEX_ORGANIZATION_VISIBLE_LEGAL_NAME_FIELDS);
   return {
@@ -612,12 +657,16 @@ function buildOidc4IdaEvidence(
         txn: documentTxnRef,
         time: documentEvidenceTimestamp,
       },
-      {
-        check_method: 'vcrypt',
-        organization: verifierOrganizationDid,
-        txn: documentTxnRef,
-        time: documentEvidenceTimestamp,
-      },
+      ...(includeElectronicSignatureEvidence
+        ? [
+            {
+              check_method: 'vcrypt' as const,
+              organization: verifierOrganizationDid,
+              txn: documentTxnRef,
+              time: documentEvidenceTimestamp,
+            },
+          ]
+        : []),
     ],
     attachments: {
       digest: {
@@ -754,6 +803,8 @@ export function buildVerificationVcBundle(
   const certificateOrganizationTaxId = parseOrganizationTaxId(subjectDn);
   const payloadOrganizationTaxId = parseOrganizationTaxIdFromPayload(route, result.organizationPayload);
   const payloadOrganizationLegalName = parseOrganizationLegalNameFromPayload(result.organizationPayload);
+  const payloadRepresentativeName = parseLegalRepresentativeNameFromPayload(result.legalRepresentativePayload);
+  const payloadRepresentativeIdentifier = parseLegalRepresentativeIdentifierFromPayload(result.legalRepresentativePayload);
   const signerOrganizationTaxId = parseOrganizationTaxId(subjectDn);
   const signerBelongsToVerifier = Boolean(
     normalizeVatId(signerOrganizationTaxId)
@@ -814,12 +865,19 @@ export function buildVerificationVcBundle(
   const personGivenNameFromForm = getFirstAnnexField(result, ANNEX_PERSON_GIVEN_NAME_FIELDS);
   const personFamilyNameFromForm = getFirstAnnexField(result, ANNEX_PERSON_FAMILY_NAME_FIELDS);
   const representativeNameFromCertificate = [givenName, familyName].filter(Boolean).join(' ') || subjectDn.CN;
+  // TODO(multi-representatives): when OCR/form extraction finds more than one natural person
+  // signer (for example, two partners signing), emit a stable multi-person model instead of
+  // collapsing names into one Person credential string.
   const representativeName = signerBelongsToVerifier
-    ? firstDefined(personNameFromForm, [personGivenNameFromForm, personFamilyNameFromForm].filter(Boolean).join(' '))
+    ? firstDefined(
+      personNameFromForm,
+      [personGivenNameFromForm, personFamilyNameFromForm].filter(Boolean).join(' '),
+      allowPayloadIdentityFallback ? payloadRepresentativeName : undefined,
+    )
     : firstDefined(representativeNameFromCertificate, personNameFromForm);
   const personIdentifierFromCertificate = firstDefined(subjectDn.SERIALNUMBER, subjectDn['OID.2.5.4.5']);
   const personIdentifier = signerBelongsToVerifier
-    ? personIdentifierFromForm
+    ? firstDefined(personIdentifierFromForm, allowPayloadIdentityFallback ? payloadRepresentativeIdentifier : undefined)
     : firstDefined(personIdentifierFromCertificate, personIdentifierFromForm);
   const personEmail = firstDefined(
     getFirstAnnexField(result, ANNEX_PERSON_EMAIL_FIELDS),

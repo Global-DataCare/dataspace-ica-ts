@@ -48,6 +48,7 @@ import {
   normalizeControllerPublicKeyJwk,
   normalizeOrganizationPublicKeyJwk,
 } from './tools/bootstrap-organization-key.ts';
+import { loadIcaSecurityConfigFromEnv } from './security-mode.ts';
 
 type ParsedThreadPayload = {
   thid?: string;
@@ -98,12 +99,16 @@ function normalizeVerifierVatToken(value: string): string {
   return withoutVat.startsWith('ES') ? withoutVat.slice(2) : withoutVat;
 }
 
-function normalizeTaxToken(raw: string): string {
+function normalizeTaxToken(raw: string, jurisdiction: string): string {
   const upper = String(raw || '').trim().toUpperCase().replace(/[\s-]+/g, '');
   if (!upper) return '';
   const withoutVates = upper.startsWith('VATES') ? upper.slice(5) : upper;
-  const withoutVat = withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates;
-  return withoutVat.startsWith('ES') ? withoutVat.slice(2) : withoutVat;
+  const withoutVat = /^VAT[A-Z]{2}/.test(withoutVates) ? withoutVates.slice(5) : (withoutVates.startsWith('VAT') ? withoutVates.slice(3) : withoutVates);
+  const country = jurisdiction.toUpperCase();
+  if (withoutVat.startsWith(country)) return withoutVat.slice(country.length);
+  if (withoutVat.startsWith('ES')) return withoutVat.slice(2);
+  if (withoutVat.startsWith('PT')) return withoutVat.slice(2);
+  return withoutVat;
 }
 
 function extractTaxTokenFromValue(value: string): string | undefined {
@@ -123,9 +128,32 @@ function looksLikeOrganizationName(value: string): boolean {
   return true;
 }
 
+function normalizeForMatching(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resolveOrganizationTaxCountryFromAnnexFields(
+  annexFields: Record<string, string>,
+  defaultJurisdiction: string,
+): string {
+  for (const [key, value] of Object.entries(annexFields)) {
+    const normalizedKey = normalizeForMatching(key);
+    if (!normalizedKey.includes('domicilio fiscal') && !normalizedKey.includes('fiscal address')) continue;
+    const normalizedValue = normalizeForMatching(value);
+    if (/\bportugal\b/.test(normalizedValue) || /\bportuguesa\b/.test(normalizedValue)) return 'PT';
+  }
+  return defaultJurisdiction.toUpperCase();
+}
+
 function inferOrganizationIdentityFromGenericAnnexFields(
   annexFields: Record<string, string>,
   verifierVatList: string[],
+  jurisdiction: string,
 ): { taxID?: string; legalName?: string } {
   const entries = Object.entries(annexFields);
   if (!entries.length) return {};
@@ -134,14 +162,15 @@ function inferOrganizationIdentityFromGenericAnnexFields(
       .map((value) => normalizeVerifierVatToken(value))
       .filter(Boolean),
   );
+  const effectiveCountry = resolveOrganizationTaxCountryFromAnnexFields(annexFields, jurisdiction);
 
   for (let index = 0; index < entries.length; index += 1) {
     const [, value] = entries[index];
     const token = extractTaxTokenFromValue(value);
     if (!token) continue;
-    const normalizedToken = normalizeTaxToken(token);
+    const normalizedToken = normalizeTaxToken(token, effectiveCountry);
     if (!normalizedToken || verifierSet.has(normalizedToken)) continue;
-    const taxID = `VATES-${normalizedToken}`;
+    const taxID = `VAT${effectiveCountry}-${normalizedToken}`;
     const previousValue = index > 0 ? entries[index - 1][1] : '';
     const legalName = looksLikeOrganizationName(previousValue)
       ? previousValue.trim()
@@ -157,6 +186,14 @@ function inferOrganizationIdentityFromGenericAnnexFields(
 
 function normalizeContentType(headerValue: string): string {
   return headerValue.split(';')[0].trim().toLowerCase();
+}
+
+function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes') return true;
+  if (normalized === '0' || normalized === 'false' || normalized === 'no') return false;
+  return fallback;
 }
 
 function pad2(value: number): string {
@@ -344,7 +381,10 @@ function resolveOrganizationPublicKeyFromDidcommAttachments(
   return undefined;
 }
 
-export async function parseVerifySubmission(req: IncomingMessage): Promise<VerifySubmission> {
+export async function parseVerifySubmission(
+  req: IncomingMessage,
+  options?: { jurisdiction?: string },
+): Promise<VerifySubmission> {
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
   const contentEncodingHeader = normalizeHeader(req.headers['content-encoding']).trim().toLowerCase();
@@ -398,6 +438,9 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
     jti: asNonEmptyString(parsed.jti || parsedBody.jti),
   });
   const annex = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
+  const effectiveJurisdiction = asNonEmptyString(options?.jurisdiction).toUpperCase()
+    || process.env.ICA_SUPPORTED_JURISDICTIONS?.split(',')[0]?.trim()
+    || 'ES';
   const verifierVatList = String(process.env.VERIFIERS_VAT_LIST || '')
     .split(',')
     .map((value) => value.trim())
@@ -405,6 +448,7 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
   const inferredFromGenericFields = inferOrganizationIdentityFromGenericAnnexFields(
     annex.fields,
     verifierVatList,
+    effectiveJurisdiction,
   );
   if (inferredFromGenericFields.taxID && !annex.fields['organization.taxID']) {
     annex.fields['organization.taxID'] = inferredFromGenericFields.taxID;
@@ -415,22 +459,33 @@ export async function parseVerifySubmission(req: IncomingMessage): Promise<Verif
       annex.fields['organization.name'] = inferredFromGenericFields.legalName;
     }
   }
-  const visibleIdentity = await extractVisibleOrganizationIdentityFromPdfText(
-    pdfBytes,
-    verifierVatList,
-    process.env.ICA_SUPPORTED_JURISDICTIONS?.split(',')[0]?.trim() || 'ES',
-  );
-  if (visibleIdentity.taxID && !annex.fields['organization.taxID']) {
-    annex.fields['organization.taxID'] = visibleIdentity.taxID;
-  }
-  if (visibleIdentity.legalName && !annex.fields['organization.legalName']) {
-    annex.fields['organization.legalName'] = visibleIdentity.legalName;
-    if (!annex.fields['organization.name']) {
-      annex.fields['organization.name'] = visibleIdentity.legalName;
+  const runInlineVisibleExtraction = parseBooleanEnv(process.env.ICA_VERIFY_INLINE_VISIBLE_EXTRACTION, false);
+  if (runInlineVisibleExtraction) {
+    const visibleIdentity = await extractVisibleOrganizationIdentityFromPdfText(
+      pdfBytes,
+      verifierVatList,
+      effectiveJurisdiction,
+    );
+    if (visibleIdentity.taxID && !annex.fields['organization.taxID']) {
+      annex.fields['organization.taxID'] = visibleIdentity.taxID;
     }
-  }
-  if (visibleIdentity.warnings.length) {
-    annex.warnings.push(...visibleIdentity.warnings);
+    if (visibleIdentity.legalName && !annex.fields['organization.legalName']) {
+      annex.fields['organization.legalName'] = visibleIdentity.legalName;
+      if (!annex.fields['organization.name']) {
+        annex.fields['organization.name'] = visibleIdentity.legalName;
+      }
+    }
+    if (visibleIdentity.legalRepresentativeName) {
+      if (!annex.fields['Representante legal']) {
+        annex.fields['Representante legal'] = visibleIdentity.legalRepresentativeName;
+      }
+      if (!annex.fields['person.name']) {
+        annex.fields['person.name'] = visibleIdentity.legalRepresentativeName;
+      }
+    }
+    if (visibleIdentity.warnings.length) {
+      annex.warnings.push(...visibleIdentity.warnings);
+    }
   }
   const controllerPublicKeyJwk = resolveControllerPublicKeyFromMeta(parsed);
   const organizationPublicKeyJwk = resolveOrganizationPublicKeyFromDidcommAttachments(attachments);
@@ -1359,6 +1414,11 @@ export async function parseCredentialSearchSubmission(
   req: IncomingMessage,
   credentialType: string,
 ): Promise<CredentialSearchSubmission> {
+  const security = loadIcaSecurityConfigFromEnv();
+  const allowLegacySearchTransports = security.securityMode !== 'strict' && security.jsonLegacy;
+  const expectedTransport = allowLegacySearchTransports
+    ? 'application/x-www-form-urlencoded, application/json or application/didcomm-plain+json'
+    : 'application/didcomm-plain+json';
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
   const contentEncodingHeader = normalizeHeader(req.headers['content-encoding']).trim().toLowerCase();
@@ -1390,9 +1450,15 @@ export async function parseCredentialSearchSubmission(
     };
   }
 
+  if (!allowLegacySearchTransports) {
+    throw new Error(
+      `Unsupported Content-Type for _search: ${contentTypeHeader || '(missing)'} (expected ${expectedTransport})`,
+    );
+  }
+
   if (contentType && contentType !== 'application/x-www-form-urlencoded' && contentType !== 'application/json') {
     throw new Error(
-      `Unsupported Content-Type for _search: ${contentTypeHeader || '(missing)'} (expected application/x-www-form-urlencoded, application/json or application/didcomm-plain+json)`,
+      `Unsupported Content-Type for _search: ${contentTypeHeader || '(missing)'} (expected ${expectedTransport})`,
     );
   }
 

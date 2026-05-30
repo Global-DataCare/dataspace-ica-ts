@@ -15,6 +15,51 @@ import {
   VerificationCollectionsService,
 } from '../src/api/tools/verification-collections-storage.ts';
 import { multibase58MultihashSha3_256 } from '../src/api/tools/multihash.ts';
+import { parseCredentialSearchSubmission } from '../src/api/request-parsing.ts';
+
+const SEARCH_ENV_KEYS = ['SECURITY_MODE', 'JSON_LEGACY'] as const;
+
+function withSearchEnv(
+  values: Partial<Record<(typeof SEARCH_ENV_KEYS)[number], string | undefined>>,
+  fn: () => Promise<void> | void,
+): Promise<void> | void {
+  const previous = new Map<string, string | undefined>();
+  for (const key of SEARCH_ENV_KEYS) {
+    previous.set(key, process.env[key]);
+  }
+  const apply = () => {
+    for (const key of SEARCH_ENV_KEYS) {
+      const next = values[key];
+      if (next === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = next;
+      }
+    }
+  };
+  const restore = () => {
+    for (const key of SEARCH_ENV_KEYS) {
+      const prev = previous.get(key);
+      if (prev === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = prev;
+      }
+    }
+  };
+  apply();
+  try {
+    const out = fn();
+    if (out && typeof (out as Promise<void>).then === 'function') {
+      return (out as Promise<void>).finally(restore);
+    }
+    restore();
+    return out;
+  } catch (error: unknown) {
+    restore();
+    throw error;
+  }
+}
 
 test('parseCredentialSearchRoute accepts valid _search route', () => {
   const parsed = parseCredentialSearchRoute('/ica/cds-ES/v1/animal-care/network/credentials/member-onboarding/_search');
@@ -198,4 +243,29 @@ test('CredentialSearch maps id parameter to taxId for credentialType organizatio
   const content = ((pollOutcome.payload as any)?.body?.data?.[0]?.resource?.content || []) as Array<Record<string, unknown>>;
   assert.equal(content.length, 1);
   assert.equal(content[0]?.taxId, 'VATES-A12345678');
+});
+
+test('parseCredentialSearchSubmission rejects urlencoded transport in SECURITY_MODE=strict', async () => {
+  await withSearchEnv(
+    {
+      SECURITY_MODE: 'strict',
+      JSON_LEGACY: 'false',
+    },
+    async () => {
+      const payload = Buffer.from('taxId=VATES-A12345678&thid=thid-credential-search-strict-001');
+      const req = Readable.from([payload]) as unknown as IncomingMessage;
+      (req as any).method = 'POST';
+      (req as any).url = '/acme/cds-ES/v1/animal-care/network/credentials/member-onboarding/_search';
+      (req as any).headers = {
+        host: 'localhost:3310',
+        'content-type': 'application/x-www-form-urlencoded',
+        'content-length': String(payload.length),
+      };
+
+      await assert.rejects(
+        parseCredentialSearchSubmission(req, 'member-onboarding'),
+        /Unsupported Content-Type for _search/,
+      );
+    },
+  );
 });

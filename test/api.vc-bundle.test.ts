@@ -589,6 +589,44 @@ test('buildVerificationVcBundle uses visible PDF organization identity when sign
   }
 });
 
+test('buildVerificationVcBundle uses VATPT when annex fiscal address ends in Portugal on ES jurisdiction route', () => {
+  const previousJurisdictions = process.env.ICA_SUPPORTED_JURISDICTIONS;
+  process.env.ICA_SUPPORTED_JURISDICTIONS = 'ES';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+    assert.ok(parsed);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const bundle = buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult('pdf-org-identity-pt'),
+      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-B87617981,C=ES',
+      verifierVatId: 'VATES-B87617981',
+      annexFormFields: {
+        'Razon Social': 'Falck Portugal SA',
+        'CIF': '507910626',
+        'Domicilio Fiscal': 'Rua de Lisboa 100, Lisboa, Portugal',
+        'Representante legal': 'Joao Silva',
+      },
+    });
+
+    const organizationResource = bundle.data[0].resource as Record<string, any>;
+    const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
+    assert.equal(organizationSubject.taxID, 'VATPT-507910626');
+    assert.equal(organizationSubject.legalName, 'FALCK PORTUGAL SA');
+
+    const personResource = bundle.data[1].resource as Record<string, any>;
+    const personSubject = personResource.credentialSubject as Record<string, any>;
+    assert.equal(personSubject.name, 'Joao Silva');
+  } finally {
+    if (previousJurisdictions === undefined) {
+      delete process.env.ICA_SUPPORTED_JURISDICTIONS;
+    } else {
+      process.env.ICA_SUPPORTED_JURISDICTIONS = previousJurisdictions;
+    }
+  }
+});
+
 test('buildVerificationVcBundle does not duplicate the country prefix when PDF tax ID already starts with it', () => {
   const previousJurisdictions = process.env.ICA_SUPPORTED_JURISDICTIONS;
   process.env.ICA_SUPPORTED_JURISDICTIONS = 'ES';

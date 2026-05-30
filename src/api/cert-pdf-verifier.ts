@@ -605,6 +605,11 @@ type ExtractedPdfSignature = {
   signedData: Buffer;
 };
 
+type ExtractPdfSignaturesResult = {
+  signatures: ExtractedPdfSignature[];
+  malformedCount: number;
+};
+
 type VerifiedPdfSignature = {
   signatureIndex: number;
   signerCert: X509Certificate;
@@ -856,7 +861,10 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
     );
   }
 
-  if (partnerVatSet.size > 0 && nonPartnerCounterpartSignerVatIds.length > 0) {
+  const shouldEnforcePartnerSignature = partnerVatSet.size > 0
+    && signatures.length >= 3
+    && nonPartnerCounterpartSignerVatIds.length > 0;
+  if (shouldEnforcePartnerSignature) {
     if (!partnerSignerVatIds.length) {
       throw new Error(
         'PDF must include at least one verification partner signature whose VAT is listed in VERIFICATION_PARTNERS_VAT_LIST.',
@@ -885,11 +893,12 @@ export function assertVerifierCounterpartySignaturePair<T extends { signerVatId?
   }
 }
 
-function extractPdfSignatures(pdfBytes: Buffer): ExtractedPdfSignature[] {
+function extractPdfSignatures(pdfBytes: Buffer): ExtractPdfSignaturesResult {
   const pdfAsLatin1 = pdfBytes.toString('latin1');
   const byteRangeRegex = /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g;
   let match: RegExpExecArray | null;
   const signatures: ExtractedPdfSignature[] = [];
+  let malformedCount = 0;
   let signatureIndex = 0;
 
   while (true) {
@@ -914,33 +923,104 @@ function extractPdfSignatures(pdfBytes: Buffer): ExtractedPdfSignature[] {
     ]);
 
     const signatureWindow = pdfBytes.subarray(start1 + length1, start2);
-    const lt = signatureWindow.indexOf(0x3c); // <
-    const gt = signatureWindow.lastIndexOf(0x3e); // >
-    if (lt === -1 || gt === -1 || gt <= lt) {
-      throw new Error('Unable to extract CMS signature bytes from PDF.');
+    const signatureWindowText = signatureWindow.toString('latin1');
+    let bestHex = '';
+
+    const contentsMarker = '/Contents<';
+    const markerIndex = signatureWindowText.indexOf(contentsMarker);
+    if (markerIndex !== -1) {
+      const fromContents = signatureWindowText.slice(markerIndex + contentsMarker.length);
+      let direct = '';
+      for (const char of fromContents) {
+        if (/[0-9a-fA-F]/.test(char)) {
+          direct += char;
+          continue;
+        }
+        if (/\s/.test(char)) {
+          continue;
+        }
+        break;
+      }
+      while (direct.endsWith('00')) {
+        direct = direct.slice(0, -2);
+      }
+      if (direct.length % 2 !== 0) {
+        direct = direct.slice(0, -1);
+      }
+      if (direct.length > bestHex.length && direct.length % 2 === 0) {
+        bestHex = direct;
+      }
     }
 
-    let hex = signatureWindow.subarray(lt + 1, gt).toString('latin1').replace(/[^0-9a-fA-F]/g, '');
-    while (hex.endsWith('00')) {
-      hex = hex.slice(0, -2);
+    const candidateRegex = /<([0-9A-Fa-f\s\r\n]+)>/g;
+    let candidateMatch: RegExpExecArray | null;
+    while ((candidateMatch = candidateRegex.exec(signatureWindowText)) !== null) {
+      let candidate = (candidateMatch[1] || '').replace(/[^0-9a-fA-F]/g, '');
+      while (candidate.endsWith('00')) {
+        candidate = candidate.slice(0, -2);
+      }
+      if (candidate.length % 2 !== 0) {
+        candidate = candidate.slice(0, -1);
+      }
+      if (candidate.length % 2 !== 0) continue;
+      if (!candidate.length) continue;
+      if (candidate.length > bestHex.length) {
+        bestHex = candidate;
+      }
     }
-    if (!hex.length || hex.length % 2 !== 0) {
-      throw new Error('Malformed CMS signature payload inside PDF.');
+    let signatureDer: Buffer | undefined;
+    const hex = bestHex;
+    if (hex.length && hex.length % 2 === 0) {
+      signatureDer = Buffer.from(hex, 'hex');
+    } else {
+      // Fallback: some PDFs store /Contents as raw binary (not hex string in the ByteRange gap).
+      // Find plausible ASN.1 DER SignedData blobs and pick the longest valid candidate.
+      let bestDerCandidate: Buffer | undefined;
+      for (let offset = 0; offset < signatureWindow.length - 4; offset += 1) {
+        if (signatureWindow[offset] !== 0x30) continue;
+        const lengthTag = signatureWindow[offset + 1];
+        let totalLength = 0;
+        if (lengthTag === 0x82) {
+          totalLength = 4 + (signatureWindow[offset + 2] << 8) + signatureWindow[offset + 3];
+        } else if (lengthTag === 0x83 && offset + 4 < signatureWindow.length) {
+          totalLength = 5
+            + (signatureWindow[offset + 2] << 16)
+            + (signatureWindow[offset + 3] << 8)
+            + signatureWindow[offset + 4];
+        } else {
+          continue;
+        }
+        if (totalLength <= 0 || offset + totalLength > signatureWindow.length) continue;
+        const candidate = signatureWindow.subarray(offset, offset + totalLength);
+        if (!bestDerCandidate || candidate.length > bestDerCandidate.length) {
+          bestDerCandidate = candidate;
+        }
+      }
+      signatureDer = bestDerCandidate;
+    }
+
+    if (!signatureDer || !signatureDer.length) {
+      malformedCount += 1;
+      signatureIndex += 1;
+      continue;
     }
 
     signatures.push({
       signatureIndex,
-      signatureDer: Buffer.from(hex, 'hex'),
+      signatureDer,
       signedData,
     });
     signatureIndex += 1;
   }
 
   if (!signatures.length) {
+    if (malformedCount > 0) {
+      throw new Error('Malformed CMS signature payload inside PDF.');
+    }
     throw new Error('PDF is missing ByteRange, no digital signature found.');
   }
 
-  return signatures;
+  return { signatures, malformedCount };
 }
 
 async function extractCrlUrls(certPemPath: string): Promise<string[]> {
@@ -1807,8 +1887,14 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
       const intermediatePems = trustAnchors.intermediatePems;
       notes.push(`FNMT root loaded from ${trustAnchors.rootSource}`);
       notes.push(`FNMT intermediate loaded from ${trustAnchors.intermediateSources.join(', ')}`);
-      const extractedSignatures = extractPdfSignatures(submission.pdfBytes);
+      const extracted = extractPdfSignatures(submission.pdfBytes);
+      const extractedSignatures = extracted.signatures;
       notes.push(`Detected ${extractedSignatures.length} PDF signature(s).`);
+      if (extracted.malformedCount > 0) {
+        notes.push(
+          `Ignored ${extracted.malformedCount} malformed CMS signature payload(s) while processing remaining signatures.`,
+        );
+      }
 
       const verifiedSignatures: VerifiedPdfSignature[] = [];
       for (const signature of extractedSignatures) {

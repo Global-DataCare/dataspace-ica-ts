@@ -8,6 +8,7 @@ import {
 import type { SupportedSigningAlgorithm } from '../types.ts';
 import { getPreferredSigningKey } from './active-signing-keys.ts';
 import { deriveDeterministicEcPrivateKeyPem } from './deterministic-key-material.ts';
+import { resolveSeedPassphrase } from './seed-passphrase-provider.ts';
 
 type BootstrapResult = {
   enabled: boolean;
@@ -227,7 +228,7 @@ export function useInvalidProofForTestResourceVersion(): boolean {
   return !parseBoolean(validProofFlag, false);
 }
 
-export function bootstrapSelfSigningKey(): BootstrapResult {
+export async function bootstrapSelfSigningKey(): Promise<BootstrapResult> {
   const active = getPreferredSigningKey(undefined);
   if (active) {
     return {
@@ -265,7 +266,8 @@ export function bootstrapSelfSigningKey(): BootstrapResult {
     || parseSupportedSigningAlgorithm(process.env.ICA_SELF_SIGN_TEST_ALG)
     || 'ES384';
   const configuredKid = (process.env.ICA_SELF_SIGN_TEST_KEY_ID || '').trim() || undefined;
-  const seedPassphrase = (process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE || '').trim();
+  const seed = await resolveSeedPassphrase();
+  const seedPassphrase = seed.value;
   const privateKeyPem = seedPassphrase
     ? deriveDeterministicPrivateKeyPemFromPassphrase(
       seedPassphrase,

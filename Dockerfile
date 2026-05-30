@@ -2,6 +2,15 @@ FROM node:22-bookworm
 
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-spa \
+    tesseract-ocr-por \
+    tesseract-ocr-eng \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 

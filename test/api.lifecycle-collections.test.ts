@@ -281,6 +281,20 @@ test('VerifyResponseManager failed job includes revocation debug details when av
         },
       ],
     },
+    annex: {
+      fieldCount: 2,
+      fieldKeys: ['organization.legalName', 'organization.taxID'],
+      warningCount: 2,
+      warnings: [
+        'OCR skipped: tesseract is not available in runtime.',
+        'Visible PDF text extraction skipped: pdf-parse PDFParse class not available.',
+      ],
+      hasOrganizationTaxId: true,
+      hasOrganizationLegalName: true,
+      organizationTaxId: 'VATES-A12345678',
+      organizationLegalName: 'ACME SL',
+      personName: 'Jane Doe',
+    },
   };
   store.markFailed(
     'thid-failed-debug-001',
@@ -326,9 +340,16 @@ test('VerifyResponseManager failed job includes revocation debug details when av
   assert.match(issues[2]?.diagnostics || '', /status=timeout/);
   assert.equal(issues[3]?.code, 'structure');
   assert.match(issues[3]?.diagnostics || '', /status=parse_error/);
+  assert.equal(issues.some((issue) => String(issue.diagnostics || '').includes('annex.fieldCount=2')), true);
+  assert.equal(
+    issues.some((issue) => String(issue.diagnostics || '').includes('annex.warning[0]=OCR skipped')),
+    true,
+  );
 
   const entryIssues = payload.body?.data?.[0]?.response?.outcome?.issue || [];
   assert.equal(entryIssues.length, issues.length);
+  const entryAnnex = payload.body?.data?.[0]?.resource?.content?.[0] as Record<string, unknown> | undefined;
+  assert.equal((entryAnnex?.annex as Record<string, unknown>)?.organizationTaxId, 'VATES-A12345678');
 });
 
 test('VerifyResponseManager pending job returns Location with thid query', async () => {

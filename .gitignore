@@ -127,6 +127,7 @@ artifacts/smoke/
 
 # Local Fabric toolchain downloads
 tools/
+!src/api/tools/backend-auth-service.ts
 
 # Private/customer-specific bootstrap scripts (keep out of public repo)
 scripts/*.private.sh
