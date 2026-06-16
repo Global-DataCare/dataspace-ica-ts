@@ -22,6 +22,7 @@ import {
   multibase58CidV1RawSha3_384Hex,
   normalizeSameAsHash,
 } from './multihash.ts';
+import { loadIcaSecurityConfigFromEnv } from '../security-mode.ts';
 
 function normalizeDnKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, '');
@@ -217,6 +218,63 @@ function getAnnexOrganizationDid(result: VerifyResult): string | undefined {
   const candidate = getAnnexField(result, ANNEX_ORGANIZATION_SAME_AS);
   if (!candidate) return undefined;
   return candidate.startsWith('did:web:') ? candidate : undefined;
+}
+
+/**
+ * Resolves whether the current ICA runtime explicitly allows demo-only
+ * representative identity fallbacks.
+ */
+function isDemoRepresentativePayloadFallbackEnabled(): boolean {
+  return loadIcaSecurityConfigFromEnv().securityMode === 'demo';
+}
+
+/**
+ * Extracts a representative `sameAs` candidate from the optional payload.
+ *
+ * Demo policy:
+ * - accept `legalRepresentativePayload.sameAs` verbatim and normalize it into
+ *   the canonical multibase/email form
+ * - otherwise accept `legalRepresentativePayload.email`
+ *
+ * Non-demo modes must ignore this payload and rely exclusively on the signed
+ * PDF annex or signer certificate identity.
+ *
+ * @param payload Optional legal representative payload carried in `_verify`.
+ */
+function extractRepresentativeSameAsFromPayload(payload: Record<string, unknown> | undefined): string | undefined {
+  const sameAsCandidate = firstDefined(
+    typeof payload?.sameAs === 'string' ? payload.sameAs : undefined,
+    typeof payload?.email === 'string' ? payload.email : undefined,
+  );
+  const normalized = normalizeSameAsHash(sameAsCandidate || '');
+  return normalized || undefined;
+}
+
+/**
+ * Resolves the canonical representative `sameAs` value for the person VC.
+ *
+ * Source priority:
+ * 1. signed annex `person.email`
+ * 2. signer certificate email DN fields
+ * 3. demo-only payload fallback (`legalRepresentativePayload.sameAs|email`)
+ *
+ * @param result Verified ICA result bundle.
+ * @param subjectDn Parsed signer DN.
+ */
+function resolveRepresentativeSameAs(
+  result: VerifyResult,
+  subjectDn: Record<string, string>,
+): string | undefined {
+  const signedIdentityCandidate = firstDefined(
+    getFirstAnnexField(result, ANNEX_PERSON_EMAIL_FIELDS),
+    subjectDn.EMAILADDRESS,
+    subjectDn.EMAIL,
+    subjectDn.E,
+  );
+  const normalizedSignedIdentity = normalizeSameAsHash(signedIdentityCandidate || '');
+  if (normalizedSignedIdentity) return normalizedSignedIdentity;
+  if (!isDemoRepresentativePayloadFallbackEnabled()) return undefined;
+  return extractRepresentativeSameAsFromPayload(result.legalRepresentativePayload);
 }
 
 function getFirstAnnexField(result: VerifyResult, names: string[]): string | undefined {
@@ -879,13 +937,7 @@ export function buildVerificationVcBundle(
   const personIdentifier = signerBelongsToVerifier
     ? firstDefined(personIdentifierFromForm, allowPayloadIdentityFallback ? payloadRepresentativeIdentifier : undefined)
     : firstDefined(personIdentifierFromCertificate, personIdentifierFromForm);
-  const personEmail = firstDefined(
-    getFirstAnnexField(result, ANNEX_PERSON_EMAIL_FIELDS),
-    subjectDn.EMAILADDRESS,
-    subjectDn.EMAIL,
-    subjectDn.E,
-  );
-  const personSameAs = normalizeSameAsHash(personEmail || '');
+  const personSameAs = resolveRepresentativeSameAs(result, subjectDn);
   const personAlternateName = getAnnexField(result, ANNEX_PERSON_ALTERNATE_NAME);
   const personAdditionalType = getAnnexField(result, ANNEX_PERSON_ADDITIONAL_TYPE);
   const country = subjectDn.C || subjectDn.COUNTRYNAME || undefined;

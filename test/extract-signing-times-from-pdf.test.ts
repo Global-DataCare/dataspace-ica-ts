@@ -2,6 +2,7 @@
 // test/extract-signing-times-from-pdf.test.ts
 // Extrae y muestra el atributo signingTime de todas las firmas CMS de un PDF
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import assert from 'assert/strict';
@@ -30,8 +31,8 @@ function extractSigningTimeFromCms(cmsDer: Buffer): string | undefined {
   }
 }
 
-// Test para todos los PDFs prueba* en /Users/fernando/GITS/gdc-workspace/examples
-const examplesDir = '/Users/fernando/GITS/gdc-workspace/examples';
+// Test para todos los PDFs prueba* en $HOME/gdc-workspace/examples
+const examplesDir = path.join(os.homedir(), 'GITS', 'gdc-workspace', 'examples');
 const pdfs = fs.readdirSync(examplesDir).filter(f => f.startsWith('prueba') && f.endsWith('.pdf'));
 
 describe('Extract signingTime from all prueba*.pdf', () => {

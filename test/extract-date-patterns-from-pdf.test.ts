@@ -1,11 +1,12 @@
 // @ts-nocheck
 // test/extract-date-patterns-from-pdf.test.ts
-// Busca fechas con formato típico en el contenido de los PDFs prueba* en /Users/fernando/GITS/gdc-workspace/examples
+// Busca fechas con formato típico en el contenido de los PDFs prueba* en $HOME/gdc-workspace/examples
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import assert from 'assert/strict';
 
-const examplesDir = '/Users/fernando/GITS/gdc-workspace/examples';
+const examplesDir = path.join(os.homedir(), 'GITS', 'gdc-workspace', 'examples');
 const pdfs = fs.readdirSync(examplesDir).filter(f => f.startsWith('prueba') && f.endsWith('.pdf'));
 
 // Busca fechas tipo dd/mm/yyyy hh:mm:ss, dd-mm-yyyy hh:mm:ss o dd.mm.yy hh:mm:ss

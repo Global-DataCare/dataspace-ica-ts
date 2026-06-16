@@ -1,5 +1,24 @@
 # Changelog
 
+# 0.9.2 - 2026-06-15
+
+- `_verify` representative `sameAs` fallback is now explicitly demo-only:
+  - signed sources remain authoritative in strict/compat modes
+  - demo mode may use `legalRepresentativePayload.sameAs` or `.email` only as
+    a bootstrap convenience when the signed PDF/certificate does not expose the
+    representative contact value
+- Added VC-bundle tests that prove the representative payload fallback is
+  accepted only in demo mode and ignored in compat mode.
+- Documented the representative payload security contract in the async verify
+  types so downstream callers do not treat the payload as production identity
+  evidence.
+- Normalized local fixture path helpers in real-PDF tests to resolve from the
+  current user home directory instead of embedding literal `$HOME` strings.
+- Reorganized the top-level documentation entry points:
+  - numbered `docs/` sections for introduction, setup, API flows, examples,
+    operations, and architecture
+  - `README.md` now acts as the entry guide into that curated docs tree
+
 # 0.9.1 - 2026-05-29
 
 - Merged `HealthDCAT-APv7` into `main` so the confidential-storage and backend

@@ -1,14 +1,15 @@
 // @ts-nocheck
 // test/extract-vat-date-pairs-from-pdf.test.ts
-// Busca VATs y fechas cercanas en PDFs prueba* en /Users/fernando/GITS/gdc-workspace/examples
+// Busca VATs y fechas cercanas en PDFs prueba* en $HOME/gdc-workspace/examples
 
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const assert = require('assert/strict');
 const pdfParse = require('pdf-parse');
 
-const examplesDir = '/Users/fernando/GITS/gdc-workspace/examples';
+const examplesDir = path.join(os.homedir(), 'GITS', 'gdc-workspace', 'examples');
 const pdfs = fs.readdirSync(examplesDir).filter(f => f.startsWith('prueba') && f.endsWith('.pdf'));
 
 // Busca (R: <VAT>) donde <VAT> es un número (sin prefijo país) y fechas

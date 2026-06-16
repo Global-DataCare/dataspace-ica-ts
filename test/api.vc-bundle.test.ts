@@ -7,6 +7,9 @@ import { PRIVATE_KEY_PEM } from './test-signing-key.fixture.ts';
 import { normalizeSameAsHash } from '../src/api/tools/multihash.ts';
 import type { VerifyResult } from '../src/api/types.ts';
 
+const TEST_REPRESENTATIVE_EMAIL = 'legal.rep@example.org';
+const TEST_REPRESENTATIVE_SAME_AS = 'urn:multibase:zControllerHash';
+
 function installActiveSigningKeyForTests(): void {
   resetActiveSigningKeysStateForTests();
   activateSigningKey({
@@ -30,6 +33,22 @@ function withDefaultDidWebDomain<T>(fn: () => T): T {
     else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
     if (previousPublicDomain === undefined) delete process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR;
     else process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = previousPublicDomain;
+  }
+}
+
+function withSecurityMode<T>(securityMode: string | undefined, fn: () => T): T {
+  const previousSecurityMode = process.env.SECURITY_MODE;
+  const previousDemoMode = process.env.DEMO_MODE;
+  if (securityMode === undefined) delete process.env.SECURITY_MODE;
+  else process.env.SECURITY_MODE = securityMode;
+  delete process.env.DEMO_MODE;
+  try {
+    return fn();
+  } finally {
+    if (previousSecurityMode === undefined) delete process.env.SECURITY_MODE;
+    else process.env.SECURITY_MODE = previousSecurityMode;
+    if (previousDemoMode === undefined) delete process.env.DEMO_MODE;
+    else process.env.DEMO_MODE = previousDemoMode;
   }
 }
 
@@ -335,6 +354,62 @@ test('buildVerificationVcBundle hashes plain controller email into credentialSub
   const personSubject = personResource.credentialSubject as Record<string, any>;
   assert.equal(personSubject.email, undefined);
   assert.equal(personSubject.sameAs, normalizeSameAsHash('Jane.Doe@Example.org'));
+});
+
+test('buildVerificationVcBundle accepts legalRepresentativePayload.sameAs only in demo mode', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const demoBundle = withSecurityMode('demo', () => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('demo-controller-sameas'),
+    legalRepresentativePayload: {
+      sameAs: TEST_REPRESENTATIVE_SAME_AS,
+    },
+  })));
+  const compatBundle = withSecurityMode('compat', () => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('compat-controller-sameas'),
+    legalRepresentativePayload: {
+      sameAs: TEST_REPRESENTATIVE_SAME_AS,
+    },
+  })));
+
+  const demoPersonResource = demoBundle.data[1].resource as Record<string, unknown> | undefined;
+  const compatPersonResource = compatBundle.data[1].resource as Record<string, unknown> | undefined;
+  const demoPersonSubject = demoPersonResource?.credentialSubject as Record<string, unknown>;
+  const compatPersonSubject = compatPersonResource?.credentialSubject as Record<string, unknown>;
+  assert.equal(demoPersonSubject.sameAs, TEST_REPRESENTATIVE_SAME_AS);
+  assert.equal(compatPersonSubject.sameAs, undefined);
+});
+
+test('buildVerificationVcBundle hashes legalRepresentativePayload.email only in demo mode', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const demoBundle = withSecurityMode('demo', () => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('demo-controller-email'),
+    legalRepresentativePayload: {
+      email: TEST_REPRESENTATIVE_EMAIL,
+    },
+  })));
+  const compatBundle = withSecurityMode('compat', () => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('compat-controller-email'),
+    legalRepresentativePayload: {
+      email: TEST_REPRESENTATIVE_EMAIL,
+    },
+  })));
+
+  const demoPersonResource = demoBundle.data[1].resource as Record<string, unknown> | undefined;
+  const compatPersonResource = compatBundle.data[1].resource as Record<string, unknown> | undefined;
+  const demoPersonSubject = demoPersonResource?.credentialSubject as Record<string, unknown>;
+  const compatPersonSubject = compatPersonResource?.credentialSubject as Record<string, unknown>;
+  assert.equal(demoPersonSubject.sameAs, normalizeSameAsHash(TEST_REPRESENTATIVE_EMAIL));
+  assert.equal(compatPersonSubject.sameAs, undefined);
 });
 
 test('buildVerificationVcBundle omits intermediate crl_check_all verify_error when fallback succeeds', () => {

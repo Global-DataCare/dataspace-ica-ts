@@ -107,7 +107,7 @@ test('extractTermsAnnexFormFieldsFromPdf preserves non-canonical visible organiz
 });
 
 const VITEMARKETING_FIXTURE_PATH =
-  '/Users/fernando/GITS/gdc-workspace/examples/prueba-Contrato de Adhesión PROCUREDATA_VITEMARKETING.pdf';
+  path.join(os.homedir(), 'GITS', 'gdc-workspace', 'examples', 'prueba-Contrato de Adhesión PROCUREDATA_VITEMARKETING.pdf');
 
 test(
   'extractTermsAnnexFormFieldsFromPdf extracts visible organization identity from VITEMARKETING real fixture',

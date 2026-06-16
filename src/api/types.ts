@@ -321,7 +321,20 @@ export interface VerifySubmission {
   annexExtractionWarnings?: string[];
   controllerPublicKeyJwk?: Record<string, unknown>;
   organizationPublicKeyJwk?: Record<string, unknown>;
+  /**
+   * Optional compatibility payload used only for identity fields that are not
+   * available in the signed PDF/certificate path.
+   */
   organizationPayload?: Record<string, unknown>;
+  /**
+   * Optional representative identity payload.
+   *
+   * Security policy:
+   * - strict/compat modes must source representative `sameAs` from the signed
+   *   PDF annex or signer certificate email
+   * - demo mode may additionally accept `sameAs` or `email` from this payload
+   *   as a bootstrap convenience for local flows
+   */
   legalRepresentativePayload?: Record<string, unknown>;
 }
 
@@ -553,7 +566,15 @@ export interface VerifyResult {
   organizationPublicKeyJwk?: Record<string, unknown>;
   organizationPrivateKeyJwk?: Record<string, unknown>;
   organizationKeySource?: 'attachment' | 'generated';
+  /**
+   * Optional compatibility payload retained in the async verification result.
+   */
   organizationPayload?: Record<string, unknown>;
+  /**
+   * Optional representative identity payload retained in the async
+   * verification result. Downstream VC mapping may use it only in demo mode
+   * when the signed sources do not expose representative `sameAs`.
+   */
   legalRepresentativePayload?: Record<string, unknown>;
 }
 

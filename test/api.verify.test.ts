@@ -9,7 +9,7 @@ import type { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { InMemoryVerificationJobStore } from '../src/api/job-store.ts';
 import {
   buildAddEvidenceResponseLocation,
@@ -127,7 +127,7 @@ function buildMinimalPdf(contentStream: string, pageExtra = '', extraObjects = '
   );
 }
 
-const REAL_FNMT_FIXTURES_DIR = '/Users/fernando/GITS/gdc-workspace/examples';
+const REAL_FNMT_FIXTURES_DIR = path.join(homedir(), 'GITS', 'gdc-workspace', 'examples');
 const REAL_MULTISIGN_PDF_FILENAME = 'prueba-TEST-A4-multisign-fnmt.pdf';
 const REAL_THREE_SIGN_PDF_FILENAME = 'prueba-TEST-A4-firmas-3-fnmt.pdf';
 const REAL_MULTISIGN_PDF_PATH = path.join(REAL_FNMT_FIXTURES_DIR, REAL_MULTISIGN_PDF_FILENAME);

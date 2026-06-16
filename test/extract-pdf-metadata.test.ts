@@ -1,12 +1,13 @@
 // @ts-nocheck
 // test/extract-pdf-metadata.test.ts
-// Extrae y muestra los metadatos de fecha de todos los PDFs prueba* en /Users/fernando/GITS/gdc-workspace/examples
+// Extrae y muestra los metadatos de fecha de todos los PDFs prueba* en $HOME/gdc-workspace/examples
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import assert from 'assert/strict';
 import { execFileSync } from 'child_process';
 
-const examplesDir = '/Users/fernando/GITS/gdc-workspace/examples';
+const examplesDir = path.join(os.homedir(), 'GITS', 'gdc-workspace', 'examples');
 const pdfs = fs.readdirSync(examplesDir).filter(f => f.startsWith('prueba') && f.endsWith('.pdf'));
 
 function extractPdfMetadata(pdfPath: string): Record<string, string> {

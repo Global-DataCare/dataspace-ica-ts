@@ -1,173 +1,105 @@
 # dataspace-ica
 
-TypeScript repository with two capabilities:
+TypeScript service for:
 
-- ICA CLI operations (onboarding, CSR signing, publication).
-- Async ICA API for *Terms & Conditions* (PDF file) verification and network lifecycle operations (`_verify`, `_activate`, `_add`, `_upsert`, `_issue`, `_status`, `_revoke` + polling).
+- ICA CLI operations: onboarding, CSR signing, publication
+- async ICA API: `_verify`, `_activate`, `_add`, `_upsert`, `_issue`, `_status`, `_revoke` and polling
 
-## Current Status
+This `README` is the entry guide. Detailed documentation now lives under [`docs/`](./docs/README.md).
 
-- `_verify`, `_activate`, `_add` (evidence), `_upsert` (delegation policy), `_issue` (credentials), `_status`, and `_revoke` are implemented with async pattern (`202 + Location` + polling).
-- Business responses and early `4xx/5xx` errors are returned as DIDComm plaintext (`jti/iss/aud/thid/type/body`).
-- `body` is a `Bundle` (`batch-response`) with `issues` and `data[]` as source of truth.
+## Start Here
 
-## Canonical Interop Baseline
+- Introduction and documentation map: [`docs/README.md`](./docs/README.md)
+- Product overview: [`docs/01-introduction/01-overview.md`](./docs/01-introduction/01-overview.md)
+- Local quickstart: [`docs/02-setup-and-run/01-local-quickstart.md`](./docs/02-setup-and-run/01-local-quickstart.md)
+- Configuration guide: [`docs/02-setup-and-run/02-configuration.md`](./docs/02-setup-and-run/02-configuration.md)
+- Key endpoints: [`docs/03-api-and-flows/01-key-endpoints.md`](./docs/03-api-and-flows/01-key-endpoints.md)
+- Core flows: [`docs/03-api-and-flows/02-core-flows.md`](./docs/03-api-and-flows/02-core-flows.md)
+- Host CSR enrollment for production: [`docs/03-api-and-flows/03-host-csr-enrollment.md`](./docs/03-api-and-flows/03-host-csr-enrollment.md)
+- Examples, fixtures, and tests: [`docs/04-examples-and-tests/01-examples-fixtures-and-tests.md`](./docs/04-examples-and-tests/01-examples-fixtures-and-tests.md)
+- Operations and deployment: [`docs/05-operations-and-deployment/01-gke-and-security.md`](./docs/05-operations-and-deployment/01-gke-and-security.md)
 
-The API uses one stable interoperability baseline across all endpoints:
+## What The Service Does
 
-- DIDComm plaintext envelope for requests/responses.
-- `body` payload as `Bundle` (`resourceType: "Bundle"`, `type: "batch-response"`).
-- `body.data[]` as the primary business result container (authoritative source).
-- `body.issues` as FHIR `OperationOutcome` (including early `4xx/5xx` errors).
-- `resource.content` represented as array (`content[]`) in endpoint result resources.
-- Evidence objects aligned with OIDC4IDA structures.
-- `credentialSubject` semantics based on `schema.org` types (`Organization`, `Person`).
+- Verifies signed Terms PDFs through `_verify`
+- Activates credential-signing keys through `_activate`
+- Publishes DID/JWKS/discovery artifacts
+- Manages evidence, issuance, status, revocation, and delegated policy flows
+- Supports CLI workflows for root/ICA bootstrap, CSR signing, and DCAT publication
 
-Only business payload changes per endpoint (`_verify`, `_add`, `_upsert`, `_issue`, `_status`, `_revoke`, `_activate`); envelope and bundle structure remain the same.
+## Interop Baseline
 
-## Quick Start (5 minutes)
+Across the main API surface:
+
+- transport is DIDComm plaintext for the current baseline
+- business payload is a `Bundle`
+- `body.data[]` is the authoritative business result
+- `body.issues` carries `OperationOutcome`-style errors and warnings
+- business resources use `schema.org` semantics for `Organization` and `Person`
+
+## Quickstart
 
 Requirements:
 
 - Node.js 22+
-- OpenSSL available in `PATH`
+- OpenSSL in `PATH`
 
-Install:
+Install and run:
 
 ```bash
 npm install
-```
-
-Run locally:
-
-```bash
 cp env.example .env.deploy.dev
-npm run dev
-```
-
-Jurisdiction and sector allowlists are environment-driven:
-
-```bash
 echo 'ICA_SUPPORTED_JURISDICTIONS=ES' >> .env.deploy.dev
 echo 'ICA_SUPPORTED_SECTORS=animal-care' >> .env.deploy.dev
-```
-
-Self-signed ICA mode (no external CA required):
-
-```bash
-echo 'ICA_SELF_SIGN_TEST=true' >> .env.deploy.dev
-echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE=replace-with-strong-passphrase' >> .env.deploy.dev
-echo 'ICA_VC_PRIVATE_KEY_SEED_CONFIG=17:8:1:48' >> .env.deploy.dev
-echo 'ICA_VC_PRIVATE_KEY_SEED_SALT=ica-seed-salt-v1' >> .env.deploy.dev
-echo 'ICA_VC_SEED_ALG=ES384' >> .env.deploy.dev
-# Bootstrap controller metadata while CA credentials are still pending
-echo 'ICA_SELF_CONTROLLER_KID=ica-controller-es384-001' >> .env.deploy.dev
-echo 'ICA_SELF_CONTROLLER_EMAIL=it-director@example.org' >> .env.deploy.dev
-echo 'ICA_SELF_CONTROLLER_MEMBER_TYPE=controller' >> .env.deploy.dev
-echo 'ICA_SELF_CONTROLLER_ROLE=1120' >> .env.deploy.dev
-echo 'ICA_SELF_CONTROLLER_JURISDICTION=ES' >> .env.deploy.dev
-echo 'ICA_SELF_CONTROLLER_SECTOR=management' >> .env.deploy.dev
-# Optional: sign test-* proofs as valid JWS (default keeps invalid test proof for test routes)
-echo 'ICA_SELF_SIGN_TEST_VALID_PROOF=true' >> .env.deploy.dev
 npm run dev
 ```
 
-Safer seed-passphrase options (to avoid sharing plaintext in `.env`):
+Useful commands:
 
 ```bash
-# Option 1: mounted secret file (highest priority)
-echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_FILE=/var/run/secrets/ica/vc-seed-passphrase' >> .env.deploy.dev
-
-# Option 2: indirection to another env var (middle priority)
-echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET_ENV=ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET' >> .env.deploy.dev
-export ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_SECRET='replace-with-strong-passphrase'
-
-# Legacy fallback (lowest priority)
-echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE=replace-with-strong-passphrase' >> .env.deploy.dev
+npm run dev
+npm run api:local
+npm run api:export
+npm run api:example:activate
+npm run test
+npm run typecheck
 ```
 
-Cloud Secret Manager mode with encrypted runtime cache:
+## Key Endpoints
 
-```bash
-echo 'ICA_HOST_SECRET_PROVIDER=gcp-secret-manager' >> .env.deploy.dev
-echo 'ICA_GCP_PROJECT_ID=<gcp-project-id>' >> .env.deploy.dev
-echo 'ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_GCP_SECRET=ica-vc-private-key-seed-passphrase' >> .env.deploy.dev
-echo 'ICA_HOST_SECRET_CACHE_TTL_SECONDS=300' >> .env.deploy.dev
-echo 'ICA_HOST_SECRET_STALE_IF_ERROR_SECONDS=21600' >> .env.deploy.dev
-```
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate-response`
+- `GET /.well-known/did.json`
+- `GET /.well-known/jwks.json`
+- `GET /openapi.json`
+- `GET /api-docs`
 
-Resolution order is: `*_FILE` -> `*_SECRET_ENV` -> direct env -> GCP Secret Manager.
-When GCP refresh fails, ICA serves stale cached value until `ICA_HOST_SECRET_STALE_IF_ERROR_SECONDS` is exceeded.
+## Typical Developer Path
 
-In production, disable self-sign mode and use `_activate` (or `ICA_VC_SIGNING_PRIVATE_KEY_PEM`) with CA-issued material.
+1. Run the local server and confirm `/.well-known/did.json` and `/openapi.json`.
+2. Read the key endpoint and flow guides under `docs/03-api-and-flows/`.
+3. Reuse `docs/examples/` fixtures and `npm run api:example:activate`.
+4. Read the `api.*.test.ts` files in [`test/`](./test) as executable documentation.
+5. Use the deeper documents in `docs/` only for the specific subsystem you are changing.
 
-If the ICA already has an active `ES384` signing key with `x5c`, `_create` can issue the organization leaf certificate from that active ICA key and return inline `x5c` for the organization's primary `publicKeyJwk`.
+## Documentation Layout
 
-For local/staging demos, `_create` can instead attach deterministic `x5c` using the internal self-CA helper when the frontend only sends the key:
+The curated documentation tree is now organized as numbered folders:
 
-```bash
-echo 'ICA_CREATE_DID_SELF_CA_STAGING=true' >> .env.deploy.dev
-echo 'ICA_CREATE_DID_SELF_CA_PASSPHRASE=replace-with-strong-passphrase' >> .env.deploy.dev
-echo 'ICA_CREATE_DID_SELF_CA_DOMAIN=ca.staging.example.org' >> .env.deploy.dev
-echo 'ICA_CREATE_DID_SELF_CA_NOT_BEFORE=20240101000000Z' >> .env.deploy.dev
-```
+- `docs/01-introduction`
+- `docs/02-setup-and-run`
+- `docs/03-api-and-flows`
+- `docs/04-examples-and-tests`
+- `docs/05-operations-and-deployment`
+- `docs/06-architecture-and-reference`
 
-That self-CA mode is only for local/staging demos. The v2 onboarding design that binds the controller message-signing key during `_verify` and bootstraps the organization credential key is documented in [`docs/organization-key-binding-v2.md`](./docs/organization-key-binding-v2.md).
-The current key-management policy for organization DID documents is summarized in [`docs/organization-key-management.md`](./docs/organization-key-management.md).
-Organization offboarding via accepted-terms removal is documented in [`docs/organization-terms-remove-v2.md`](./docs/organization-terms-remove-v2.md).
+Legacy deep-dive documents still exist in `docs/` root and are referenced from the numbered guides while the structure is being normalized.
 
-Deployment naming rule:
-- Release version and Kubernetes resource names are separate concerns.
-- Keep canonical staging/production resources under `dataspace-ica-*`.
-- Use a coexistence suffix only for parallel environments like `st-v2`, for example `dataspace-ica-api-st-v2`.
-- The image tag carries the release line (`0.4.x` for current staging v1, `0.5.x` for v2).
+## Detailed Reference
 
-For Kubernetes frontdoor options:
-- direct public IP via `Service` type `LoadBalancer`
-- or GCE `Ingress` with TLS (`ManagedCertificate`, pre-shared GCP SSL cert, or Kubernetes TLS `Secret`)
-
-The current `st-v2` profile is prepared for IP-first staging via GCE `Ingress` + pre-shared SSL cert. See [`deploy/k8s/README.md`](./deploy/k8s/README.md).
-Operational troubleshooting for this IP-first staging pattern is documented in [`docs/troubleshooting-gke-ip-staging.md`](./docs/troubleshooting-gke-ip-staging.md).
-
-Bootstrap details (seed/direct key + CA transition): [`bootstrap.md`](./bootstrap.md)
-
-Controller + ICA bootstrap (CA submission flow):
-
-```bash
-# 1) Controller artifacts
-node ./bin/ica-cli.js controller:bootstrap \
-  --domain ica.example.com \
-  --email it-director@example.org \
-  --jurisdiction ES \
-  --role-isco 1120 \
-  --sector management \
-  --alg ES384 \
-  --scrypt 17:8:1:48 \
-  --salt ica-controller-salt-v1 \
-  --passphrase "<controller-passphrase>" \
-  --out-dir output/controller-bootstrap
-
-# 2) ICA signing artifacts (linked to controller DID)
-node ./bin/ica-cli.js ica:bootstrap \
-  --domain ica.example.com \
-  --jurisdiction ES \
-  --scope onehealth:ica \
-  --alg ES384 \
-  --scrypt 17:8:1:48 \
-  --salt ica-signing-salt-v1 \
-  --passphrase "<ica-passphrase>" \
-  --controller-dir output/controller-bootstrap \
-  --out-dir output/ica-bootstrap
-
-# 3) Prepare one CA/bucket submission package
-node ./bin/ica-cli.js ca:prepare-submission \
-  --controller-dir output/controller-bootstrap \
-  --ica-dir output/ica-bootstrap \
-  --request-id req-es-20260307-001 \
-  --out-dir output/ca-submission
-```
-
-After CA returns signed chains, activate using `_activate` with canonical `body.data[]` and controller `body.signature`.
+The rest of this `README` keeps the detailed API reference and curl material for backward compatibility. New explanatory material should go under `docs/`, not here.
 
 Quick checks:
 
