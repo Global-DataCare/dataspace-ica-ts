@@ -151,6 +151,60 @@ async function seedIssuedCredentials(service: VerificationCollectionsService): P
   ]);
 }
 
+async function seedRepresentativeDidDocumentOnly(service: VerificationCollectionsService): Promise<void> {
+  const controllerKey = deriveDeterministicEcPrivateKeyPem('credential-retrieve-controller-binding-doc-only', 'P-384');
+  await service.storeIssuedCredentials([
+    {
+      id: 'urn:uuid:issued-person-doc-only',
+      tenantId: 'acme',
+      jurisdiction: 'ES',
+      sector: 'animal-care',
+      resourceType: 'contract',
+      thid: 'thid-verify-person-doc-only',
+      credentialType: 'member-onboarding',
+      credentialId: 'urn:uuid:vc-person-doc-only',
+      subjectId: 'urn:person:identifier:IDCES-99887766Z',
+      issuerId: 'did:web:ica.example.org',
+      credential: {
+        id: 'urn:uuid:vc-person-doc-only',
+        issuer: 'did:web:ica.example.org',
+        type: ['VerifiableCredential', 'PersonCredential', 'LegalRepresentativeCredential'],
+        credentialSubject: {
+          id: 'urn:person:identifier:IDCES-99887766Z',
+          '@type': 'Person',
+          name: 'John Doe',
+          memberOf: {
+            '@type': 'Organization',
+            id: 'did:web:member-doc-only.example.org',
+            taxID: 'VATES-Z12345678',
+          },
+        },
+      },
+      createdAt: '2026-03-30T09:05:00.000Z',
+      updatedAt: '2026-03-30T10:05:00.000Z',
+    },
+  ]);
+  await service.storeDidDocuments([
+    {
+      id: 'did:web:member-doc-only.example.org',
+      tenantId: 'acme',
+      jurisdiction: 'ES',
+      sector: 'animal-care',
+      resourceType: 'contract',
+      thid: 'thid-did-doc-only',
+      did: 'did:web:member-doc-only.example.org',
+      taxId: 'VATES-Z12345678',
+      controllerPublicKeyJwk: controllerKey.publicJwk,
+      didDocument: {
+        id: 'did:web:member-doc-only.example.org',
+      },
+      status: 'confirmed',
+      createdAt: '2026-03-30T10:06:00.000Z',
+      updatedAt: '2026-03-30T10:06:00.000Z',
+    },
+  ]);
+}
+
 test('parseCredentialRetrieveRoute accepts valid _retrieve route', () => {
   const parsed = parseCredentialRetrieveRoute('/ica/cds-ES/v1/animal-care/network/credentials/contract/_retrieve');
   assert.ok(parsed);
@@ -268,6 +322,37 @@ test('CredentialRetrieve v2 injects representative hasCredential.material from d
   const hasCredential = subject?.hasCredential as Record<string, unknown>;
   const expected = toJwkThumbprintSha256Urn(
     deriveDeterministicEcPrivateKeyPem('credential-retrieve-controller-binding', 'P-384').publicJwk,
+  );
+  assert.equal(hasCredential?.material, expected);
+});
+
+test('CredentialRetrieve v2 falls back to did document controller key when did binding is absent', async () => {
+  const parsed = parseCredentialRetrieveRoute('/acme/cds-ES/v1/animal-care/network/credentials/contract/_retrieve');
+  assert.ok(parsed && parsed.ok);
+  if (!parsed || !parsed.ok) return;
+
+  resetVerificationCollectionsMemStateForTests();
+  const collectionsService = new VerificationCollectionsService({
+    provider: 'mem',
+    required: true,
+    firestoreCollectionPrefix: 'ica',
+  });
+  await seedRepresentativeDidDocumentOnly(collectionsService);
+
+  const store = new InMemoryEntityJobStore<CredentialRetrieveRouteContext, CredentialRetrieveResult>(60);
+  const requestManager = new CredentialRetrieveRequestManager(store, collectionsService);
+
+  const requestUrl = new URL(
+    'http://localhost/acme/cds-ES/v1/animal-care/network/credentials/contract/_retrieve?identifier=VATES-Z12345678&type=LegalRepresentativeCredential&version=v2',
+  );
+  const outcome = await requestManager.retrieveDirect(parsed.context, requestUrl, 'application/vc+json');
+  assert.equal(outcome.type, 'succeeded');
+  if (outcome.type !== 'succeeded') return;
+
+  const subject = outcome.credential?.credentialSubject as Record<string, unknown>;
+  const hasCredential = subject?.hasCredential as Record<string, unknown>;
+  const expected = toJwkThumbprintSha256Urn(
+    deriveDeterministicEcPrivateKeyPem('credential-retrieve-controller-binding-doc-only', 'P-384').publicJwk,
   );
   assert.equal(hasCredential?.material, expected);
 });

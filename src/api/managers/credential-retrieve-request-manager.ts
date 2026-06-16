@@ -11,7 +11,11 @@ import type {
   CredentialSearchInput,
   VerifyRouteContext,
 } from '../types.ts';
-import type { DidBindingRecord, IssuedCredentialRecord } from '../tools/verification-collections-storage.ts';
+import type {
+  DidBindingRecord,
+  DidDocumentRecord,
+  IssuedCredentialRecord,
+} from '../tools/verification-collections-storage.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 import { attachProofToCredential, convertCredentialToVcJwt } from '../tools/ica-identity.ts';
 import { multibase58MultihashSha3_256 } from '../tools/multihash.ts';
@@ -81,6 +85,23 @@ function resolveLatestDidBindingRecord(
       && (
         (lookup.did ? equalsIgnoreCase(asNonEmptyString(record.did), lookup.did) : false)
         || (lookup.taxId ? equalsIgnoreCase(record.taxId, lookup.taxId) : false)
+      ))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+}
+
+function resolveLatestDidDocumentRecord(
+  records: DidDocumentRecord[],
+  route: CredentialRetrieveRouteContext,
+  lookup: { did?: string; taxId?: string },
+): DidDocumentRecord | undefined {
+  return [...records]
+    .filter((record) =>
+      equalsIgnoreCase(record.tenantId, route.tenantId)
+      && equalsIgnoreCase(record.jurisdiction, route.jurisdiction)
+      && equalsIgnoreCase(record.sector, route.sector)
+      && (
+        (lookup.did ? equalsIgnoreCase(record.did, lookup.did) : false)
+        || (lookup.taxId ? equalsIgnoreCase(asNonEmptyString(record.taxId), lookup.taxId) : false)
       ))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
 }
@@ -298,6 +319,7 @@ function enrichRepresentativeCredentialMaterial(
   route: CredentialRetrieveRouteContext,
   record: IssuedCredentialRecord,
   didBindings: DidBindingRecord[],
+  didDocuments: DidDocumentRecord[],
 ): IssuedCredentialRecord {
   if (!isLegalRepresentativeCredential(record)) return record;
 
@@ -313,7 +335,12 @@ function enrichRepresentativeCredentialMaterial(
     ...(organizationDid ? { did: organizationDid } : {}),
     ...(taxId ? { taxId } : {}),
   });
-  const controllerPublicKeyJwk = asObject(binding?.controllerPublicKeyJwk);
+  const didDocument = binding ? undefined : resolveLatestDidDocumentRecord(didDocuments, route, {
+    ...(organizationDid ? { did: organizationDid } : {}),
+    ...(taxId ? { taxId } : {}),
+  });
+  const controllerPublicKeyJwk = asObject(binding?.controllerPublicKeyJwk)
+    || asObject(didDocument?.controllerPublicKeyJwk);
   if (!controllerPublicKeyJwk) return record;
 
   const material = toJwkThumbprintSha256Urn(controllerPublicKeyJwk);
@@ -504,6 +531,9 @@ export class CredentialRetrieveRequestManager {
           const didBindings = requestedVersion === 'v2'
             ? await this.collectionsService.listDidBindings()
             : [];
+          const didDocuments = requestedVersion === 'v2'
+            ? await this.collectionsService.listDidDocuments()
+            : [];
           const scoped = records.filter((record) =>
             equalsIgnoreCase(record.tenantId, route.tenantId) &&
             equalsIgnoreCase(record.jurisdiction, route.jurisdiction) &&
@@ -514,7 +544,7 @@ export class CredentialRetrieveRequestManager {
             throw new Error('Credential not found for the provided retrieval filters.');
           }
           const materializedRecord = requestedVersion === 'v2'
-            ? enrichRepresentativeCredentialMaterial(route, selected.record, didBindings)
+            ? enrichRepresentativeCredentialMaterial(route, selected.record, didBindings, didDocuments)
             : selected.record;
           const signed = signCredentialRecord(materializedRecord, requestedFormat);
           const item: CredentialRetrieveResultItem = {
@@ -579,6 +609,9 @@ export class CredentialRetrieveRequestManager {
       const didBindings = requestedVersion === 'v2'
         ? await this.collectionsService.listDidBindings()
         : [];
+      const didDocuments = requestedVersion === 'v2'
+        ? await this.collectionsService.listDidDocuments()
+        : [];
       const scoped = records.filter((record) =>
         equalsIgnoreCase(record.tenantId, route.tenantId) &&
         equalsIgnoreCase(record.jurisdiction, route.jurisdiction) &&
@@ -596,7 +629,7 @@ export class CredentialRetrieveRequestManager {
         };
       }
       const materializedRecord = requestedVersion === 'v2'
-        ? enrichRepresentativeCredentialMaterial(route, selected.record, didBindings)
+        ? enrichRepresentativeCredentialMaterial(route, selected.record, didBindings, didDocuments)
         : selected.record;
       const signed = signCredentialRecord(materializedRecord, requestedFormat);
       return {
