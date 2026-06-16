@@ -53,9 +53,22 @@ When a signed PDF contains these form fields, the API extracts them and carries 
     `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<base64url>` when the public
     JWK exposes enough material; otherwise it falls back to the existing JWK
     `kid`.
+  - representative proof is intentionally two-dimensional:
+    `credentialSubject.sameAs` proves public identity continuity, while
+    `credentialSubject.hasCredential.material` proves continuity of the
+    controller signing/binding key. Production-grade VCs should ideally carry
+    both dimensions.
   - `person.alternateName` -> person VC `credentialSubject.alternateName`.
     Used for the controller `kid`. We use `alternateName` instead of `nickname` to stay within the agreed schema.org Organization/Person subset already used here.
   - `person.additionalType` -> person VC `credentialSubject.additionalType`.
     Used for the controller key algorithm, for example `ES384`.
 
 DCAT publication remains strict: only real organization `did:web` is used as publisher; internal ICA membership aliases are excluded as publisher DID.
+
+Recommended step by step:
+
+1. Put representative email in `person.email` inside the signed annex whenever possible.
+2. `_verify` derives representative `credentialSubject.sameAs` from that signed email evidence or, secondarily, from the signer certificate email.
+3. `_verify` derives representative `credentialSubject.hasCredential.material` from the captured controller binding JWK.
+4. Only in `demo/local`, if signed sources do not expose the email, `legalRepresentativePayload.email` or `.sameAs` may bootstrap the representative alias.
+5. Downstream GW activation should ideally receive a representative VC that already carries both dimensions.
