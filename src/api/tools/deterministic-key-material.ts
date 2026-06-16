@@ -1,4 +1,5 @@
 import { createECDH, createHash, createPrivateKey } from 'node:crypto';
+import { computeRfc7638JwkThumbprint } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 
 export type DeterministicEcCurve = 'P-384' | 'secp256k1';
 
@@ -12,39 +13,6 @@ export type DeterministicEcKeyMaterial = {
   };
   kidRfc7638: string;
 };
-
-function canonicalizeForThumbprint(publicJwk: Record<string, string>): string {
-  const kty = publicJwk.kty;
-  if (kty === 'EC') {
-    return JSON.stringify({
-      crv: publicJwk.crv,
-      kty: publicJwk.kty,
-      x: publicJwk.x,
-      y: publicJwk.y,
-    });
-  }
-  if (kty === 'RSA') {
-    return JSON.stringify({
-      e: publicJwk.e,
-      kty: publicJwk.kty,
-      n: publicJwk.n,
-    });
-  }
-  if (kty === 'OKP') {
-    return JSON.stringify({
-      crv: publicJwk.crv,
-      kty: publicJwk.kty,
-      x: publicJwk.x,
-    });
-  }
-  throw new Error(`Unsupported JWK kty for RFC7638 thumbprint: ${kty}`);
-}
-
-export function computeRfc7638JwkThumbprint(publicJwk: Record<string, string>): string {
-  return createHash('sha256')
-    .update(canonicalizeForThumbprint(publicJwk))
-    .digest('base64url');
-}
 
 export function deriveDeterministicEcPrivateKeyPem(
   seed: string,

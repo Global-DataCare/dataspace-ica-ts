@@ -9,6 +9,7 @@ import type {
 import type {
   VerifiableCredentialV2,
 } from 'gdc-common-utils-ts/models/verifiable-credential';
+import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type {
   OperationOutcomeResource,
   VerifyBundleResponse,
@@ -22,10 +23,7 @@ import {
   multibase58CidV1RawSha3_384Hex,
   normalizeSameAsHash,
 } from './multihash.ts';
-import { computeRfc7638JwkThumbprint } from './deterministic-key-material.ts';
 import { loadIcaSecurityConfigFromEnv } from '../security-mode.ts';
-
-const JWK_THUMBPRINT_SHA256_URN_PREFIX = 'urn:ietf:params:oauth:jwk-thumbprint:sha-256:';
 
 function normalizeDnKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, '');
@@ -255,21 +253,21 @@ function resolveRepresentativeCredentialMaterial(
       const x = typeof jwk.x === 'string' ? jwk.x.trim() : '';
       const y = typeof jwk.y === 'string' ? jwk.y.trim() : '';
       if (crv && x && y) {
-        return `${JWK_THUMBPRINT_SHA256_URN_PREFIX}${computeRfc7638JwkThumbprint({ kty, crv, x, y })}`;
+        return toJwkThumbprintSha256Urn({ kty, crv, x, y });
       }
     }
     if (kty === 'RSA') {
       const e = typeof jwk.e === 'string' ? jwk.e.trim() : '';
       const n = typeof jwk.n === 'string' ? jwk.n.trim() : '';
       if (e && n) {
-        return `${JWK_THUMBPRINT_SHA256_URN_PREFIX}${computeRfc7638JwkThumbprint({ kty, e, n })}`;
+        return toJwkThumbprintSha256Urn({ kty, e, n });
       }
     }
     if (kty === 'OKP') {
       const crv = typeof jwk.crv === 'string' ? jwk.crv.trim() : '';
       const x = typeof jwk.x === 'string' ? jwk.x.trim() : '';
       if (crv && x) {
-        return `${JWK_THUMBPRINT_SHA256_URN_PREFIX}${computeRfc7638JwkThumbprint({ kty, crv, x })}`;
+        return toJwkThumbprintSha256Urn({ kty, crv, x });
       }
     }
   } catch {

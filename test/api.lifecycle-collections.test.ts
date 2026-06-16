@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { computeRfc7638JwkThumbprint } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import { InMemoryVerificationJobStore } from '../src/api/job-store.ts';
 import { InMemoryActivationJobStore } from '../src/api/activation-job-store.ts';
 import { InMemoryEntityJobStore } from '../src/api/entity-job-store.ts';
@@ -51,7 +52,6 @@ import {
   validateRotateControllerDidcommProof,
 } from '../src/api/tools/controller-didcomm-proof.ts';
 import {
-  computeRfc7638JwkThumbprint,
   deriveDeterministicEcPrivateKeyPem,
 } from '../src/api/tools/deterministic-key-material.ts';
 import { computeControllerAuthorizationPayloadBase64Url } from '../src/api/tools/controller-authorization-payload.ts';
