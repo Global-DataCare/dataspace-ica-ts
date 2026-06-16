@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
+import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import { InMemoryEntityJobStore } from '../src/api/entity-job-store.ts';
 import {
   buildCredentialRetrieveResponseLocation,
@@ -17,6 +18,7 @@ import {
   resetVerificationCollectionsMemStateForTests,
   VerificationCollectionsService,
 } from '../src/api/tools/verification-collections-storage.ts';
+import { deriveDeterministicEcPrivateKeyPem } from '../src/api/tools/deterministic-key-material.ts';
 
 function buildDidcommRetrievePayload(thid: string, identifier: string): Buffer {
   return Buffer.from(JSON.stringify({
@@ -34,6 +36,7 @@ function buildDidcommRetrievePayload(thid: string, identifier: string): Buffer {
 }
 
 async function seedIssuedCredentials(service: VerificationCollectionsService): Promise<void> {
+  const controllerKey = deriveDeterministicEcPrivateKeyPem('credential-retrieve-controller-binding', 'P-384');
   await service.storeIssuedCredentials([
     {
       id: 'urn:uuid:issued-org-old',
@@ -130,6 +133,22 @@ async function seedIssuedCredentials(service: VerificationCollectionsService): P
       updatedAt: '2026-03-29T10:05:00.000Z',
     },
   ]);
+  await service.storeDidBindings([
+    {
+      id: 'acme::es::animal-care::VATES-A12345678',
+      tenantId: 'acme',
+      jurisdiction: 'ES',
+      sector: 'animal-care',
+      resourceType: 'contract',
+      thid: 'thid-verify-person',
+      taxId: 'VATES-A12345678',
+      did: 'did:web:member.example.org',
+      controllerPublicKeyJwk: controllerKey.publicJwk,
+      status: 'confirmed',
+      createdAt: '2026-03-29T10:06:00.000Z',
+      updatedAt: '2026-03-29T10:06:00.000Z',
+    },
+  ]);
 }
 
 test('parseCredentialRetrieveRoute accepts valid _retrieve route', () => {
@@ -220,6 +239,37 @@ test('CredentialRetrieve direct GET-style path returns signed VC JSON and uses i
   assert.equal(outcome.format, 'vc+json');
   assert.equal(outcome.credential?.id, 'urn:uuid:vc-org-new');
   assert.equal((outcome.credential?.credentialSubject as Record<string, unknown>)?.legalName, 'Acme Org NEW');
+});
+
+test('CredentialRetrieve v2 injects representative hasCredential.material from did binding', async () => {
+  const parsed = parseCredentialRetrieveRoute('/acme/cds-ES/v1/animal-care/network/credentials/contract/_retrieve');
+  assert.ok(parsed && parsed.ok);
+  if (!parsed || !parsed.ok) return;
+
+  resetVerificationCollectionsMemStateForTests();
+  const collectionsService = new VerificationCollectionsService({
+    provider: 'mem',
+    required: true,
+    firestoreCollectionPrefix: 'ica',
+  });
+  await seedIssuedCredentials(collectionsService);
+
+  const store = new InMemoryEntityJobStore<CredentialRetrieveRouteContext, CredentialRetrieveResult>(60);
+  const requestManager = new CredentialRetrieveRequestManager(store, collectionsService);
+
+  const requestUrl = new URL(
+    'http://localhost/acme/cds-ES/v1/animal-care/network/credentials/contract/_retrieve?identifier=VATES-A12345678&type=LegalRepresentativeCredential&version=v2',
+  );
+  const outcome = await requestManager.retrieveDirect(parsed.context, requestUrl, 'application/vc+json');
+  assert.equal(outcome.type, 'succeeded');
+  if (outcome.type !== 'succeeded') return;
+
+  const subject = outcome.credential?.credentialSubject as Record<string, unknown>;
+  const hasCredential = subject?.hasCredential as Record<string, unknown>;
+  const expected = toJwkThumbprintSha256Urn(
+    deriveDeterministicEcPrivateKeyPem('credential-retrieve-controller-binding', 'P-384').publicJwk,
+  );
+  assert.equal(hasCredential?.material, expected);
 });
 
 test('CredentialRetrieve direct GET-style path returns vc+jwt when Accept requests application/vc+jwt', async () => {

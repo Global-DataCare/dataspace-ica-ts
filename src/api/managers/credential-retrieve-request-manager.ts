@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { VerifiableCredentialV2 } from 'gdc-common-utils-ts/models/verifiable-credential';
+import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type { InMemoryEntityJobStore } from '../entity-job-store.ts';
 import { parseCredentialSearchSubmission } from '../request-parsing.ts';
 import { buildCredentialRetrieveResponseLocation } from '../path.ts';
@@ -10,7 +11,7 @@ import type {
   CredentialSearchInput,
   VerifyRouteContext,
 } from '../types.ts';
-import type { IssuedCredentialRecord } from '../tools/verification-collections-storage.ts';
+import type { DidBindingRecord, IssuedCredentialRecord } from '../tools/verification-collections-storage.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 import { attachProofToCredential, convertCredentialToVcJwt } from '../tools/ica-identity.ts';
 import { multibase58MultihashSha3_256 } from '../tools/multihash.ts';
@@ -59,6 +60,29 @@ function resolveCredentialSubject(credential: JsonObject): JsonObject | undefine
     return undefined;
   }
   return asObject(credentialSubject);
+}
+
+function hasCredentialMaterialPopulated(subject: JsonObject | undefined): boolean {
+  const hasCredential = asObject(subject?.hasCredential);
+  return !!asNonEmptyString(hasCredential?.material);
+}
+
+function resolveLatestDidBindingRecord(
+  records: DidBindingRecord[],
+  route: CredentialRetrieveRouteContext,
+  lookup: { did?: string; taxId?: string },
+): DidBindingRecord | undefined {
+  return [...records]
+    .filter((record) =>
+      equalsIgnoreCase(record.tenantId, route.tenantId)
+      && equalsIgnoreCase(record.jurisdiction, route.jurisdiction)
+      && equalsIgnoreCase(record.sector, route.sector)
+      && record.status !== 'removed'
+      && (
+        (lookup.did ? equalsIgnoreCase(asNonEmptyString(record.did), lookup.did) : false)
+        || (lookup.taxId ? equalsIgnoreCase(record.taxId, lookup.taxId) : false)
+      ))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
 }
 
 function resolveOrganizationNode(subject: JsonObject): JsonObject {
@@ -129,6 +153,10 @@ function recordMatchesType(record: IssuedCredentialRecord, typeFilter: string): 
     ? credentialTypeRaw.map((entry) => normalizeRecordType(asNonEmptyString(entry))).filter(Boolean)
     : [normalizeRecordType(asNonEmptyString(credentialTypeRaw))].filter(Boolean);
   return recordTypes.includes(requested) || vcTypes.includes(requested);
+}
+
+function isLegalRepresentativeCredential(record: IssuedCredentialRecord): boolean {
+  return recordMatchesType(record, 'LegalRepresentativeCredential');
 }
 
 function toMillis(value: string): number {
@@ -264,6 +292,46 @@ function signCredentialRecord(
     return { signedCredential, vcJwt };
   }
   return { signedCredential };
+}
+
+function enrichRepresentativeCredentialMaterial(
+  route: CredentialRetrieveRouteContext,
+  record: IssuedCredentialRecord,
+  didBindings: DidBindingRecord[],
+): IssuedCredentialRecord {
+  if (!isLegalRepresentativeCredential(record)) return record;
+
+  const credential = asObject(record.credential);
+  if (!credential) return record;
+  const subject = resolveCredentialSubject(credential);
+  if (!subject || hasCredentialMaterialPopulated(subject)) return record;
+
+  const organizationNode = resolveOrganizationNode(subject);
+  const taxId = resolveTaxId(organizationNode) || resolveTaxId(subject);
+  const organizationDid = resolveOrganizationDid(subject, record);
+  const binding = resolveLatestDidBindingRecord(didBindings, route, {
+    ...(organizationDid ? { did: organizationDid } : {}),
+    ...(taxId ? { taxId } : {}),
+  });
+  const controllerPublicKeyJwk = asObject(binding?.controllerPublicKeyJwk);
+  if (!controllerPublicKeyJwk) return record;
+
+  const material = toJwkThumbprintSha256Urn(controllerPublicKeyJwk);
+  if (!material) return record;
+
+  return {
+    ...record,
+    credential: {
+      ...credential,
+      credentialSubject: {
+        ...subject,
+        hasCredential: {
+          ...(asObject(subject.hasCredential) || {}),
+          material,
+        },
+      },
+    },
+  };
 }
 
 function parseDirectQueries(requestUrl: URL): {
@@ -433,6 +501,9 @@ export class CredentialRetrieveRequestManager {
         this.jobStore.markRunning(submission.thid);
         try {
           const records = await this.collectionsService.listIssuedCredentials();
+          const didBindings = requestedVersion === 'v2'
+            ? await this.collectionsService.listDidBindings()
+            : [];
           const scoped = records.filter((record) =>
             equalsIgnoreCase(record.tenantId, route.tenantId) &&
             equalsIgnoreCase(record.jurisdiction, route.jurisdiction) &&
@@ -442,13 +513,16 @@ export class CredentialRetrieveRequestManager {
           if (!selected) {
             throw new Error('Credential not found for the provided retrieval filters.');
           }
-          const signed = signCredentialRecord(selected.record, requestedFormat);
+          const materializedRecord = requestedVersion === 'v2'
+            ? enrichRepresentativeCredentialMaterial(route, selected.record, didBindings)
+            : selected.record;
+          const signed = signCredentialRecord(materializedRecord, requestedFormat);
           const item: CredentialRetrieveResultItem = {
-            issuedCredentialRecordId: selected.record.id,
-            credentialId: selected.record.credentialId,
-            credentialType: selected.record.credentialType,
-            subjectId: selected.record.subjectId,
-            issuerId: selected.record.issuerId,
+            issuedCredentialRecordId: materializedRecord.id,
+            credentialId: materializedRecord.credentialId,
+            credentialType: materializedRecord.credentialType,
+            subjectId: materializedRecord.subjectId,
+            issuerId: materializedRecord.issuerId,
             ...(selected.legalName ? { legalName: selected.legalName } : {}),
             ...(selected.taxId ? { taxId: selected.taxId } : {}),
             ...(selected.taxIdHash ? { taxIdHash: selected.taxIdHash } : {}),
@@ -502,6 +576,9 @@ export class CredentialRetrieveRequestManager {
         asNonEmptyString(requestUrl.searchParams.get('type') || requestUrl.searchParams.get('credentialType')),
       );
       const records = await this.collectionsService.listIssuedCredentials();
+      const didBindings = requestedVersion === 'v2'
+        ? await this.collectionsService.listDidBindings()
+        : [];
       const scoped = records.filter((record) =>
         equalsIgnoreCase(record.tenantId, route.tenantId) &&
         equalsIgnoreCase(record.jurisdiction, route.jurisdiction) &&
@@ -518,7 +595,10 @@ export class CredentialRetrieveRequestManager {
           message: 'Credential not found for the provided retrieval filters.',
         };
       }
-      const signed = signCredentialRecord(selected.record, requestedFormat);
+      const materializedRecord = requestedVersion === 'v2'
+        ? enrichRepresentativeCredentialMaterial(route, selected.record, didBindings)
+        : selected.record;
+      const signed = signCredentialRecord(materializedRecord, requestedFormat);
       return {
         type: 'succeeded',
         format: requestedFormat,
