@@ -502,7 +502,7 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.equal(personSubject?.additionalType, 'ES384');
   assert.equal(
     organizationSubject?.id,
-    'did:web:globaldatacare.es:onehealth:organization:taxid:VATES-B00000000',
+    'did:web:globaldatacare.es:onehealth:organization:taxid:VATES-B00112233',
   );
   assert.equal(organizationSubject?.sameAs, 'did:web:provider.example.org');
   assert.ok(

@@ -33,7 +33,7 @@
     "@google-cloud/firestore": "^8.3.0",
     "@google-cloud/secret-manager": "^6.1.1",
     "@google-cloud/storage": "^7.19.0",
-    "gdc-common-utils-ts": "^2.0.1",
+    "gdc-common-utils-ts": "^2.0.2",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5"
   },
