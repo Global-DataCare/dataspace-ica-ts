@@ -22,7 +22,10 @@ import {
   multibase58CidV1RawSha3_384Hex,
   normalizeSameAsHash,
 } from './multihash.ts';
+import { computeRfc7638JwkThumbprint } from './deterministic-key-material.ts';
 import { loadIcaSecurityConfigFromEnv } from '../security-mode.ts';
+
+const JWK_THUMBPRINT_SHA256_URN_PREFIX = 'urn:ietf:params:oauth:jwk-thumbprint:sha-256:';
 
 function normalizeDnKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, '');
@@ -218,6 +221,63 @@ function getAnnexOrganizationDid(result: VerifyResult): string | undefined {
   const candidate = getAnnexField(result, ANNEX_ORGANIZATION_SAME_AS);
   if (!candidate) return undefined;
   return candidate.startsWith('did:web:') ? candidate : undefined;
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+/**
+ * Resolves the canonical controller-binding identifier to project into the
+ * representative VC as `credentialSubject.hasCredential.material`.
+ *
+ * Preferred representation:
+ * - RFC 9278 JWK-thumbprint URN derived from the controller binding public JWK
+ *
+ * Fallback:
+ * - existing `kid` when the JWK does not expose enough parameters for a
+ *   canonical RFC 7638 thumbprint derivation
+ *
+ * @param controllerPublicKeyJwk Controller binding public JWK captured during `_verify`.
+ */
+function resolveRepresentativeCredentialMaterial(
+  controllerPublicKeyJwk: Record<string, unknown> | undefined,
+): string | undefined {
+  const jwk = asObject(controllerPublicKeyJwk);
+  if (!jwk) return undefined;
+
+  const kty = typeof jwk.kty === 'string' ? jwk.kty.trim() : '';
+  try {
+    if (kty === 'EC') {
+      const crv = typeof jwk.crv === 'string' ? jwk.crv.trim() : '';
+      const x = typeof jwk.x === 'string' ? jwk.x.trim() : '';
+      const y = typeof jwk.y === 'string' ? jwk.y.trim() : '';
+      if (crv && x && y) {
+        return `${JWK_THUMBPRINT_SHA256_URN_PREFIX}${computeRfc7638JwkThumbprint({ kty, crv, x, y })}`;
+      }
+    }
+    if (kty === 'RSA') {
+      const e = typeof jwk.e === 'string' ? jwk.e.trim() : '';
+      const n = typeof jwk.n === 'string' ? jwk.n.trim() : '';
+      if (e && n) {
+        return `${JWK_THUMBPRINT_SHA256_URN_PREFIX}${computeRfc7638JwkThumbprint({ kty, e, n })}`;
+      }
+    }
+    if (kty === 'OKP') {
+      const crv = typeof jwk.crv === 'string' ? jwk.crv.trim() : '';
+      const x = typeof jwk.x === 'string' ? jwk.x.trim() : '';
+      if (crv && x) {
+        return `${JWK_THUMBPRINT_SHA256_URN_PREFIX}${computeRfc7638JwkThumbprint({ kty, crv, x })}`;
+      }
+    }
+  } catch {
+    // Fall back to `kid` below when thumbprint derivation is not possible.
+  }
+
+  const kid = typeof jwk.kid === 'string' ? jwk.kid.trim() : '';
+  return kid || undefined;
 }
 
 /**
@@ -938,6 +998,7 @@ export function buildVerificationVcBundle(
     ? firstDefined(personIdentifierFromForm, allowPayloadIdentityFallback ? payloadRepresentativeIdentifier : undefined)
     : firstDefined(personIdentifierFromCertificate, personIdentifierFromForm);
   const personSameAs = resolveRepresentativeSameAs(result, subjectDn);
+  const personCredentialMaterial = resolveRepresentativeCredentialMaterial(result.controllerPublicKeyJwk);
   const personAlternateName = getAnnexField(result, ANNEX_PERSON_ALTERNATE_NAME);
   const personAdditionalType = getAnnexField(result, ANNEX_PERSON_ADDITIONAL_TYPE);
   const country = subjectDn.C || subjectDn.COUNTRYNAME || undefined;
@@ -1080,6 +1141,11 @@ export function buildVerificationVcBundle(
   }
   if (personSameAs) {
     personSubject.sameAs = personSameAs;
+  }
+  if (personCredentialMaterial) {
+    personSubject.hasCredential = {
+      material: personCredentialMaterial,
+    };
   }
   if (personAlternateName) {
     personSubject.alternateName = personAlternateName;

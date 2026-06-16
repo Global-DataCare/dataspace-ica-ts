@@ -3,6 +3,7 @@ import test from 'node:test';
 import { parseVerifyRoute } from '../src/api/path.ts';
 import { buildVerificationVcBundle } from '../src/api/server.ts';
 import { resetActiveSigningKeysStateForTests, activateSigningKey } from '../src/api/tools/active-signing-keys.ts';
+import { deriveDeterministicEcPrivateKeyPem } from '../src/api/tools/deterministic-key-material.ts';
 import { PRIVATE_KEY_PEM } from './test-signing-key.fixture.ts';
 import { normalizeSameAsHash } from '../src/api/tools/multihash.ts';
 import type { VerifyResult } from '../src/api/types.ts';
@@ -354,6 +355,28 @@ test('buildVerificationVcBundle hashes plain controller email into credentialSub
   const personSubject = personResource.credentialSubject as Record<string, any>;
   assert.equal(personSubject.email, undefined);
   assert.equal(personSubject.sameAs, normalizeSameAsHash('Jane.Doe@Example.org'));
+});
+
+test('buildVerificationVcBundle projects controller binding into person hasCredential.material', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const controllerKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-controller-binding', 'P-384');
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('controller-binding-material'),
+    controllerPublicKeyJwk: controllerKey.publicJwk,
+  }));
+
+  const personResource = bundle.data[1].resource as Record<string, unknown> | undefined;
+  const personSubject = personResource?.credentialSubject as Record<string, unknown>;
+  const hasCredential = personSubject.hasCredential as Record<string, unknown>;
+  assert.equal(
+    hasCredential.material,
+    `urn:ietf:params:oauth:jwk-thumbprint:sha-256:${controllerKey.kidRfc7638}`,
+  );
 });
 
 test('buildVerificationVcBundle accepts legalRepresentativePayload.sameAs only in demo mode', () => {

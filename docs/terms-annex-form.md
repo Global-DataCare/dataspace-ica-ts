@@ -47,6 +47,12 @@ When a signed PDF contains these form fields, the API extracts them and carries 
   - `organization.registrationNumber` -> `credentialSubject.registrationNumber`.
   - `person.email` -> person VC `credentialSubject.sameAs` (preferred over certificate email).
     If it arrives as plain email, backend hashes it automatically to `urn:multibase:z...` so the plain value is not persisted.
+  - controller binding JWK captured during `_verify` -> person VC
+    `credentialSubject.hasCredential.material`.
+    ICA prefers an RFC 9278 JWK-thumbprint URN
+    `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<base64url>` when the public
+    JWK exposes enough material; otherwise it falls back to the existing JWK
+    `kid`.
   - `person.alternateName` -> person VC `credentialSubject.alternateName`.
     Used for the controller `kid`. We use `alternateName` instead of `nickname` to stay within the agreed schema.org Organization/Person subset already used here.
   - `person.additionalType` -> person VC `credentialSubject.additionalType`.
