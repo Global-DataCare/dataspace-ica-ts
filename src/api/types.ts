@@ -319,6 +319,20 @@ export interface VerifySubmission {
   contentType: string;
   annexFormFields?: Record<string, string>;
   annexExtractionWarnings?: string[];
+  /**
+   * Controller operation-signing / binding public JWK captured during `_verify`.
+   *
+   * Source priority:
+   * - v2 preferred: `body.data[].resource.controller.publicKeyJwk`
+   * - legacy fallback: `meta.jws.protected.jwk`
+   *
+   * Separation of concerns:
+   * - this key represents the real controller/business actor
+   * - DIDComm communication keys in `meta.jws` / `meta.jwe` protect transport
+   *   and may belong to a device profile, confidential app, or BFF
+   * - only this controller binding key should feed
+   *   `credentialSubject.hasCredential.material`
+   */
   controllerPublicKeyJwk?: Record<string, unknown>;
   organizationPublicKeyJwk?: Record<string, unknown>;
   /**

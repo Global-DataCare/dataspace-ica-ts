@@ -50,6 +50,8 @@ import {
   VerificationCollectionsService,
   resetVerificationCollectionsMemStateForTests,
 } from '../src/api/tools/verification-collections-storage.ts';
+import { normalizeSameAsHash } from '../src/api/tools/multihash.ts';
+import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type {
   VerifyResult,
   VerifySubmission,
@@ -1404,7 +1406,7 @@ test('VerifyRequestManager accepts DIDComm plaintext attachment payload', async 
   assert.equal(capturedSubmission?.pdfBytes.toString('utf8'), 'pdf-bytes-didcomm');
 });
 
-test('VerifyRequestManager captures controller meta.jws key and organization JWK attachment', async () => {
+test('VerifyRequestManager captures controller binding from verify body and keeps DIDComm communication key separate', async () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
   assert.equal(parsed.ok, true);
@@ -1427,15 +1429,32 @@ test('VerifyRequestManager captures controller meta.jws key and organization JWK
       jws: {
         protected: {
           alg: 'ES384',
-          kid: 'controller-es384-001',
+          kid: 'device-comm-es384-001',
           jwk: {
             kty: 'EC',
             crv: 'P-384',
-            x: 'controller-x',
-            y: 'controller-y',
+            x: 'device-comm-x',
+            y: 'device-comm-y',
           },
         },
       },
+    },
+    body: {
+      data: [
+        {
+          resource: {
+            controller: {
+              publicKeyJwk: {
+                kty: 'EC',
+                crv: 'P-384',
+                x: 'controller-x',
+                y: 'controller-y',
+                kid: 'controller-es384-001',
+              },
+            },
+          },
+        },
+      ],
     },
     attachments: [
       {
@@ -1473,6 +1492,7 @@ test('VerifyRequestManager captures controller meta.jws key and organization JWK
   assert.equal(outcome.type, 'accepted');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(capturedSubmission?.controllerPublicKeyJwk?.kid, 'controller-es384-001');
+  assert.equal(capturedSubmission?.controllerPublicKeyJwk?.x, 'controller-x');
   assert.equal(capturedSubmission?.organizationPublicKeyJwk?.alg, 'ES384');
   assert.equal(capturedSubmission?.organizationPublicKeyJwk?.x, 'org-x');
 });
@@ -1536,6 +1556,18 @@ test('VerifyResponseManager returns generated organization public key and contro
     assert.equal(payload.body?.data?.[0]?.privateKeyJwk?.kid, 'org-es384-001');
     assert.equal(payload.body?.data?.[0]?.keySource, 'generated');
     assert.equal(payload.body?.data?.[1]?.publicKeyJwk?.kid, 'controller-es384-001');
+    const personSubject = payload.body?.data?.[1]?.resource?.credentialSubject as Record<string, unknown> | undefined;
+    const hasCredential = personSubject?.hasCredential as Record<string, unknown> | undefined;
+    assert.equal(personSubject?.sameAs, normalizeSameAsHash('controller@example.org'));
+    assert.equal(
+      hasCredential?.material,
+      toJwkThumbprintSha256Urn({
+        kty: 'EC',
+        crv: 'P-384',
+        x: 'controller-x',
+        y: 'controller-y',
+      }),
+    );
 
     const didBindings = await collectionsService.listDidBindings();
     assert.equal(didBindings.length, 1);
