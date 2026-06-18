@@ -4,7 +4,8 @@
 
 V2 separates two different keys during onboarding:
 
-- the controller/message-signing key used by the wallet/frontend to talk to ICA
+- the DIDComm communication key used by the wallet/frontend/device/BFF to talk to ICA
+- the controller operation-signing / binding key used to represent the real controller in the VC
 - the organization credential-signing key that will later receive `x5c` in the organization DID document
 
 ## Request Contract
@@ -13,9 +14,12 @@ V2 separates two different keys during onboarding:
 
 1. PDF attachment:
    - `attachments[].media_type = application/pdf`
-2. Controller binding key:
-   - `meta.jws.protected.jwk`
-3. Optional organization credential key:
+2. DIDComm communication metadata:
+   - optional `meta.jws.protected.jwk`
+3. Controller binding key:
+   - preferred `body.data[].resource.controller.publicKeyJwk`
+   - legacy fallback `meta.jws.protected.jwk`
+4. Optional organization credential key:
    - extra DIDComm attachment with `media_type = application/jwk+json`
 
 If the organization JWK attachment is missing, ICA autogenerates an `ES384` organization credential-signing keypair.
@@ -29,7 +33,7 @@ If the organization JWK attachment is missing, ICA autogenerates an `ES384` orga
   - `privateKeyJwk` only when ICA generated the keypair
   - `keySource = generated | attachment`
 - legal representative/controller entry:
-  - `publicKeyJwk` with the controller binding key taken from `meta.jws.protected.jwk`
+  - `publicKeyJwk` with the controller binding key taken from `body.data[].resource.controller.publicKeyJwk`
 
 The organization keypair is therefore bootstrapped during `_verify`, while the credential resources stay clean inside `resource`.
 
@@ -54,8 +58,10 @@ That allows this flow:
 
 ## Security Rule
 
-- `meta.jws.protected.jwk` is only the controller/message key.
-- It is not automatically the same as the organization credential-signing key.
+- `meta.jws.protected.jwk` is a communication/profile/device/BFF key.
+- `body.data[].resource.controller.publicKeyJwk` is the controller business binding key.
+- Those two keys may be equal in simple didactic flows, but ICA must not assume they are the same.
+- Neither of them is automatically the same as the organization credential-signing key.
 - Repeating `_verify` with the same contract and a different controller binding key must be rejected in the hardened production flow.
 - Post-onboarding add/rotate/revoke of organization keys still belongs to a dedicated key-management endpoint, not to `_verify`.
 

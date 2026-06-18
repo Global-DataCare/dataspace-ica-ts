@@ -1,5 +1,26 @@
 # Changelog
 
+# 1.0.1 - 2026-06-17
+
+- Fixed the `_verify` controller-binding contract for representative VCs:
+  - preferred source is now `body.data[].resource.controller.publicKeyJwk`
+  - `meta.jws.protected.jwk` remains only as a legacy fallback
+  - the representative `credentialSubject.hasCredential.material` projection
+    now follows the controller business key instead of conflating it with the
+    DIDComm communication key
+- Added explicit request parsing and async verification tests that prove the
+  separation between:
+  - transport/profile/BFF communication keys in `meta.jws` / `meta.jwe`
+  - controller operation-signing/binding keys in
+    `body.data[].resource.controller.publicKeyJwk`
+- Expanded real-PDF coverage so `_verify` + `_retrieve?version=v2` keeps the
+  representative binding stable in the multisign flow.
+- Updated OpenAPI, README, and operational docs to document:
+  - the preferred v2 `_verify` payload shape
+  - the confidential-app / BFF separation of communication keys vs controller
+    keys
+  - the current legacy fallback behavior and migration path
+
 # 0.9.2 - 2026-06-15
 
 - `_verify` representative `sameAs` fallback is now explicitly demo-only:

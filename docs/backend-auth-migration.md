@@ -34,7 +34,8 @@ This migration adds backend authentication lifecycle endpoints in ICA aligned wi
 - Existing ICA endpoints and flows are unchanged.
 - New backend auth endpoints are additive.
 - DCR payload must not include `api_key`; `client_id` is the backend API key value.
-- When `meta.jws.protected.jwk` is present, duplicating the same key in attachments is rejected.
+- In backend auth DCR, `meta.jws.protected.jwk` is the communication/profile binding key for the technical client.
+- That DCR communication key is distinct from `_verify` business payload keys such as `body.data[].resource.controller.publicKeyJwk`.
 
 ## Contract Tests Added
 - `test/api.backend-auth.test.ts`

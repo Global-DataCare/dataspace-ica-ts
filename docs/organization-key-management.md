@@ -5,20 +5,26 @@
 The implemented flow now looks like this:
 
 1. `_verify` validates the signed adhesion contract
-2. controller/message key travels in `meta.jws.protected.jwk`
-3. organization credential key travels in an optional `application/jwk+json` attachment
-4. if the organization key is absent, ICA autogenerates an `ES384` keypair
-5. `_verify-response` returns bootstrap JWK data outside `body.data[].resource`
-6. `_create` publishes the DID document using:
+2. DIDComm communication key may travel in `meta.jws.protected.jwk`
+3. controller business binding key travels in `body.data[].resource.controller.publicKeyJwk`
+4. organization credential key travels in an optional `application/jwk+json` attachment
+5. if the organization key is absent, ICA autogenerates an `ES384` keypair
+6. `_verify-response` returns bootstrap JWK data outside `body.data[].resource`
+7. `_create` publishes the DID document using:
    - explicit keys sent in `_create`, or
    - the keys already stored from `_verify`
 
 ## Key Roles
 
 - controller key:
-  - message-signing / onboarding authorization
-  - comes from `meta.jws.protected.jwk`
-  - may be published later in controller-related DID relationships
+  - DIDComm communication key:
+    - protects the message envelope
+    - may belong to a device profile, confidential app, or BFF
+    - comes from `meta.jws.protected.jwk`
+  - controller business binding key:
+    - represents the real controller continuity
+    - comes from `body.data[].resource.controller.publicKeyJwk`
+    - is the source for `credentialSubject.hasCredential.material`
 
 - organization key:
   - credential-signing / DID document primary key
@@ -60,7 +66,7 @@ That future endpoint should update the organization DID document and return the 
 Organization deletion should be authorized by the controller message-signing key, not by raw taxID alone.
 
 - didactic mode:
-  - allow the controller public key to travel in `meta.jws.protected.jwk`
+  - allow the controller public key to travel in `meta.jws.protected.jwk` only as legacy fallback
 - hardened mode:
   - require `didcomm-signed`
   - optionally wrap it in `didcomm-encrypted`

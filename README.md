@@ -44,6 +44,28 @@ Requirements:
 - Node.js 22+
 - OpenSSL in `PATH`
 
+Recommended shared workspace:
+
+- keep related repos under `~/GITS/gdc-workspace/`
+- keep shared PDF fixtures under `~/GITS/gdc-workspace/examples/`
+- current local tests and docs assume paths like:
+  - `~/GITS/gdc-workspace/dataspace-ica-ts`
+  - `~/GITS/gdc-workspace/ica-client-sdk-ts`
+  - `~/GITS/gdc-workspace/gdc-common-utils-ts`
+  - `~/GITS/gdc-workspace/examples/<example-pdf>.pdf`
+
+Suggested layout:
+
+```text
+~/GITS/gdc-workspace/
+  dataspace-ica-ts/
+  ica-client-sdk-ts/
+  gdc-common-utils-ts/
+  examples/
+    <example-pdf-1>.pdf
+    <example-pdf-2>.pdf
+```
+
 Install and run:
 
 ```bash
@@ -154,8 +176,18 @@ Deployment tip:
 
 `_verify` accepts DIDComm plaintext (`application/didcomm-plain+json`) with:
 - the signed PDF in `attachments[].data.base64` or `attachments[].data.links`
-- optional controller binding key in `meta.jws.protected.jwk`
+- optional DIDComm communication metadata in `meta.jws` / `meta.jwe`
+- preferred controller binding key in `body.data[].resource.controller.publicKeyJwk`
+- legacy fallback controller binding key in `meta.jws.protected.jwk`
 - optional organization public key attachment as `application/jwk+json`
+
+Key separation:
+
+- `meta.jws` / `meta.jwe` protect the communication channel and may belong to a
+  device profile, confidential app, or BFF
+- `body.data[].resource.controller.publicKeyJwk` is the controller
+  operation-signing/binding key that ICA projects into
+  `credentialSubject.hasCredential.material`
 
 If the organization JWK attachment is omitted, ICA autogenerates an `ES384` organization credential-signing keypair and returns the public/private JWK outside `body.data[].resource` in `_verify-response`.
 

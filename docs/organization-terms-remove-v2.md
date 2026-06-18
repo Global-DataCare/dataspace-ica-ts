@@ -28,7 +28,8 @@ The request must be authorized by the controller message-signing key that was bo
 
 - didactic mode:
   - `didcomm-plain`
-  - controller binding key may still be surfaced as `meta.jws.protected.jwk`
+  - preferred controller binding key input is `body.data[].resource.controller.publicKeyJwk`
+  - legacy fallback may still surface the controller binding key as `meta.jws.protected.jwk`
 - hardened mode:
   - require `didcomm-signed`
   - optionally wrap it in `didcomm-encrypted`
@@ -87,9 +88,10 @@ Validation rules:
 
 1. a confirmed organization DID document must exist for that `identifier`
 2. a confirmed controller binding must exist for that `identifier`
-3. if `meta.jws.protected.jwk` is present, it must match the stored controller binding
-4. if `controller.sameAs` is present, it must match the stored controller identity for that organization
-5. if `organization.taxID` is also sent, it must match the active organization tax ID bound to that DID
+3. if `body.data[].resource.controller.publicKeyJwk` is present, it must match the stored controller binding
+4. if `meta.jws.protected.jwk` is present, it is treated only as legacy fallback and must match the stored controller binding
+5. if `controller.sameAs` is present, it must match the stored controller identity for that organization
+6. if `organization.taxID` is also sent, it must match the active organization tax ID bound to that DID
 
 ## Response Contract
 

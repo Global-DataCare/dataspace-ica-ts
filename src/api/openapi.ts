@@ -2827,7 +2827,7 @@ export function buildIcaVerifyOpenApiSpec(
             + '- `controller.publicKeyJwk`: different key used to derive the top-level `controller` as `did:key:...`\n'
             + '- optional `organization.jwks` / `controller.jwks`: extra public keys for `vc-sign`, `didcomm-sign`, `didcomm-enc`, etc.\n\n'
             + '**V2 bootstrap**\n'
-            + '- controller key may already be stored from `_verify` via `meta.jws.protected.jwk`\n'
+            + '- controller key may already be stored from `_verify` via `body.data[].resource.controller.publicKeyJwk`\n'
             + '- organization key may already be stored from `_verify` via an `application/jwk+json` attachment or an ICA-generated ES384 bootstrap key\n'
             + '- on successful `_verify-response`, ICA persists a draft DID binding used by `_create`\n'
             + '- `organization/dataspace/auth/_exchange` is a backend auth bootstrap and does not create this `_create` key binding\n'
@@ -2841,7 +2841,8 @@ export function buildIcaVerifyOpenApiSpec(
             + '- if you send explicit JWKs, copy exact values from `_verify-response` (`body.data[0].publicKeyJwk` for organization, `body.data[1].publicKeyJwk` for controller)\n'
             + '- if `_create` returns `No controller publicKeyJwk found ...`, send `controller.publicKeyJwk` explicitly (copy from `_verify-response body.data[1].publicKeyJwk`)\n\n'
             + '**SDK v2**\n'
-            + '- `setControllerMessageSigningPublicKey()` helps `_verify` bind the controller key\n'
+            + '- `setControllerMessageSigningPublicKey()` protects DIDComm communication metadata during `_verify`\n'
+            + '- `setControllerBindingPublicKey()` sends the controller business/binding key in `body.data[].resource.controller.publicKeyJwk`\n'
             + '- `setOrgCredentialSigningPublicKey()` sends the organization credential key attachment during `_verify`\n'
             + '- `createOrgDidDocument()` and `createOrgDidDocumentFromVcs()` can then call this endpoint reusing the stored keys\n\n'
             + '**Input modes**\n'
@@ -4889,14 +4890,16 @@ export function buildIcaVerifyOpenApiSpec(
             + '**Required input**\n'
             + '- DIDComm plaintext request must carry the signed PDF in `attachments[]`\n\n'
             + '**V2 bootstrap**\n'
-            + '- controller message-signing key travels in `meta.jws.protected.jwk`\n'
+            + '- DIDComm communication key may travel in `meta.jws.protected.jwk`\n'
+            + '- preferred controller binding key travels in `body.data[].resource.controller.publicKeyJwk`\n'
             + '- organization credential-signing public key travels as a separate `application/jwk+json` attachment\n'
             + '- if the organization JWK attachment is omitted, ICA autogenerates an ES384 organization credential-signing keypair\n'
             + '- the generated `publicKeyJwk` and `privateKeyJwk` are returned in `_verify-response` outside `body.data[].resource`\n\n'
             + '**Important for _create binding**\n'
-            + '- if you plan to call `entity/did/document/_create` afterwards, include `meta.jws.protected.jwk` in `_verify` (controller key binding source)\n\n'
+            + '- if you plan to call `entity/did/document/_create` afterwards, include `body.data[].resource.controller.publicKeyJwk` in `_verify` (controller key binding source)\n\n'
             + '**SDK v2**\n'
-            + '- `setControllerMessageSigningPublicKey()` fills `meta.jws.protected.jwk`\n'
+            + '- `setControllerMessageSigningPublicKey()` fills DIDComm communication metadata in `meta.jws.protected`\n'
+            + '- `setControllerBindingPublicKey()` fills `body.data[].resource.controller.publicKeyJwk`\n'
             + '- `setOrgCredentialSigningPublicKey()` adds the organization JWK attachment\n'
             + '- `verifyTerms()` builds the request envelope for you\n\n'
             + '**Swagger UI**\n'
@@ -4929,7 +4932,7 @@ export function buildIcaVerifyOpenApiSpec(
               'application/didcomm-plain+json': {
                 examples: {
                   viaUrlWithControllerJwkBinding: {
-                    summary: 'DIDComm via URL with explicit controller JWK binding (recommended before _create)',
+                    summary: 'DIDComm via URL with separated communication key and controller binding key',
                     value: {
                       jti: 'req-auto',
                       thid: 'thid-auto',
@@ -4948,7 +4951,23 @@ export function buildIcaVerifyOpenApiSpec(
                           },
                         },
                       },
-                      body: {},
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              controller: {
+                                publicKeyJwk: {
+                                  kid: 'controller-binding-es384-001',
+                                  kty: 'EC',
+                                  crv: 'P-384',
+                                  x: 'use-controller-business-binding-key-here',
+                                  y: 'use-controller-business-binding-key-here',
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
                       attachments: [
                         {
                           id: 'signed-terms',
@@ -5015,7 +5034,7 @@ export function buildIcaVerifyOpenApiSpec(
                     },
                   },
                   viaBase64WithSdkV2Bootstrap: {
-                    summary: 'V2 onboarding con controller key en meta y JWK de organización en attachment',
+                    summary: 'V2 onboarding con clave de comunicación en meta, binding del controller en body y JWK de organización en attachment',
                     value: {
                       jti: 'req-auto',
                       thid: 'thid-auto',
@@ -5034,7 +5053,23 @@ export function buildIcaVerifyOpenApiSpec(
                           },
                         },
                       },
-                      body: {},
+                      body: {
+                        data: [
+                          {
+                            resource: {
+                              controller: {
+                                publicKeyJwk: {
+                                  kid: 'controller-binding-es384-001',
+                                  kty: 'EC',
+                                  crv: 'P-384',
+                                  x: 'use-controller-business-binding-key-here',
+                                  y: 'use-controller-business-binding-key-here',
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
                       attachments: [
                         {
                           id: 'signed-terms',
@@ -5074,7 +5109,7 @@ export function buildIcaVerifyOpenApiSpec(
                       type: 'object',
                       additionalProperties: true,
                       description:
-                        'Optional DIDComm metadata. In v2, `meta.jws.protected.jwk` carries the controller message-signing public key. `ica-client-sdk-ts@2.x` fills this automatically when `setControllerMessageSigningPublicKey()` is configured.',
+                        'Optional DIDComm metadata for communication protection. In v2, `meta.jws.protected.jwk` is a communication/profile/BFF key, while the controller business binding key should travel in `body.data[].resource.controller.publicKeyJwk`. `ica-client-sdk-ts@2.x` fills communication metadata via `setControllerMessageSigningPublicKey()`.',
                     },
                     body: { type: 'object', additionalProperties: true },
                     attachments: {
@@ -5169,7 +5204,8 @@ export function buildIcaVerifyOpenApiSpec(
             + '- `organization.taxID` is optional and, if sent, must match the active tax ID bound to that DID\n\n'
             + '**Authorization**\n'
             + '- `controller.publicKeyJwk` must match the stored controller binding for the organization\n'
-            + '- in didactic/plain mode this may travel in `meta.jws.protected.jwk`\n'
+            + '- preferred transport is `body.data[].resource.controller.publicKeyJwk`\n'
+            + '- in didactic/plain legacy mode this may still travel in `meta.jws.protected.jwk`\n'
             + '- hardened production mode should use signed DIDComm so the controller key is actually proven, not just claimed\n\n'
             + '**SDK**\n'
             + '- `ica-client-sdk-ts@2.x` provides `removeOrganizationTerms()` and `pollRemoveOrganizationTermsResponse()`\n\n'

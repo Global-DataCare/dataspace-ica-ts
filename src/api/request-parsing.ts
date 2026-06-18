@@ -350,6 +350,18 @@ function resolveControllerPublicKeyFromMeta(parsed: ParsedObject): Record<string
   );
 }
 
+function resolveControllerPublicKeyFromVerifyBody(parsedBody: ParsedObject): Record<string, unknown> | undefined {
+  const dataArray = Array.isArray(parsedBody.data) ? parsedBody.data : [];
+  const firstResource = dataArray.length > 0
+    ? asObject((dataArray[0] as Record<string, unknown>)?.resource)
+    : undefined;
+  const controller = firstResource ? asObject(firstResource.controller) : undefined;
+  return normalizeControllerPublicKeyJwk(
+    controller?.publicKeyJwk,
+    asNonEmptyString(controller?.alg) || undefined,
+  );
+}
+
 function resolveOrganizationPublicKeyFromDidcommAttachments(
   attachments: DidcommAttachment[],
 ): Record<string, unknown> | undefined {
@@ -487,7 +499,8 @@ export async function parseVerifySubmission(
       annex.warnings.push(...visibleIdentity.warnings);
     }
   }
-  const controllerPublicKeyJwk = resolveControllerPublicKeyFromMeta(parsed);
+  const controllerPublicKeyJwk = resolveControllerPublicKeyFromVerifyBody(parsedBody)
+    || resolveControllerPublicKeyFromMeta(parsed);
   const organizationPublicKeyJwk = resolveOrganizationPublicKeyFromDidcommAttachments(attachments);
   
   const dataArray = Array.isArray(parsedBody.data) ? parsedBody.data : [];
