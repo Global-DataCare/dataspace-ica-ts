@@ -1779,8 +1779,13 @@ export async function startIcaApiServer(options: IcaApiServerOptions = {}) {
   server.listen(port, host, () => {
     const searchLegacy = security.securityMode !== 'strict' && security.jsonLegacy;
     console.log(
-      `ICA security profile mode=${security.securityMode} searchLegacy=${searchLegacy ? 'enabled' : 'disabled'} demoAllowInsecureBearer=${security.demoAllowInsecureBearer ? 'enabled' : 'disabled'}`,
+      `ICA security profile mode=${security.securityMode} searchLegacy=${searchLegacy ? 'enabled' : 'disabled'} demoAllowInsecureBearer=${security.demoAllowInsecureBearer ? 'enabled' : 'disabled'} didcommPlaintextLegacy=${security.allowLegacyDidcommPlaintextMediaType ? 'enabled' : 'disabled'}`,
     );
+    if (security.allowLegacyDidcommPlaintextMediaType) {
+      console.warn(
+        'WARNING: Legacy DIDComm media type compatibility enabled: accepting application/didcomm-plaintext+json temporarily while dependent packages are updated. Canonical media type remains application/didcomm-plain+json.',
+      );
+    }
     console.log(`ICA verify API listening on http://${host}:${port}`);
   });
   return server;
