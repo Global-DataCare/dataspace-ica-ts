@@ -129,7 +129,10 @@ test(
       assert.equal(submitOutcome.type, 'accepted');
       await new Promise((resolve) => setImmediate(resolve));
 
-      assert.equal(capturedSubmission?.controllerPublicKeyJwk?.kid, controllerKey.publicJwk.kid);
+      assert.equal(
+        toJwkThumbprintSha256Urn(capturedSubmission?.controllerPublicKeyJwk as Record<string, unknown>),
+        toJwkThumbprintSha256Urn(controllerKey.publicJwk as Record<string, unknown>),
+      );
 
       const verifyPollParsed = parseVerifyRoute('/ica/cds-ES/v1/health-care/terms/pdf/contract/_verify-response');
       assert.ok(verifyPollParsed && verifyPollParsed.ok);
@@ -145,7 +148,10 @@ test(
       const didBindings = await collectionsService.listDidBindings();
       assert.equal(didBindings.length, 1);
       assert.equal(didBindings[0]?.taxId, 'VATES-B00112233');
-      assert.equal(didBindings[0]?.controllerPublicKeyJwk?.kid, controllerKey.publicJwk.kid);
+      assert.equal(
+        toJwkThumbprintSha256Urn(didBindings[0]?.controllerPublicKeyJwk as Record<string, unknown>),
+        toJwkThumbprintSha256Urn(controllerKey.publicJwk as Record<string, unknown>),
+      );
 
       const retrieveParsed = parseCredentialRetrieveRoute('/ica/cds-ES/v1/health-care/network/credentials/contract/_retrieve');
       assert.ok(retrieveParsed && retrieveParsed.ok);

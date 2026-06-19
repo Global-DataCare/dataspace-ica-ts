@@ -818,6 +818,24 @@ function extractAdditionalOrganizationDataFromPdf(result: VerifyResult): Record<
   return {};
 }
 
+function isDemoOrganizationCategoryFallbackEnabled(): boolean {
+  return loadIcaSecurityConfigFromEnv().securityMode === 'demo';
+}
+
+function resolveOrganizationOfferCategory(
+  route: VerifyRouteContext,
+  organizationSubject: Record<string, unknown>,
+): string | undefined {
+  const existingMakesOffer = asObject(organizationSubject.makesOffer);
+  const existingCategory = firstDefined(
+    typeof existingMakesOffer?.category === 'string' ? existingMakesOffer.category : undefined,
+    typeof organizationSubject.category === 'string' ? String(organizationSubject.category) : undefined,
+  );
+  if (existingCategory) return existingCategory;
+  if (!isDemoOrganizationCategoryFallbackEnabled()) return undefined;
+  return String(route.sector || '').trim() || undefined;
+}
+
 function extractAdditionalPersonDataFromPdf(result: VerifyResult): Record<string, unknown> {
   // TODO: Extract additional schema.org fields directly from the PDF fields
   if (isStrictIdentitySourcesEnabled()) {
@@ -1085,6 +1103,15 @@ export function buildVerificationVcBundle(
   }
   if (organizationUrl) {
     organizationSubject.url = organizationUrl;
+  }
+  const organizationOfferCategory = resolveOrganizationOfferCategory(route, organizationSubject);
+  if (organizationOfferCategory) {
+    const existingMakesOffer = asObject(organizationSubject.makesOffer) || {};
+    organizationSubject.makesOffer = {
+      ...existingMakesOffer,
+      '@type': typeof existingMakesOffer['@type'] === 'string' ? existingMakesOffer['@type'] : 'Offer',
+      category: organizationOfferCategory,
+    };
   }
 
   const unsignedOrganizationVc: VerifiableCredentialV2 = {

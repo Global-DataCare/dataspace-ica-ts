@@ -7,6 +7,8 @@
  * - analiza ficheros JSON bajo:
  *   discovery/globaldatacare/ica/organization/**.json
  *   discovery/globaldatacare/ica/organization-representative/**.json
+ *   discovery/globaldatacare/ica/vN/organization/**.json
+ *   discovery/globaldatacare/ica/vN/organization-representative/**.json
  * - extrae evidence[type=document].attachments.url
  *
  * Salida:
@@ -160,6 +162,28 @@ function resolveDiscoveryNamespace(project, explicitNamespace) {
   return 'globaldatacare';
 }
 
+function listCredentialRoots(vcRoot) {
+  const roots = [];
+  const directOrganizationRoot = path.join(vcRoot, 'organization');
+  const directRepresentativeRoot = path.join(vcRoot, 'organization-representative');
+  if (fs.existsSync(directOrganizationRoot)) roots.push(directOrganizationRoot);
+  if (fs.existsSync(directRepresentativeRoot)) roots.push(directRepresentativeRoot);
+
+  if (!fs.existsSync(vcRoot)) return roots;
+  const entries = fs.readdirSync(vcRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (!/^v\d+$/i.test(entry.name)) continue;
+    const versionRoot = path.join(vcRoot, entry.name);
+    const organizationRoot = path.join(versionRoot, 'organization');
+    const representativeRoot = path.join(versionRoot, 'organization-representative');
+    if (fs.existsSync(organizationRoot)) roots.push(organizationRoot);
+    if (fs.existsSync(representativeRoot)) roots.push(representativeRoot);
+  }
+
+  return [...new Set(roots)];
+}
+
 function extractVatFromPath(filePath) {
   const match = filePath.match(/\/(VATES-[A-Z0-9-]+)\//i);
   return match ? match[1].toUpperCase() : 'VATES-UNKNOWN';
@@ -199,8 +223,7 @@ async function main() {
   const discoveryRoot = path.resolve(args.discoveryRoot);
   const discoveryNamespace = resolveDiscoveryNamespace(args.project, args.namespace);
   const vcRoot = path.join(discoveryRoot, discoveryNamespace, 'ica');
-  const organizationRoot = path.join(vcRoot, 'organization');
-  const representativeRoot = path.join(vcRoot, 'organization-representative');
+  const credentialRoots = listCredentialRoots(vcRoot);
   const pdfOutRoot = path.resolve(args.pdfOut || path.join(discoveryRoot, args.project, 'pdfs'));
   const logRoot = path.join(discoveryRoot, 'logs', args.project);
   const gcsBucket = asString(args.gcsBucket);
@@ -210,10 +233,7 @@ async function main() {
   ensureDir(pdfOutRoot);
   ensureDir(logRoot);
 
-  const jsonFiles = [
-    ...walkJsonFiles(organizationRoot),
-    ...walkJsonFiles(representativeRoot),
-  ];
+  const jsonFiles = credentialRoots.flatMap((rootDir) => walkJsonFiles(rootDir));
 
   const parsedEntries = [];
   for (const filePath of jsonFiles) {
@@ -376,6 +396,7 @@ async function main() {
     `discoveryRoot=${discoveryRoot}`,
     `project=${args.project}`,
     `namespace=${discoveryNamespace}`,
+    `credentialRoots=${credentialRoots.length ? credentialRoots.join(',') : '-'}`,
     `pdfOutRoot=${pdfOutRoot}`,
     `jsonFilesScanned=${jsonFiles.length}`,
     `linkTargets=${targets.length}`,

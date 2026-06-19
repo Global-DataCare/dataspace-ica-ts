@@ -254,7 +254,7 @@ export class CreateDidDocumentRequestManager {
               id: item.id,
               organization: item.organization,
             });
-            const lookupTaxId = taxId || extractOrganizationDidTaxId(did) || '';
+            const lookupTaxId = extractOrganizationDidTaxId(did) || taxId || '';
             const latestDidBinding = resolveLatestDidBindingRecord(didBindingRecords, route, lookupTaxId);
             if (latestDidBinding?.status === 'removed') {
               throw new Error(
