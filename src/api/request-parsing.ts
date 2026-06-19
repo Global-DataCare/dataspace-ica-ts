@@ -188,6 +188,24 @@ function normalizeContentType(headerValue: string): string {
   return headerValue.split(';')[0].trim().toLowerCase();
 }
 
+const DIDCOMM_PLAIN_JSON_MEDIA_TYPE = 'application/didcomm-plain+json';
+const DIDCOMM_PLAINTEXT_JSON_LEGACY_MEDIA_TYPE = 'application/didcomm-plaintext+json';
+
+function acceptsLegacyDidcommPlaintextMediaType(): boolean {
+  return loadIcaSecurityConfigFromEnv().allowLegacyDidcommPlaintextMediaType;
+}
+
+function isAcceptedDidcommPlainContentType(contentType: string): boolean {
+  return contentType === DIDCOMM_PLAIN_JSON_MEDIA_TYPE
+    || (acceptsLegacyDidcommPlaintextMediaType() && contentType === DIDCOMM_PLAINTEXT_JSON_LEGACY_MEDIA_TYPE);
+}
+
+function buildExpectedDidcommPlainContentTypeLabel(): string {
+  return acceptsLegacyDidcommPlaintextMediaType()
+    ? `${DIDCOMM_PLAIN_JSON_MEDIA_TYPE} (canonical) or ${DIDCOMM_PLAINTEXT_JSON_LEGACY_MEDIA_TYPE} (temporary compatibility mode)`
+    : DIDCOMM_PLAIN_JSON_MEDIA_TYPE;
+}
+
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   const normalized = value.trim().toLowerCase();
@@ -413,14 +431,14 @@ export async function parseVerifySubmission(
     throw new Error('Empty request payload.');
   }
 
-  if (contentType !== 'application/didcomm-plain+json') {
+  if (!isAcceptedDidcommPlainContentType(contentType)) {
     if (contentType === 'application/didcomm-encrypted+json') {
       throw new Error(
         'Unsupported Content-Type for _verify: application/didcomm-encrypted+json (decrypt before calling this endpoint).',
       );
     }
     throw new Error(
-      `Unsupported Content-Type for _verify: ${contentTypeHeader || '(missing)'} (expected application/didcomm-plain+json)`,
+      `Unsupported Content-Type for _verify: ${contentTypeHeader || '(missing)'} (expected ${buildExpectedDidcommPlainContentTypeLabel()})`,
     );
   }
 
@@ -658,14 +676,14 @@ export async function parseActivateSigningKeySubmission(
     throw new Error('Empty request payload.');
   }
 
-  if (contentType !== 'application/didcomm-plain+json') {
+  if (!isAcceptedDidcommPlainContentType(contentType)) {
     if (contentType === 'application/didcomm-encrypted+json') {
       throw new Error(
         'Unsupported Content-Type for _activate: application/didcomm-encrypted+json (decrypt before calling this endpoint).',
       );
     }
     throw new Error(
-      `Unsupported Content-Type for _activate: ${contentTypeHeader || '(missing)'} (expected application/didcomm-plain+json)`,
+      `Unsupported Content-Type for _activate: ${contentTypeHeader || '(missing)'} (expected ${buildExpectedDidcommPlainContentTypeLabel()})`,
     );
   }
 
@@ -721,14 +739,14 @@ async function parseDidcommPlainObject(
     throw new Error('Empty request payload.');
   }
 
-  if (contentType !== 'application/didcomm-plain+json') {
+  if (!isAcceptedDidcommPlainContentType(contentType)) {
     if (contentType === 'application/didcomm-encrypted+json') {
       throw new Error(
         `Unsupported Content-Type for ${action}: application/didcomm-encrypted+json (decrypt before calling this endpoint).`,
       );
     }
     throw new Error(
-      `Unsupported Content-Type for ${action}: ${contentTypeHeader || '(missing)'} (expected application/didcomm-plain+json)`,
+      `Unsupported Content-Type for ${action}: ${contentTypeHeader || '(missing)'} (expected ${buildExpectedDidcommPlainContentTypeLabel()})`,
     );
   }
 
@@ -1430,8 +1448,8 @@ export async function parseCredentialSearchSubmission(
   const security = loadIcaSecurityConfigFromEnv();
   const allowLegacySearchTransports = security.securityMode !== 'strict' && security.jsonLegacy;
   const expectedTransport = allowLegacySearchTransports
-    ? 'application/x-www-form-urlencoded, application/json or application/didcomm-plain+json'
-    : 'application/didcomm-plain+json';
+    ? `application/x-www-form-urlencoded, application/json or ${buildExpectedDidcommPlainContentTypeLabel()}`
+    : buildExpectedDidcommPlainContentTypeLabel();
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
   const contentEncodingHeader = normalizeHeader(req.headers['content-encoding']).trim().toLowerCase();
@@ -1441,7 +1459,7 @@ export async function parseCredentialSearchSubmission(
     );
   }
 
-  if (contentType === 'application/didcomm-plain+json') {
+  if (isAcceptedDidcommPlainContentType(contentType)) {
     const { parsed, parsedBody } = await parseDidcommPlainObject(req, '_search');
     const fallback: ParsedObject = { ...parsed, ...parsedBody };
     const rawBatchEntries = Array.isArray(parsedBody.data)
@@ -1668,7 +1686,7 @@ export async function parsePollingThreadId(
     });
   }
 
-  if (contentType === 'application/json' || contentType === 'application/didcomm-plain+json' || !contentType) {
+  if (contentType === 'application/json' || isAcceptedDidcommPlainContentType(contentType) || !contentType) {
     try {
       const body = JSON.parse(raw.toString('utf8')) as ParsedThreadPayload;
       return extractPollingThreadId(body);
