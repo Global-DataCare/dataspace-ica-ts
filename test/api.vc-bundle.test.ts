@@ -435,6 +435,31 @@ test('buildVerificationVcBundle hashes legalRepresentativePayload.email only in 
   assert.equal(compatPersonSubject.sameAs, undefined);
 });
 
+test('buildVerificationVcBundle falls back OrganizationCredential makesOffer.category from route sector only in demo mode', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const demoBundle = withSecurityMode('demo', () => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('demo-sector-category-fallback'),
+  })));
+  const compatBundle = withSecurityMode('compat', () => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('compat-sector-category-fallback'),
+  })));
+
+  const demoOrganizationResource = demoBundle.data[0].resource as Record<string, unknown> | undefined;
+  const compatOrganizationResource = compatBundle.data[0].resource as Record<string, unknown> | undefined;
+  const demoOrganizationSubject = demoOrganizationResource?.credentialSubject as Record<string, unknown>;
+  const compatOrganizationSubject = compatOrganizationResource?.credentialSubject as Record<string, unknown>;
+  assert.deepEqual(demoOrganizationSubject.makesOffer, {
+    '@type': 'Offer',
+    category: 'health-care',
+  });
+  assert.equal(compatOrganizationSubject.makesOffer, undefined);
+});
+
 test('buildVerificationVcBundle omits intermediate crl_check_all verify_error when fallback succeeds', () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);

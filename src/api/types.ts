@@ -338,6 +338,15 @@ export interface VerifySubmission {
   /**
    * Optional compatibility payload used only for identity fields that are not
    * available in the signed PDF/certificate path.
+   *
+   * Sector/category note:
+   * - the onboarding sector is always scoped by the route path
+   *   (`/cds-{jurisdiction}/v1/{sector}/...`)
+   * - `_verify` does not require a separate sector field inside
+   *   `organizationPayload`
+   * - demo mode may bootstrap the emitted Organization VC
+   *   `credentialSubject.makesOffer.category` from the route sector when the
+   *   signed PDF does not expose that claim yet
    */
   organizationPayload?: Record<string, unknown>;
   /**

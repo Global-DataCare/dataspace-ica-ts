@@ -1,5 +1,29 @@
 # Changelog
 
+# Unreleased
+
+# 1.0.2 - 2026-06-18
+
+- Bumped the shared dependency target to `gdc-common-utils-ts@^2.0.5`.
+- `_verify` now fills `OrganizationCredential.credentialSubject.makesOffer.category`
+  from the route `{sector}` only in `SECURITY_MODE=demo` when the signed PDF
+  does not expose that authorization claim yet.
+- Clarified the `_verify` contract in OpenAPI and runtime JSDoc:
+  - sector authority lives in the route path
+  - `organizationPayload` does not need a duplicate sector field
+  - production/strict flows should still source the authorization from the
+    signed document
+- Added VC-bundle coverage proving the sector/category fallback is demo-only
+  and is not applied in compat mode.
+- Hardened the operator scripts and test coverage around discovery downloads,
+  VAT search, DID document creation, multisign controller material, and
+  VC-bundle projections:
+  - `scripts/download-discovery-pdfs.mjs`
+  - `scripts/firestore-vat-search.mjs`
+  - `test/api.did-document-create.test.ts`
+  - `test/api.multisign-controller-material.test.ts`
+  - `test/api.vc-bundle.test.ts`
+
 # 1.0.1 - 2026-06-17
 
 - Fixed the `_verify` controller-binding contract for representative VCs:

@@ -6,6 +6,15 @@ import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import type { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
+import {
+  EXAMPLE_DEFAULT_ICA_DID,
+  EXAMPLE_PROVIDER_LEGAL_NAME,
+  EXAMPLE_PROVIDER_TAX_ID,
+} from 'gdc-common-utils-ts/examples/shared';
+import {
+  EXAMPLE_VERIFY_RESPONSE_DATE,
+  EXAMPLE_VERIFY_RESPONSE_ORG_ENTRY_TYPE,
+} from 'gdc-common-utils-ts/examples/ica-verify-response';
 import { InMemoryEntityJobStore } from '../src/api/entity-job-store.ts';
 import {
   buildCreateDidDocumentResponseLocation,
@@ -16,7 +25,11 @@ import { CreateDidDocumentResponseManager } from '../src/api/managers/create-did
 import { parseCreateDidDocumentSubmission, parsePollingThreadId } from '../src/api/request-parsing.ts';
 import { activateSigningKey, resetActiveSigningKeysStateForTests } from '../src/api/tools/active-signing-keys.ts';
 import { deriveDeterministicEcPrivateKeyPem } from '../src/api/tools/deterministic-key-material.ts';
-import { buildOrganizationDidDocument, validateOrganizationDidInput } from '../src/api/tools/organization-did.ts';
+import {
+  buildOrganizationDidDocument,
+  buildOrganizationDidFromTaxId,
+  validateOrganizationDidInput,
+} from '../src/api/tools/organization-did.ts';
 import {
   VerificationCollectionsService,
 } from '../src/api/tools/verification-collections-storage.ts';
@@ -71,6 +84,33 @@ E1nH11R79H5EgC0iXZ4ljRU197XvArNXUJANDKBR9PkDjJLHGisIAFA=
 -----END PRIVATE KEY-----`;
 
 const ICA_ISSUER_TEST_X5C = 'MIICQzCCAcqgAwIBAgIUDO7JwdnoN/7sPtXSsYvu3/lsJ/owCgYIKoZIzj0EAwIwWTELMAkGA1UEBhMCRVMxDTALBgNVBAoMBEFjbWUxEzARBgNVBAMMCkNvbnRyb2xsZXIxJjAkBgkqhkiG9w0BCQEWF2l0LWRpcmVjdG9yQGV4YW1wbGUub3JnMB4XDTI2MDMwNzE1NDk1MloXDTM2MDMwNDE1NDk1MlowWTELMAkGA1UEBhMCRVMxDTALBgNVBAoMBEFjbWUxEzARBgNVBAMMCkNvbnRyb2xsZXIxJjAkBgkqhkiG9w0BCQEWF2l0LWRpcmVjdG9yQGV4YW1wbGUub3JnMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEuuya3GaE323xjWErDt4DcO4yd/V3enCJvOUz7mAe63Tz0Jeg4tF8ZljjLluXJHdL93iyFwmlTxNZx9dUe/R+RIAtIl2eJY0VNfe17wKzV1CQDQygUfT5A4ySxxorCABQo1MwUTAdBgNVHQ4EFgQUoqHCRVOg4IkdCG+1D24CTJjECVMwHwYDVR0jBBgwFoAUoqHCRVOg4IkdCG+1D24CTJjECVMwDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNnADBkAjB3vq5C6TgDU/WwV9bsJG+svSuu6d93YQco4z7tMrpzfgZP6emsFyg23lFeY5GzoC4CMA7jgC4UXi2k4UAB6eBePQJVXRS8c2MlwOjiIa+MLDqcvyZcbRaZLBT3JHz09RTRIQ==';
+const TEST_RESOURCE_TYPE_CONTRACT = 'contract' as const;
+const TEST_CREATE_DID_REQUEST_TYPE =
+  'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1' as const;
+const TEST_ANIMAL_CARE_SECTOR = 'animal-care' as const;
+const TEST_RAW_LOOKUP_REQUEST_ID = 'req-did-create-raw-taxid-lookup' as const;
+const TEST_RAW_LOOKUP_RECORD_ID = 'org-record-raw-taxid-lookup' as const;
+const TEST_RAW_LOOKUP_THREAD_ID = 'thid-verify-org-raw-taxid-lookup' as const;
+const TEST_RAW_LOOKUP_CREDENTIAL_ID = 'urn:vc:org:raw-taxid-lookup' as const;
+const TEST_RAW_LOOKUP_ORG_PUBLIC_KEY_JWK = Object.freeze({
+  kty: 'EC',
+  crv: 'P-384',
+  x: 'rawtaxid-org-x',
+  y: 'rawtaxid-org-y',
+});
+const TEST_RAW_LOOKUP_CONTROLLER_PUBLIC_KEY_JWK = Object.freeze({
+  kty: 'EC',
+  crv: 'P-384',
+  x: 'rawtaxid-controller-x',
+  y: 'rawtaxid-controller-y',
+});
+const TEST_RAW_LOOKUP_CONTROLLER_SAME_AS = 'urn:multibase:zControllerHash' as const;
+const TEST_PROVIDER_TAX_ID_RAW = EXAMPLE_PROVIDER_TAX_ID.replace(/^VATES-/, '');
+const TEST_PROVIDER_ORGANIZATION_DID = buildOrganizationDidFromTaxId(
+  TEST_ANIMAL_CARE_SECTOR,
+  EXAMPLE_PROVIDER_TAX_ID,
+  'globaldatacare.es',
+);
 
 test('parseCreateDidDocumentRoute accepts create and polling routes', () => {
   const create = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create');
@@ -723,6 +763,75 @@ test('CreateDidDocument derives identifier from organization.url and requires it
     job?.result?.items?.[0]?.did,
     'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-B00000000',
   );
+
+  resetVerificationCollectionsMemAdapterStateForTests();
+});
+
+test('CreateDidDocument prefers the canonical taxID embedded in organization.identifier over a raw request taxID', async () => {
+  resetVerificationCollectionsMemAdapterStateForTests();
+
+  const parsedRoute = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create');
+  assert.ok(parsedRoute);
+  assert.equal(parsedRoute?.ok, true);
+  if (!parsedRoute || !parsedRoute.ok) return;
+
+  const store = new InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>(60);
+  const collectionsService = new VerificationCollectionsService();
+  await collectionsService.storeIssuedCredentials([
+    {
+      id: TEST_RAW_LOOKUP_RECORD_ID,
+      tenantId: parsedRoute.context.tenantId,
+      jurisdiction: parsedRoute.context.jurisdiction,
+      sector: parsedRoute.context.sector,
+      resourceType: TEST_RESOURCE_TYPE_CONTRACT,
+      thid: TEST_RAW_LOOKUP_THREAD_ID,
+      credentialType: EXAMPLE_VERIFY_RESPONSE_ORG_ENTRY_TYPE,
+      credentialId: TEST_RAW_LOOKUP_CREDENTIAL_ID,
+      subjectId: TEST_PROVIDER_ORGANIZATION_DID,
+      issuerId: EXAMPLE_DEFAULT_ICA_DID,
+      credential: {
+        credentialSubject: {
+          '@type': 'Organization',
+          id: TEST_PROVIDER_ORGANIZATION_DID,
+          taxID: EXAMPLE_PROVIDER_TAX_ID,
+          legalName: EXAMPLE_PROVIDER_LEGAL_NAME,
+        },
+      },
+      createdAt: EXAMPLE_VERIFY_RESPONSE_DATE,
+      updatedAt: EXAMPLE_VERIFY_RESPONSE_DATE,
+    },
+  ]);
+  const requestManager = new CreateDidDocumentRequestManager(store, collectionsService);
+
+  const submitReq = buildDidcommRequest({
+    jti: TEST_RAW_LOOKUP_REQUEST_ID,
+    type: TEST_CREATE_DID_REQUEST_TYPE,
+    body: {
+      data: [
+        {
+          resource: {
+            organization: {
+              identifier: TEST_PROVIDER_ORGANIZATION_DID,
+              taxID: TEST_PROVIDER_TAX_ID_RAW,
+              publicKeyJwk: TEST_RAW_LOOKUP_ORG_PUBLIC_KEY_JWK,
+            },
+            controller: {
+              sameAs: TEST_RAW_LOOKUP_CONTROLLER_SAME_AS,
+              publicKeyJwk: TEST_RAW_LOOKUP_CONTROLLER_PUBLIC_KEY_JWK,
+            },
+          },
+        },
+      ],
+    },
+  }, '/ica/cds-ES/v1/animal-care/entity/did/document/_create');
+
+  const submitOutcome = await requestManager.submit(parsedRoute.context, submitReq);
+  assert.equal(submitOutcome.type, 'accepted');
+
+  await new Promise((resolve) => setImmediate(resolve));
+  const job = store.get(TEST_RAW_LOOKUP_REQUEST_ID);
+  assert.equal(job?.status, 'succeeded');
+  assert.equal(job?.result?.items?.[0]?.did, TEST_PROVIDER_ORGANIZATION_DID);
 
   resetVerificationCollectionsMemAdapterStateForTests();
 });
