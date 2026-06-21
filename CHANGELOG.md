@@ -1,12 +1,21 @@
 # Changelog
 
-# Unreleased
+# 1.0.3 - 2026-06-20
 
 - Updated the shared dependency target to `gdc-common-utils-ts@^2.0.6`.
 - Added temporary startup compatibility for legacy
   `application/didcomm-plaintext+json` while downstream packages and clients
   finish migrating to the canonical `application/didcomm-plain+json` media
   type.
+- Removed the Docker image default `NODE_ENV=production` so each deployment
+  environment controls runtime mode explicitly from its own `.env`.
+- Expanded `env.example` to document:
+  - the recommended `NODE_ENV` / `SECURITY_MODE` local-demo baseline
+  - the demo-only `_verify` fallbacks for route `{sector}` and representative
+    `sameAs`
+  - the unsafe payload-merge flags
+    `DISABLE_STRICT_IDENTITY_SOURCE=true` +
+    `ICA_ALLOW_UNVERIFIED_CREDENTIAL_PAYLOADS=true`
 
 # 1.0.2 - 2026-06-18
 

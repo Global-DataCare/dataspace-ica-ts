@@ -19,7 +19,6 @@ COPY src ./src
 COPY certs ./certs
 COPY README.md ./
 
-ENV NODE_ENV=production
 ENV ICA_API_HOST=0.0.0.0
 ENV ICA_API_PORT=3310
 
