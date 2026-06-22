@@ -9,6 +9,10 @@ import type {
 import type {
   VerifiableCredentialV2,
 } from 'gdc-common-utils-ts/models/verifiable-credential';
+import {
+  serializeServiceCapabilityTokens,
+  ServiceCapability,
+} from 'gdc-common-utils-ts/constants/service-capabilities';
 import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type {
   OperationOutcomeResource,
@@ -836,6 +840,32 @@ function resolveOrganizationOfferCategory(
   return String(route.sector || '').trim() || undefined;
 }
 
+function resolveServiceTypeClaimValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return serializeServiceCapabilityTokens(value.split(','));
+  }
+  if (Array.isArray(value)) {
+    return serializeServiceCapabilityTokens(
+      value.map((item) => (typeof item === 'string' ? item : undefined)),
+    );
+  }
+  return undefined;
+}
+
+function resolveOrganizationOfferServiceType(
+  organizationSubject: Record<string, unknown>,
+): string | undefined {
+  const existingMakesOffer = asObject(organizationSubject.makesOffer);
+  const existingServiceType = resolveServiceTypeClaimValue(existingMakesOffer?.serviceType)
+    || resolveServiceTypeClaimValue(organizationSubject.serviceType);
+  if (existingServiceType) return existingServiceType;
+  if (!isDemoOrganizationCategoryFallbackEnabled()) return undefined;
+  return serializeServiceCapabilityTokens([
+    ServiceCapability.IndexProvider,
+    ServiceCapability.DigitalTwinProvider,
+  ]);
+}
+
 function extractAdditionalPersonDataFromPdf(result: VerifyResult): Record<string, unknown> {
   // TODO: Extract additional schema.org fields directly from the PDF fields
   if (isStrictIdentitySourcesEnabled()) {
@@ -1111,6 +1141,15 @@ export function buildVerificationVcBundle(
       ...existingMakesOffer,
       '@type': typeof existingMakesOffer['@type'] === 'string' ? existingMakesOffer['@type'] : 'Offer',
       category: organizationOfferCategory,
+    };
+  }
+  const organizationOfferServiceType = resolveOrganizationOfferServiceType(organizationSubject);
+  if (organizationOfferServiceType) {
+    const existingMakesOffer = asObject(organizationSubject.makesOffer) || {};
+    organizationSubject.makesOffer = {
+      ...existingMakesOffer,
+      '@type': typeof existingMakesOffer['@type'] === 'string' ? existingMakesOffer['@type'] : 'Offer',
+      serviceType: organizationOfferServiceType,
     };
   }
 

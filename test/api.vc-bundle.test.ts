@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {
+  serializeServiceCapabilityTokens,
+  ServiceCapability,
+} from 'gdc-common-utils-ts/constants/service-capabilities';
 import { parseVerifyRoute } from '../src/api/path.ts';
 import { buildVerificationVcBundle } from '../src/api/server.ts';
 import { resetActiveSigningKeysStateForTests, activateSigningKey } from '../src/api/tools/active-signing-keys.ts';
@@ -435,7 +439,7 @@ test('buildVerificationVcBundle hashes legalRepresentativePayload.email only in 
   assert.equal(compatPersonSubject.sameAs, undefined);
 });
 
-test('buildVerificationVcBundle falls back OrganizationCredential makesOffer.category from route sector only in demo mode', () => {
+test('buildVerificationVcBundle falls back OrganizationCredential makesOffer category and serviceType only in demo mode', () => {
   installActiveSigningKeyForTests();
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/health-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
@@ -456,6 +460,10 @@ test('buildVerificationVcBundle falls back OrganizationCredential makesOffer.cat
   assert.deepEqual(demoOrganizationSubject.makesOffer, {
     '@type': 'Offer',
     category: 'health-care',
+    serviceType: serializeServiceCapabilityTokens([
+      ServiceCapability.IndexProvider,
+      ServiceCapability.DigitalTwinProvider,
+    ]),
   });
   assert.equal(compatOrganizationSubject.makesOffer, undefined);
 });

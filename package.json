@@ -1,6 +1,6 @@
 {
   "name": "dataspace-ica",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "description": "Private ICA CLI for onboarding validation, CSR signing and DCAT publication",

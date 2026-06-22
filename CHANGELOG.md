@@ -1,5 +1,16 @@
 # Changelog
 
+# 1.0.4 - 2026-06-22
+
+- In `SECURITY_MODE=demo`, `_verify` now also falls back
+  `OrganizationCredential.credentialSubject.makesOffer.serviceType` to the
+  canonical provider capabilities
+  `organization/Composition.cruds,organization/ResearchSubject.cruds` when
+  the signed PDF does not carry them.
+- Kept the demo-only `makesOffer.category` fallback from route `{sector}` and
+  aligned the emitted `serviceType` tokens with `gdc-common-utils-ts` so GW
+  `_transaction` and legacy `_activate` validate the same canonical values.
+
 # 1.0.3 - 2026-06-20
 
 - Updated the shared dependency target to `gdc-common-utils-ts@^2.0.6`.
