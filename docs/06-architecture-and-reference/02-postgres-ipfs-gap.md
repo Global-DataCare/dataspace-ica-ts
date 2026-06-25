@@ -19,7 +19,8 @@ What already exists:
 
 - deterministic evidence/document identifiers already use IPFS-style `ipfs://`
   attachment URLs in several verification and retrieve flows
-- confidential-at-rest protection already exists for persisted audit PDFs
+- confidential-at-rest protection already exists for persisted signed adhesion
+  contracts for the dataspace
 - runtime config tests already cover:
   - `DB_PROVIDER=firestore`
   - `STORAGE_PROVIDER=gcs`
@@ -34,6 +35,14 @@ What is still hard-limited in code:
 - verification collections persistence supports only:
   - `mem`
   - `firestore`
+
+Important:
+
+- `filesystem` appears here only as part of the current code reality.
+- It is not part of the target support profile for this gap.
+- The target profile remains strictly:
+  - `DB_PROVIDER=postgres`
+  - `STORAGE_PROVIDER=ipfs`
 
 Primary enforcement points:
 
@@ -89,7 +98,7 @@ Required work:
   - dataspace sync follow-up persistence
 - add runtime config tests and integration tests for the PostgreSQL provider
 
-### 2. Add IPFS as a real audit document storage provider
+### 2. Add IPFS as a real adhesion-contract storage provider
 
 Current limitation:
 
@@ -102,7 +111,8 @@ Current limitation:
 Required work:
 
 - add `ipfs` to the audit storage mode/parser/types/OpenAPI
-- implement a Kubo-backed storage adapter for audit PDFs
+- implement a Kubo-backed storage adapter for persisted signed adhesion
+  contracts
 - define required env vars, likely equivalent to GW:
   - `IPFS_API_URL`
   - `IPFS_GATEWAY_URL`
@@ -112,22 +122,28 @@ Required work:
   - internal mutable path if needed for local management
 - add runtime tests plus one live E2E smoke for `upload -> retrieve/delete`
 
-### 3. Decide whether audit PDFs stay as ICA-only blobs or become generic blob storage
+### 3. Keep the first scope limited to adhesion contracts only
 
-GW uses IPFS as a generic confidential blob backend.
+This was the point that needed clarification.
 
-ICA currently uses storage only for verified audit PDFs, via
+ICA currently uses storage only for verified signed adhesion contracts, via
 `AuditDocumentStorageService`.
 
-Before implementation, keep the scope explicit:
+For the first parity pass, do not generalize this into a generic blob-storage
+initiative.
 
-- minimum parity path:
-  only add IPFS for audit-PDF persistence
-- extended path:
-  generalize ICA storage abstractions so future confidential artifacts can also
-  reuse IPFS
+Expected first-pass scope:
 
-The minimum path is smaller and matches current ICA architecture better.
+- keep ICA storage scoped to verified signed adhesion contracts
+- add IPFS only for that existing adhesion-contract persistence path
+- do not introduce a broader multi-artifact storage abstraction unless a later
+  concrete requirement appears
+
+Why:
+
+- it matches the current ICA architecture
+- it is the shortest path to real `postgres + ipfs` support
+- it avoids reopening scope around unrelated confidential artifacts
 
 ### 4. Add local operator support
 
@@ -145,7 +161,7 @@ Without this, the feature would exist only as code, not as a supported path.
 ### 5. Extend the test matrix
 
 Current tests prove config parsing and business behavior mostly around
-`mem`/`firestore` and `filesystem`/`gcs`.
+`mem`/`firestore` and legacy audit storage modes.
 
 To claim support parity, ICA should add:
 
@@ -175,7 +191,7 @@ The first parity pass does not need to include:
 - migration of ICA to GW's full CEK-per-document storage model
 - replacement of all Firestore/GCS paths in staging/production
 - retroactive migration of historical GCS audit blobs into IPFS
-- expansion beyond the current ICA audit-PDF storage scope
+- expansion beyond the current ICA signed-adhesion-contract storage scope
 
 ## Bottom Line
 
