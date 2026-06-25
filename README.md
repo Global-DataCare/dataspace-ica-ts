@@ -1367,6 +1367,26 @@ During `_verify`, signed PDF form values are extracted and incorporated into evi
 - `person.alternateName` is used for the controller `kid`.
 - `person.additionalType` is used for the controller algorithm, e.g. `ES384`.
 
+Production/strict expectation:
+
+- ICA can still reject `_verify` even if GW is correct, because the PDF is the
+  primary signed evidence source.
+- For smooth production issuance, the signed PDF should expose at least the
+  organization identity ICA needs to bind the Organization VC:
+  - organization VAT/tax identifier
+  - organization legal name
+  - valid digital signature material accepted by the configured verifier policy
+- For GW activation/recovery flows, the signed evidence should also expose the
+  organization authorization claims that ICA must emit in the VC:
+  - `credentialSubject.makesOffer.category`
+  - `credentialSubject.makesOffer.serviceType`
+- In `demo`, ICA may temporarily fallback those authorization claims from route
+  defaults or payload compatibility helpers. In production, they should come
+  from the signed document/evidence itself, not from unverified frontend/BFF
+  payloads.
+- Representative/controller claims should likewise come from signed evidence or
+  verified identity sources; payload-only merges are a local/demo convenience.
+
 Extended guide: [docs/terms-annex-form.md](./docs/terms-annex-form.md)
 
 ## Entorno local y tests
