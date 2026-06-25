@@ -11,6 +11,7 @@ This directory is the curated documentation entrypoint for developers and operat
 5. [`03-api-and-flows/02-core-flows.md`](./03-api-and-flows/02-core-flows.md)
 6. [`04-examples-and-tests/01-examples-fixtures-and-tests.md`](./04-examples-and-tests/01-examples-fixtures-and-tests.md)
 7. [`05-operations-and-deployment/01-gke-and-security.md`](./05-operations-and-deployment/01-gke-and-security.md)
+8. [`06-architecture-and-reference/02-postgres-ipfs-gap.md`](./06-architecture-and-reference/02-postgres-ipfs-gap.md)
 
 ## Numbered sections
 
@@ -26,6 +27,7 @@ This directory is the curated documentation entrypoint for developers and operat
   deployment and production operation concerns
 - `06-architecture-and-reference`
   architecture notes and pointers to existing deep dives
+  including the current gap to reach GW-style `PostgreSQL + IPFS` support
 
 ## Existing detailed docs
 

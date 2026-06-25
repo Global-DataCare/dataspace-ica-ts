@@ -1,5 +1,12 @@
 # Changelog
 
+# Unreleased
+
+- Documented the current implementation gap to reach GW-style
+  `DB_PROVIDER=postgres` + `STORAGE_PROVIDER=ipfs` support in
+  `docs/06-architecture-and-reference/02-postgres-ipfs-gap.md`, including the
+  exact code paths that are still limited to Firestore/GCS or mem/filesystem.
+
 # 1.0.4 - 2026-06-22
 
 - In `SECURITY_MODE=demo`, `_verify` now also falls back
