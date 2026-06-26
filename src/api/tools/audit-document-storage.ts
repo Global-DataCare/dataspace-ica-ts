@@ -10,7 +10,7 @@ import type {
   VerifySubmission,
 } from '../types.ts';
 
-export type AuditStorageMode = 'none' | 'filesystem' | 'gcs';
+export type AuditStorageMode = 'none' | 'filesystem' | 'gcs' | 'ipfs';
 
 export type AuditDocumentStorageConfig = {
   mode: AuditStorageMode;
@@ -20,6 +20,9 @@ export type AuditDocumentStorageConfig = {
   filesystemDirectory: string;
   gcsBucketName?: string;
   gcsObjectPrefix: string;
+  ipfsApiUrl?: string;
+  ipfsGatewayUrl?: string;
+  ipfsMfsRoot?: string;
 };
 
 type AuditStoreInput = {
@@ -42,11 +45,11 @@ function parseAuditStorageMode(value: string | undefined, fallback: AuditStorage
   if (normalized === 'mem') {
     return 'none';
   }
-  if (normalized === 'none' || normalized === 'filesystem' || normalized === 'gcs') {
-    return normalized;
+  if (normalized === 'none' || normalized === 'filesystem' || normalized === 'gcs' || normalized === 'ipfs') {
+    return normalized as AuditStorageMode;
   }
   throw new Error(
-    `Unsupported STORAGE_PROVIDER="${normalized}". Use "mem", "filesystem" or "gcs".`,
+    `Unsupported STORAGE_PROVIDER="${normalized}". Use "mem", "filesystem", "gcs" or "ipfs".`,
   );
 }
 
@@ -183,6 +186,53 @@ class NoopAuditStorageAdapter implements AuditStorageAdapter {
   }
 }
 
+class IpfsAuditStorageAdapter implements AuditStorageAdapter {
+  private readonly apiUrl: string;
+  private readonly mfsRoot: string;
+
+  constructor(apiUrl: string, mfsRoot: string) {
+    this.apiUrl = apiUrl.replace(/\/$/, '');
+    this.mfsRoot = mfsRoot.replace(/\/$/, '');
+  }
+
+  async store(input: AuditStoreInput): Promise<Pick<AuditDocumentReference, 'provider' | 'objectKey' | 'objectId' | 'bucket' | 'contentType' | 'sizeBytes' | 'storedAt'>> {
+    const fullPath = `${this.mfsRoot}/${input.objectKey}`;
+    const dirPath = path.posix.dirname(fullPath);
+    
+    await fetch(`${this.apiUrl}/api/v0/files/mkdir?arg=${encodeURIComponent(dirPath)}&parents=true`, { method: 'POST' });
+    
+    const formData = new FormData();
+    const blob = new Blob([new Uint8Array(input.payloadBytes)], { type: input.payloadContentType });
+    formData.append('file', blob);
+    
+    const writeRes = await fetch(`${this.apiUrl}/api/v0/files/write?arg=${encodeURIComponent(fullPath)}&create=true&truncate=true`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!writeRes.ok) {
+      throw new Error(`IPFS write failed: ${writeRes.statusText}`);
+    }
+    
+    const statRes = await fetch(`${this.apiUrl}/api/v0/files/stat?arg=${encodeURIComponent(fullPath)}`, { method: 'POST' });
+    if (!statRes.ok) {
+      throw new Error(`IPFS stat failed: ${statRes.statusText}`);
+    }
+    const statData = (await statRes.json()) as { Hash: string };
+    const cid = statData.Hash;
+    const objectKey = `ipfs://${cid}`;
+
+    return {
+      provider: 'ipfs',
+      objectId: input.objectId,
+      objectKey,
+      contentType: input.payloadContentType,
+      sizeBytes: input.payloadBytes.length,
+      storedAt: new Date().toISOString(),
+      ...(input.encryptionKeyId ? { encryptionKeyId: input.encryptionKeyId } : {}),
+    };
+  }
+}
+
 function createAuditStorageAdapter(config: AuditDocumentStorageConfig): AuditStorageAdapter {
   switch (config.mode) {
     case 'filesystem':
@@ -192,6 +242,11 @@ function createAuditStorageAdapter(config: AuditDocumentStorageConfig): AuditSto
         throw new Error('STORAGE_PROVIDER=gcs requires GCS_BUCKET_NAME.');
       }
       return new GcsAuditStorageAdapter(config.gcsBucketName);
+    case 'ipfs':
+      if (!config.ipfsApiUrl) {
+        throw new Error('STORAGE_PROVIDER=ipfs requires IPFS_API_URL.');
+      }
+      return new IpfsAuditStorageAdapter(config.ipfsApiUrl, config.ipfsMfsRoot || '/ica-audit');
     case 'none':
     default:
       return new NoopAuditStorageAdapter();
@@ -211,6 +266,9 @@ export function loadAuditDocumentStorageConfigFromEnv(): AuditDocumentStorageCon
     filesystemDirectory: path.resolve(process.env.ICA_AUDIT_STORAGE_FS_DIR || path.join('data', 'audit-pdf')),
     gcsBucketName: (process.env.GCS_BUCKET_NAME || '').trim() || undefined,
     gcsObjectPrefix: (process.env.ICA_AUDIT_STORAGE_GCS_PREFIX || 'ica-audit').trim(),
+    ipfsApiUrl: (process.env.IPFS_API_URL || 'http://127.0.0.1:5001').trim(),
+    ipfsGatewayUrl: (process.env.IPFS_GATEWAY_URL || 'http://127.0.0.1:8080').trim(),
+    ipfsMfsRoot: (process.env.IPFS_MFS_ROOT || '/ica-audit').trim(),
   };
 }
 

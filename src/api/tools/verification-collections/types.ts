@@ -2,7 +2,7 @@ export type JsonObject = Record<string, unknown>;
 export type DidBindingStatus = 'draft' | 'confirmed' | 'removed';
 export type DidDocumentStatus = 'confirmed' | 'removed';
 
-export type VerificationCollectionsProvider = 'mem' | 'firestore';
+export type VerificationCollectionsProvider = 'mem' | 'firestore' | 'postgres';
 
 export type DataspacePublicationStatus = 'origin' | 'pending' | 'synced' | 'failed';
 
@@ -100,6 +100,7 @@ export type VerificationCollectionsConfig = {
   required: boolean;
   firestoreProjectId?: string;
   firestoreCollectionPrefix: string;
+  postgresUrl?: string;
 };
 
 export interface VerificationCollectionsAdapter {

@@ -72,10 +72,10 @@ function includesValue(left: string, right: string): boolean {
 function parseProvider(raw: string | undefined, fallback: VerificationCollectionsProvider): VerificationCollectionsProvider {
   const normalized = (raw || '').trim().toLowerCase();
   if (!normalized) return fallback;
-  if (normalized === 'mem' || normalized === 'firestore') {
-    return normalized;
+  if (normalized === 'mem' || normalized === 'firestore' || normalized === 'postgres') {
+    return normalized as VerificationCollectionsProvider;
   }
-  throw new Error(`Unsupported DB_PROVIDER="${normalized}". Use "mem" or "firestore".`);
+  throw new Error(`Unsupported DB_PROVIDER="${normalized}". Use "mem", "firestore" or "postgres".`);
 }
 
 function buildCollectionName(prefix: string, leaf: string): string {
@@ -92,6 +92,7 @@ export function loadVerificationCollectionsConfigFromEnv(): VerificationCollecti
     required: parseBoolean(process.env.ICA_COLLECTIONS_REQUIRED, true),
     firestoreProjectId: (process.env.FIRESTORE_PROJECT_ID || '').trim() || undefined,
     firestoreCollectionPrefix: prefix,
+    postgresUrl: (process.env.POSTGRES_URL || '').trim() || undefined,
   };
 }
 

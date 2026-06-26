@@ -552,7 +552,7 @@ export interface VerifyDigest {
   templateHex: string;
 }
 
-export type AuditStorageProvider = 'filesystem' | 'gcs';
+export type AuditStorageProvider = 'filesystem' | 'gcs' | 'ipfs';
 
 export interface AuditDocumentReference {
   provider: AuditStorageProvider;
