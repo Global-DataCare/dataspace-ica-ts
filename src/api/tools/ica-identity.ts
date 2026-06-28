@@ -41,6 +41,7 @@ import type { VerifiableCredentialV2 } from 'gdc-common-utils-ts/models/verifiab
 import type { SupportedSigningAlgorithm, VerifyRouteContext } from '../types.ts';
 import { getPreferredSigningKey, listActiveSigningKeys, upsertDidSigningMethods } from './active-signing-keys.ts';
 import { resolveControllerMemberDescriptor } from './controller-identity.ts';
+import { loadPublishedDidDocument } from './public-artifacts.ts';
 import { useInvalidProofForTestResourceVersion } from './self-signing.ts';
 
 type JsonObject = Record<string, unknown>;
@@ -120,6 +121,10 @@ function buildDidWebFromAuthority(raw: string): string {
 }
 
 function resolveDidFromConfiguredDocument(): string | null {
+  const publishedDocument = loadPublishedDidDocument();
+  const publishedId = typeof publishedDocument?.id === 'string' ? publishedDocument.id.trim() : '';
+  if (publishedId) return publishedId;
+
   const configuredDocument = tryParseJson(process.env.ICA_DID_DOCUMENT_JSON);
   const id = typeof configuredDocument?.id === 'string' ? configuredDocument.id.trim() : '';
   return id || null;
@@ -654,7 +659,7 @@ function mergeSigningMethods(document: JsonObject, issuerDid: string): void {
 }
 
 export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
-  const configuredDocument = tryParseJson(process.env.ICA_DID_DOCUMENT_JSON);
+  const configuredDocument = loadPublishedDidDocument() || tryParseJson(process.env.ICA_DID_DOCUMENT_JSON);
   const issuerDid = resolveIcaIssuerDid(req);
   const serviceEndpoint = resolveVerifyServiceEndpoint();
   const dcatCatalogServiceEndpoint = resolveDcatCatalogServiceEndpoint();
