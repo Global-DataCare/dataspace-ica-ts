@@ -1267,12 +1267,14 @@ Counterparty selection rules used to populate organization/person credentials:
 
 Audit document persistence:
 
-- `STORAGE_PROVIDER` (`mem` | `filesystem` | `gcs`)
+- `STORAGE_PROVIDER` (`mem` | `gcs` | `ipfs`)
 - `ICA_AUDIT_STORAGE_REQUIRED`
 - `ICA_AUDIT_ATTACHMENT_URL_PATTERN`
-- `ICA_AUDIT_STORAGE_FS_DIR`
 - `GCS_BUCKET_NAME`
 - `ICA_AUDIT_STORAGE_GCS_PREFIX`
+- `IPFS_API_URL`
+- `IPFS_GATEWAY_URL`
+- `IPFS_MFS_ROOT`
 - `ICA_CONFIDENTIAL_STORAGE_ENABLED` (optional; when `true`, audit PDFs are encrypted at rest)
 - `ICA_CONFIDENTIAL_STORAGE_KEY_SEED` (optional explicit seed; if absent ICA reuses resolved host seed passphrase)
 - `ICA_CONFIDENTIAL_STORAGE_KEY_VERSION` (optional key version label, default `v1`)
@@ -1282,10 +1284,11 @@ Architecture decision note:
 
 Verification collections persistence:
 
-- `DB_PROVIDER` (`mem` | `firestore`, default `mem`)
+- `DB_PROVIDER` (`mem` | `firestore` | `postgres`, default `mem`)
 - `ICA_COLLECTIONS_REQUIRED`
 - `ICA_COLLECTIONS_PREFIX`
 - `FIRESTORE_PROJECT_ID`
+- `POSTGRES_URL`
 
 Collection names are derived by code from `ICA_COLLECTIONS_PREFIX` using the fixed pattern:
 - `${prefix}_issued_credentials`

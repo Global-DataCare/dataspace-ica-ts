@@ -266,7 +266,7 @@ test('buildVerificationVcBundle uses external audit attachment when available', 
   const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
     ...buildTestVerifyResult('audit-external'),
     auditDocument: {
-      provider: 'filesystem',
+      provider: 'gcs',
       objectId: 'f8f45d4d-39da-4bf5-908f-0879dd6f9b6f',
       objectKey: 'ica-audit/animal-care/es/202630011200/2026-03-05/f8f45d4d-39da-4bf5-908f-0879dd6f9b6f.pdf',
       attachmentUrl: 'urn:uuid:f8f45d4d-39da-4bf5-908f-0879dd6f9b6f',

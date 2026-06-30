@@ -17,10 +17,13 @@ const ENV_KEYS = [
   'ICA_AUDIT_STORAGE_REQUIRED',
   'ICA_CONFIDENTIAL_STORAGE_ENABLED',
   'ICA_AUDIT_ATTACHMENT_URL_PATTERN',
-  'ICA_AUDIT_STORAGE_FS_DIR',
   'ICA_AUDIT_STORAGE_GCS_PREFIX',
+  'IPFS_API_URL',
+  'IPFS_GATEWAY_URL',
+  'IPFS_MFS_ROOT',
   'DB_PROVIDER',
   'FIRESTORE_PROJECT_ID',
+  'POSTGRES_URL',
   'ICA_COLLECTIONS_REQUIRED',
   'ICA_COLLECTIONS_PREFIX',
   'SECURITY_MODE',
@@ -96,6 +99,35 @@ test('loadAuditDocumentStorageConfigFromEnv maps STORAGE_PROVIDER=mem to mode no
   );
 });
 
+test('loadAuditDocumentStorageConfigFromEnv rejects STORAGE_PROVIDER=filesystem', () => {
+  withEnv(
+    {
+      STORAGE_PROVIDER: 'filesystem',
+    },
+    () => {
+      assert.throws(() => loadAuditDocumentStorageConfigFromEnv(), /Use "mem", "gcs" or "ipfs"/);
+    },
+  );
+});
+
+test('loadAuditDocumentStorageConfigFromEnv uses STORAGE_PROVIDER=ipfs and IPFS config', () => {
+  withEnv(
+    {
+      STORAGE_PROVIDER: 'ipfs',
+      IPFS_API_URL: 'http://127.0.0.1:5001',
+      IPFS_GATEWAY_URL: 'http://127.0.0.1:8080',
+      IPFS_MFS_ROOT: '/ica-audit',
+    },
+    () => {
+      const config = loadAuditDocumentStorageConfigFromEnv();
+      assert.equal(config.mode, 'ipfs');
+      assert.equal(config.ipfsApiUrl, 'http://127.0.0.1:5001');
+      assert.equal(config.ipfsGatewayUrl, 'http://127.0.0.1:8080');
+      assert.equal(config.ipfsMfsRoot, '/ica-audit');
+    },
+  );
+});
+
 test('loadVerificationCollectionsConfigFromEnv uses DB_PROVIDER and FIRESTORE_PROJECT_ID', () => {
   withEnv(
     {
@@ -108,6 +140,20 @@ test('loadVerificationCollectionsConfigFromEnv uses DB_PROVIDER and FIRESTORE_PR
       assert.equal(config.firestoreProjectId, 'globaldatacare-ica-dev');
       assert.equal(resolveIssuedCredentialsCollectionName(config.firestoreCollectionPrefix), 'ica_issued_credentials');
       assert.equal(resolveEvidenceCollectionName(config.firestoreCollectionPrefix), 'ica_evidence_records');
+    },
+  );
+});
+
+test('loadVerificationCollectionsConfigFromEnv uses DB_PROVIDER=postgres and POSTGRES_URL', () => {
+  withEnv(
+    {
+      DB_PROVIDER: 'postgres',
+      POSTGRES_URL: 'postgres://user:password@127.0.0.1:5432/ica',
+    },
+    () => {
+      const config = loadVerificationCollectionsConfigFromEnv();
+      assert.equal(config.provider, 'postgres');
+      assert.equal(config.postgresUrl, 'postgres://user:password@127.0.0.1:5432/ica');
     },
   );
 });

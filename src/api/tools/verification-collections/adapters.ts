@@ -187,9 +187,114 @@ export class VerificationCollectionsFirestoreAdapter implements VerificationColl
   }
 }
 
+async function importPgModuleDynamically(): Promise<any> {
+  const dynamicImport = new Function('modulePath', 'return import(modulePath)') as (modulePath: string) => Promise<any>;
+  return dynamicImport('pg');
+}
+
+export class VerificationCollectionsPostgresAdapter implements VerificationCollectionsAdapter {
+  private poolPromise: Promise<any> | null = null;
+  private readonly config: VerificationCollectionsConfig;
+  private tablesCreated = false;
+
+  constructor(config: VerificationCollectionsConfig) {
+    this.config = config;
+  }
+
+  private async getPool(): Promise<any> {
+    if (!this.poolPromise) {
+      this.poolPromise = (async () => {
+        const pg = await importPgModuleDynamically();
+        const Pool = pg.Pool || pg.default.Pool;
+        return new Pool({ connectionString: this.config.postgresUrl });
+      })();
+    }
+    return this.poolPromise;
+  }
+  
+  private async ensureTables(pool: any): Promise<void> {
+    if (this.tablesCreated) return;
+    const issuedTable = resolveIssuedCredentialsCollectionName(this.config.firestoreCollectionPrefix);
+    const evidenceTable = resolveEvidenceCollectionName(this.config.firestoreCollectionPrefix);
+    const bindingsTable = resolveDidBindingsCollectionName(this.config.firestoreCollectionPrefix);
+    const documentsTable = resolveDidDocumentsCollectionName(this.config.firestoreCollectionPrefix);
+    
+    const query = `
+      CREATE TABLE IF NOT EXISTS "${issuedTable}" (id VARCHAR(255) PRIMARY KEY, data JSONB NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS "${evidenceTable}" (id VARCHAR(255) PRIMARY KEY, data JSONB NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS "${bindingsTable}" (id VARCHAR(255) PRIMARY KEY, data JSONB NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS "${documentsTable}" (id VARCHAR(255) PRIMARY KEY, data JSONB NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    `;
+    await pool.query(query);
+    this.tablesCreated = true;
+  }
+
+  private async upsertRecords(table: string, records: any[]): Promise<void> {
+    if (!records.length) return;
+    const pool = await this.getPool();
+    await this.ensureTables(pool);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const query = `INSERT INTO "${table}" (id, data) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`;
+      for (const record of records) {
+        await client.query(query, [record.id, JSON.stringify(stripUndefinedDeep(record))]);
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async storeIssuedCredentials(records: IssuedCredentialRecord[]): Promise<void> {
+    await this.upsertRecords(resolveIssuedCredentialsCollectionName(this.config.firestoreCollectionPrefix), records);
+  }
+
+  async storeEvidenceRecords(records: EvidenceRecord[]): Promise<void> {
+    await this.upsertRecords(resolveEvidenceCollectionName(this.config.firestoreCollectionPrefix), records);
+  }
+
+  async storeDidBindings(records: DidBindingRecord[]): Promise<void> {
+    await this.upsertRecords(resolveDidBindingsCollectionName(this.config.firestoreCollectionPrefix), records);
+  }
+
+  async storeDidDocuments(records: DidDocumentRecord[]): Promise<void> {
+    await this.upsertRecords(resolveDidDocumentsCollectionName(this.config.firestoreCollectionPrefix), records);
+  }
+
+  private async getList<T>(table: string): Promise<T[]> {
+    const pool = await this.getPool();
+    await this.ensureTables(pool);
+    const { rows } = await pool.query(`SELECT data FROM "${table}" LIMIT 200`);
+    return rows.map((r: any) => r.data as T);
+  }
+
+  async listIssuedCredentials(): Promise<IssuedCredentialRecord[]> {
+    return this.getList<IssuedCredentialRecord>(resolveIssuedCredentialsCollectionName(this.config.firestoreCollectionPrefix));
+  }
+
+  async listEvidenceRecords(): Promise<EvidenceRecord[]> {
+    return this.getList<EvidenceRecord>(resolveEvidenceCollectionName(this.config.firestoreCollectionPrefix));
+  }
+
+  async listDidBindings(): Promise<DidBindingRecord[]> {
+    return this.getList<DidBindingRecord>(resolveDidBindingsCollectionName(this.config.firestoreCollectionPrefix));
+  }
+
+  async listDidDocuments(): Promise<DidDocumentRecord[]> {
+    return this.getList<DidDocumentRecord>(resolveDidDocumentsCollectionName(this.config.firestoreCollectionPrefix));
+  }
+}
+
 export function createVerificationCollectionsAdapter(
   config: VerificationCollectionsConfig,
 ): VerificationCollectionsAdapter {
+  if (config.provider === 'postgres') {
+    return new VerificationCollectionsPostgresAdapter(config);
+  }
   if (config.provider === 'firestore') {
     return new VerificationCollectionsFirestoreAdapter(config);
   }

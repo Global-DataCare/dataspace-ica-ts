@@ -119,7 +119,7 @@ const VERIFY_RESULT_SCHEMA = {
       type: 'object',
       required: ['provider', 'objectId', 'objectKey', 'attachmentUrl', 'contentType', 'sizeBytes', 'storedAt'],
       properties: {
-        provider: { type: 'string', enum: ['filesystem', 'gcs'] },
+        provider: { type: 'string', enum: ['gcs', 'ipfs'] },
         objectId: { type: 'string' },
         objectKey: { type: 'string' },
         bucket: { type: 'string' },

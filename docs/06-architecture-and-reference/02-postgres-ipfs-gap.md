@@ -13,7 +13,8 @@ that exists today in this repository.
 
 ## Current State
 
-Today ICA is only partially aligned with that target profile.
+Today ICA has code-level support for that target profile, but it is not yet a
+fully closed operational track.
 
 What already exists:
 
@@ -22,25 +23,20 @@ What already exists:
 - confidential-at-rest protection already exists for persisted signed adhesion
   contracts for the dataspace
 - runtime config tests already cover:
+  - `DB_PROVIDER=postgres`
   - `DB_PROVIDER=firestore`
+  - `STORAGE_PROVIDER=ipfs`
   - `STORAGE_PROVIDER=gcs`
   - `STORAGE_PROVIDER=mem`
-
-What is still hard-limited in code:
-
-- audit document storage supports only:
-  - `none`
-  - `filesystem`
-  - `gcs`
-- verification collections persistence supports only:
-  - `mem`
-  - `firestore`
+- runtime code now accepts:
+  - `DB_PROVIDER=postgres`
+  - `STORAGE_PROVIDER=ipfs`
 
 Important:
 
-- `filesystem` appears here only as part of the current code reality.
-- It is not part of the target support profile for this gap.
-- The target profile remains strictly:
+- This note is not proposing legacy storage/runtime modes as architecture,
+  roadmap, or GW/GW Template alignment.
+- The target profile for this gap remains strictly:
   - `DB_PROVIDER=postgres`
   - `STORAGE_PROVIDER=ipfs`
 
@@ -64,63 +60,50 @@ Some existing behavior reduces the future migration cost:
   per-document CEK model, so adding IPFS does not require copying all GW
   cryptographic persistence semantics first
 
-That means the main missing work is storage/provider implementation, not
-business-contract invention.
+That means the main storage/provider implementation is now present. The
+remaining gap is mostly around operator support and deeper validation.
 
 ## Required Changes
 
 To reach real support parity with GW, ICA still needs all of the following.
 
-### 1. Add PostgreSQL as a real collections provider
+### 1. Harden PostgreSQL support
 
-Current limitation:
+Code support exists now, but it still needs stronger validation and operator
+guidance.
 
-- `parseProvider(...)` in
-  `src/api/tools/verification-collections-storage.ts` rejects anything except
-  `mem` and `firestore`
+Remaining work:
 
-Required work:
-
-- add `postgres` to the provider union in the collections config/types
-- implement a PostgreSQL adapter under
-  `src/api/tools/verification-collections/adapters.ts` and related adapter
-  types/files
-- define schema management for:
+- validate schema management for:
   - issued credentials
   - evidence records
   - DID bindings
   - DID documents
-- preserve current query semantics used by:
+- verify current query semantics used by:
   - credential retrieve
   - credential search
   - credential status/revoke
   - terms remove
   - dataspace sync follow-up persistence
-- add runtime config tests and integration tests for the PostgreSQL provider
+- add integration tests for the PostgreSQL provider
+- document expected connection/bootstrap requirements for operators
 
-### 2. Add IPFS as a real adhesion-contract storage provider
+### 2. Harden IPFS adhesion-contract storage support
 
-Current limitation:
+Code support exists now, but the IPFS path still needs runtime hardening.
 
-- `parseAuditStorageMode(...)` in
-  `src/api/tools/audit-document-storage.ts` only accepts `mem`, `none`,
-  `filesystem`, or `gcs`
-- `AuditStorageProvider` in `src/api/types.ts` only exposes `filesystem | gcs`
-- OpenAPI also exposes only `filesystem` and `gcs`
+Remaining work:
 
-Required work:
-
-- add `ipfs` to the audit storage mode/parser/types/OpenAPI
-- implement a Kubo-backed storage adapter for persisted signed adhesion
-  contracts
-- define required env vars, likely equivalent to GW:
+- validate the Kubo-backed storage adapter for persisted signed adhesion
+  contracts under real operator conditions
+- confirm and document required env vars:
   - `IPFS_API_URL`
   - `IPFS_GATEWAY_URL`
   - `IPFS_MFS_ROOT`
 - decide the canonical persisted locator policy:
   - external/public `ipfs://<cid>`
   - internal mutable path if needed for local management
-- add runtime tests plus one live E2E smoke for `upload -> retrieve/delete`
+- add one live E2E smoke for `upload -> retrieve/delete`
 
 ### 3. Keep the first scope limited to adhesion contracts only
 
@@ -160,26 +143,23 @@ Without this, the feature would exist only as code, not as a supported path.
 
 ### 5. Extend the test matrix
 
-Current tests prove config parsing and business behavior mostly around
-`mem`/`firestore` and legacy audit storage modes.
+Current tests now prove config parsing for `postgres` and `ipfs`, but not full
+end-to-end operator behavior.
 
 To claim support parity, ICA should add:
 
-- config tests for `DB_PROVIDER=postgres`
-- config tests for `STORAGE_PROVIDER=ipfs`
 - integration tests for the PostgreSQL collections adapter
-- unit tests for the IPFS audit storage adapter
+- unit/integration tests for the IPFS audit storage adapter
 - one live E2E smoke with local Kubo
 
 ## Recommended Implementation Order
 
 The least risky order is:
 
-1. add PostgreSQL collections provider
-2. add IPFS audit storage provider
+1. verify the merged PostgreSQL adapter under integration tests
+2. verify the merged IPFS adapter with local Kubo smoke coverage
 3. add local env/compose assets
-4. add integration + E2E coverage
-5. update OpenAPI and docs only after tests prove the path
+4. document the supported operator profile
 
 This keeps the contract honest and avoids documenting unsupported env
 combinations too early.
@@ -195,12 +175,12 @@ The first parity pass does not need to include:
 
 ## Bottom Line
 
-`dataspace-ica-ts` is logically IPFS-aware at the business-contract layer, but
-it is not yet operationally `PostgreSQL + IPFS` capable.
+`dataspace-ica-ts` now has code support for `PostgreSQL + IPFS`, but it still
+needs operator assets and deeper integration/E2E validation before that profile
+is fully closed as a supported path.
 
 The missing pieces are concrete and bounded:
 
-- a PostgreSQL collections adapter
-- an IPFS audit storage adapter
 - env/operator assets
-- matching tests and OpenAPI/runtime documentation
+- deeper integration/E2E coverage
+- final operator-facing documentation
