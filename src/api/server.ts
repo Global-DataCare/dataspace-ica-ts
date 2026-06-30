@@ -80,6 +80,10 @@ import {
   buildIcaDidDocument,
   resolveControllerDidDocumentPath,
 } from './tools/ica-identity.ts';
+import {
+  loadPublishedJwks,
+  loadPublishedX509Der,
+} from './tools/public-artifacts.ts';
 import { bootstrapSelfSigningKey } from './tools/self-signing.ts';
 import { getConfiguredSupportedJurisdictionIds } from './supported-jurisdictions.ts';
 import { getSupportedSectorCodings, getSupportedSectorsLanguage } from './supported-sectors.ts';
@@ -167,6 +171,13 @@ function sendDidDocumentJson(res: ServerResponse, statusCode: number, payload: u
   res.setHeader('Content-Type', 'application/did+ld+json');
   res.setHeader('Content-Length', Buffer.byteLength(body));
   res.end(body);
+}
+
+function sendBinary(res: ServerResponse, statusCode: number, payload: Buffer, contentType: string): void {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Length', payload.byteLength);
+  res.end(payload);
 }
 
 function mapStatusIssue(statusCode: number): Pick<OperationOutcomeIssue, 'severity' | 'code'> {
@@ -780,6 +791,34 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           return;
         }
         sendDidDocumentJson(res, 200, buildIcaDidDocument(req));
+        return;
+      }
+
+      if (pathname === '/.well-known/jwks.json') {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const jwks = loadPublishedJwks();
+        if (!jwks) {
+          sendJson(res, 404, { issue: 'ICA public JWKS artifact not configured' });
+          return;
+        }
+        sendJson(res, 200, jwks);
+        return;
+      }
+
+      if (pathname === '/.well-known/x509.der') {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const x509Der = loadPublishedX509Der();
+        if (!x509Der) {
+          sendJson(res, 404, { issue: 'ICA public X509 artifact not configured' });
+          return;
+        }
+        sendBinary(res, 200, x509Der, 'application/pkix-cert');
         return;
       }
 

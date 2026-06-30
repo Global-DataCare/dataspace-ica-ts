@@ -1,11 +1,22 @@
 # Changelog
 
-# Unreleased
+# 1.1.0 - 2026-06-30
 
-- Documented the current implementation gap to reach GW-style
-  `DB_PROVIDER=postgres` + `STORAGE_PROVIDER=ipfs` support in
-  `docs/06-architecture-and-reference/02-postgres-ipfs-gap.md`, including the
-  exact code paths that are still limited to Firestore/GCS or mem/filesystem.
+- Merged the `REI94` implementation line into the current branch:
+  - added `DB_PROVIDER=postgres` support for verification collections
+  - added `STORAGE_PROVIDER=ipfs` support for audit document persistence
+  - added the `pg` dependency and PostgreSQL adapter/config plumbing
+- Removed `filesystem` from the supported audit-storage profile:
+  - runtime config now accepts `mem`, `gcs`, or `ipfs`
+  - public types/OpenAPI/README/examples no longer advertise `filesystem`
+  - runtime config tests now explicitly reject `STORAGE_PROVIDER=filesystem`
+- Updated runtime/docs/config examples for the supported operator profile:
+  - documented `IPFS_API_URL`, `IPFS_GATEWAY_URL`, `IPFS_MFS_ROOT`
+  - documented `POSTGRES_URL`
+  - aligned `deploy/k8s/configmap.yaml` and `env.example`
+- Updated architecture notes so the former `postgres + ipfs` gap document now
+  reflects the new code reality: implementation is present, and the remaining
+  work is operator hardening plus deeper integration/E2E validation.
 
 # 1.0.4 - 2026-06-22
 

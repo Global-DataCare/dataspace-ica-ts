@@ -7,7 +7,6 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import test from 'node:test';
 import type { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { InMemoryVerificationJobStore } from '../src/api/job-store.ts';
@@ -1074,97 +1073,30 @@ test('computePdfLogicalFingerprint changes when page content changes', () => {
   assert.notEqual(baseFingerprint?.hash, changedFingerprint?.hash);
 });
 
-test('AuditDocumentStorageService stores verified pdf using filesystem adapter', async () => {
+test('AuditDocumentStorageService leaves verified pdf unchanged when storage mode is none', async () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
 
-  const tempDir = await mkdtemp(path.join(tmpdir(), 'ica-audit-storage-test-'));
-  try {
-    const service = new AuditDocumentStorageService({
-      mode: 'filesystem',
-      required: true,
-      confidentialStorageEnabled: false,
-      attachmentUrlPattern: 'urn:uuid:{objectId}',
-      filesystemDirectory: tempDir,
-      gcsObjectPrefix: 'ica-audit',
-    });
-    const submission: VerifySubmission = {
-      thid: 'thid-audit-storage-001',
-      pdfBytes: Buffer.from('%PDF-1.4\nfake-pdf\n%%EOF\n', 'latin1'),
-      contentType: 'application/pdf',
-    };
+  const service = new AuditDocumentStorageService({
+    mode: 'none',
+    required: false,
+    confidentialStorageEnabled: false,
+    attachmentUrlPattern: 'urn:uuid:{objectId}',
+    gcsObjectPrefix: 'ica-audit',
+  });
+  const submission: VerifySubmission = {
+    thid: 'thid-audit-storage-none-001',
+    pdfBytes: Buffer.from('%PDF-1.4\nfake-pdf\n%%EOF\n', 'latin1'),
+    contentType: 'application/pdf',
+  };
 
-    const enriched = await service.persistVerifiedPdf(
-      parsed.context,
-      submission,
-      buildTestVerifyResult('audit-storage'),
-    );
+  const result = buildTestVerifyResult('audit-storage-none');
+  const enriched = await service.persistVerifiedPdf(parsed.context, submission, result);
 
-    assert.equal(enriched.auditDocument?.provider, 'filesystem');
-    assert.equal((enriched.auditDocument?.attachmentUrl || '').startsWith('urn:uuid:'), true);
-    assert.equal(typeof enriched.auditDocument?.objectKey, 'string');
-    const stored = await readFile(path.join(tempDir, enriched.auditDocument?.objectKey || ''));
-    assert.deepEqual(stored, submission.pdfBytes);
-    assert.equal(enriched.notes.some((note) => note.includes('Audit document stored')), true);
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('AuditDocumentStorageService encrypts audit pdf when confidential storage is enabled', async () => {
-  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
-  assert.ok(parsed);
-  assert.equal(parsed.ok, true);
-  if (!parsed.ok) return;
-
-  const previousSeed = process.env.ICA_CONFIDENTIAL_STORAGE_KEY_SEED;
-  const previousVersion = process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION;
-  process.env.ICA_CONFIDENTIAL_STORAGE_KEY_SEED = 'test-confidential-storage-seed-v1';
-  process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION = 'v1';
-  const tempDir = await mkdtemp(path.join(tmpdir(), 'ica-audit-storage-enc-test-'));
-
-  try {
-    const service = new AuditDocumentStorageService({
-      mode: 'filesystem',
-      required: true,
-      confidentialStorageEnabled: true,
-      attachmentUrlPattern: 'urn:uuid:{objectId}',
-      filesystemDirectory: tempDir,
-      gcsObjectPrefix: 'ica-audit',
-    });
-    const submission: VerifySubmission = {
-      thid: 'thid-audit-storage-enc-001',
-      pdfBytes: Buffer.from('%PDF-1.4\nfake-pdf\n%%EOF\n', 'latin1'),
-      contentType: 'application/pdf',
-    };
-
-    const enriched = await service.persistVerifiedPdf(
-      parsed.context,
-      submission,
-      buildTestVerifyResult('audit-storage-encrypted'),
-    );
-
-    assert.equal(enriched.auditDocument?.provider, 'filesystem');
-    assert.match(String(enriched.auditDocument?.objectKey || ''), /\.enc$/);
-    assert.equal(enriched.auditDocument?.contentType, 'application/vnd.globaldatacare.encrypted+json');
-    assert.equal(typeof enriched.auditDocument?.encryptionKeyId, 'string');
-    assert.ok(enriched.auditDocument?.encryptionKeyId);
-
-    const stored = await readFile(path.join(tempDir, enriched.auditDocument?.objectKey || ''));
-    assert.notDeepEqual(stored, submission.pdfBytes);
-    const parsedEnvelope = JSON.parse(stored.toString('utf8')) as Record<string, unknown>;
-    assert.equal(parsedEnvelope.alg, 'A256GCM');
-    assert.equal(typeof parsedEnvelope.ciphertext, 'string');
-    assert.equal(enriched.notes.some((note) => note.includes('[encrypted kid=')), true);
-  } finally {
-    if (previousSeed === undefined) delete process.env.ICA_CONFIDENTIAL_STORAGE_KEY_SEED;
-    else process.env.ICA_CONFIDENTIAL_STORAGE_KEY_SEED = previousSeed;
-    if (previousVersion === undefined) delete process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION;
-    else process.env.ICA_CONFIDENTIAL_STORAGE_KEY_VERSION = previousVersion;
-    await rm(tempDir, { recursive: true, force: true });
-  }
+  assert.equal(enriched, result);
+  assert.equal(enriched.auditDocument, undefined);
 });
 
 test('parseVerifyRoute rejects test-prefixed resourceType by default', () => {

@@ -24,23 +24,26 @@ data:
   ICA_TERMS_TEMPLATE_CACHE_MAX_ENTRIES: "64"
   ICA_TERMS_TEMPLATE_URL_PATTERN: "https://raw.githubusercontent.com/Global-DataCare/terms/refs/heads/main/dataspace/{sector}/{jurisdictionLower}/{resourceVersion}/terms.pdf"
 
-  # Audit storage: mem|filesystem|gcs
+  # Audit storage: mem|gcs|ipfs
   STORAGE_PROVIDER: "mem"
   ICA_AUDIT_STORAGE_REQUIRED: "true"
   ICA_AUDIT_ATTACHMENT_URL_PATTERN: "urn:uuid:{objectId}"
-  ICA_AUDIT_STORAGE_FS_DIR: "/app/data/audit-pdf"
   ICA_AUDIT_STORAGE_GCS_PREFIX: "ica-audit"
+  # IPFS_API_URL: "http://127.0.0.1:5001"
+  # IPFS_GATEWAY_URL: "http://127.0.0.1:8080"
+  # IPFS_MFS_ROOT: "/ica-audit"
 
   # Verification collections (issued credentials + evidence records)
-  # Provider: mem|firestore
+  # Provider: mem|firestore|postgres
   DB_PROVIDER: "mem"
   ICA_COLLECTIONS_REQUIRED: "true"
   ICA_COLLECTIONS_PREFIX: "ica"
   # Optional when provider=firestore
   # FIRESTORE_PROJECT_ID: "your-gcp-project-id"
+  # Optional when provider=postgres
+  # POSTGRES_URL: "postgres://user:password@host:5432/database"
 
   # Optional automatic trust bootstrap from FNMT public URLs.
   ICA_FNMT_AUTO_DOWNLOAD: "true"
   ICA_FNMT_ROOT_CERT_URL: "https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Raiz_FNMT-RCM_SHA256.cer"
   ICA_FNMT_INTERMEDIATE_CERT_URLS: "https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Representacion.cer,https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Sector_Publico.cer,https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_FNMT_Usuarios.cer"
-
