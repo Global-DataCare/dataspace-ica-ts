@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.1.3 - 2026-07-21
+
+- Added the versioned `HostServiceFormPdfFields` contract and runtime validation
+  for signed host-service authorization PDFs. The form binds the service category,
+  provider identity, host origin, controller email, and RFC 9278 controller-key
+  identifier before Service VC issuance; jurisdiction derives from the provider
+  country and later operations prove possession of the corresponding private key.
+
 ## 1.1.2 - 2026-07-21
 
 - Autodiscovery now fails closed at the network boundary: ICA traverses only
