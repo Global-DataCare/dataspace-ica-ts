@@ -7,8 +7,6 @@
  */
 export const HostServiceFormPdfFieldName = {
   formVersion: 'formVersion',
-  serviceType: 'serviceType',
-  category: 'category',
   url: 'url',
   providerLegalName: 'provider.legalName',
   providerAddressCountry: 'provider.address.addressCountry',
@@ -33,8 +31,6 @@ export type HostServiceFormPdfFieldNameValue =
  */
 export interface HostServiceFormPdfFields {
   formVersion?: string;
-  serviceType?: string;
-  category?: string;
   url?: string;
   providerLegalName?: string;
   providerAddressCountry?: string;
@@ -57,8 +53,6 @@ export const HOST_SERVICE_FORM_VERSION = '1.0' as const;
 /** Fields required independently of the provider identifier alternative. */
 export const HostServiceFormPdfRequiredFieldNames = Object.freeze([
   HostServiceFormPdfFieldName.formVersion,
-  HostServiceFormPdfFieldName.serviceType,
-  HostServiceFormPdfFieldName.category,
   HostServiceFormPdfFieldName.url,
   HostServiceFormPdfFieldName.providerLegalName,
   HostServiceFormPdfFieldName.providerAddressCountry,

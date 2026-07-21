@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
-import { ServiceCapability } from 'gdc-common-utils-ts/constants/service-capabilities';
 import { UrnPrefixes } from 'gdc-common-utils-ts/constants/urn';
 import {
   HOST_SERVICE_FORM_VERSION,
@@ -29,8 +28,6 @@ const { PDFDocument } = require('pdf-lib') as {
 
 const HOST_SERVICE_FORM_VALUES = {
   [HostServiceFormPdfFieldName.formVersion]: HOST_SERVICE_FORM_VERSION,
-  [HostServiceFormPdfFieldName.serviceType]: ServiceCapability.OrganizationRegistryProvider,
-  [HostServiceFormPdfFieldName.category]: 'example-sector',
   [HostServiceFormPdfFieldName.url]: 'https://host.example.org',
   [HostServiceFormPdfFieldName.providerLegalName]: 'Example Provider Foundation',
   [HostServiceFormPdfFieldName.providerAddressCountry]: 'ES',
@@ -42,9 +39,9 @@ const HOST_SERVICE_FORM_VALUES = {
 } as const;
 
 /**
- * Flow contract: the signed AcroForm carries every semantic input required to
- * authorize a host service; extraction preserves the dotted field names and
- * runtime validation rejects incomplete or syntactically unsafe evidence.
+ * Flow contract: the signed AcroForm identifies the host service, responsible
+ * provider and controller. Fabric channels, permissions, block fingerprints
+ * and chaincode policy are deliberately configured outside this legal PDF.
  */
 test('signed host-service PDF exposes every field required for Service VC issuance', async () => {
   const document = await PDFDocument.create();
@@ -78,6 +75,15 @@ test('host-service form requires provider identifier value or taxID', () => {
   assert.deepEqual(validation.missingFields, [
     `${HostServiceFormPdfFieldName.providerIdentifierValue}|${HostServiceFormPdfFieldName.providerTaxID}`,
   ]);
+});
+
+test('host-service PDF contract excludes mutable Fabric governance configuration', () => {
+  assert.equal('channel' in HostServiceFormPdfFieldName, false);
+  assert.equal('permissions' in HostServiceFormPdfFieldName, false);
+  assert.equal('genesisSha256' in HostServiceFormPdfFieldName, false);
+  assert.equal('chaincodes' in HostServiceFormPdfFieldName, false);
+  assert.equal('serviceType' in HostServiceFormPdfFieldName, false);
+  assert.equal('category' in HostServiceFormPdfFieldName, false);
 });
 
 test('HostServiceFormPdfFields exposes camelCase TypeScript properties', () => {
