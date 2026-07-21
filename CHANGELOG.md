@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Simplified `HostServiceFormPdfFields` to legal host/provider/controller
+  evidence. Fabric channels, permissions, block-zero fingerprints, chaincodes
+  and mutable service policy are configured separately by governance and
+  provisioning.
+
 ## 1.1.3 - 2026-07-21
 
 - Added the versioned `HostServiceFormPdfFields` contract and runtime validation
