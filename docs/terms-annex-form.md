@@ -18,6 +18,10 @@ npm run create:terms:pdf -- \
 
 Field lookup is case-insensitive on read, so `Organization.sameAs` and `organization.sameAs` are both accepted. The canonical names remain the lowercase ones below.
 
+For a machine-readable catalog that also includes visible identity fields and accepted aliases, see `docs/examples/terms-annex-field-catalog.json`.
+For a typed TypeScript contract similar to `IndividualFormTemplateFields`, see `LegalOrgFormTemplateFields` in `src/api/models/verify-terms-fields.ts`.
+For downstream GW `_activate/_transaction` TODOs and consumption priority rules, see `docs/gwtemplate-node-ts-vc-consumption-todo.md`.
+
 - `organization.additionalType`
 - `organization.sameAs`
 - `organization.url`
@@ -26,6 +30,30 @@ Field lookup is case-insensitive on read, so `Organization.sameAs` and `organiza
 - `person.email`
 - `person.alternateName`
 - `person.additionalType`
+
+### Identifier note
+
+- `organization.registrationNumber` is treated as legacy compatibility in the programming contract.
+- Preferred optional model: `organization.identifierType` + `organization.identifierValue` (mapped to `Organization.identifier.propertyID` and `Organization.identifier.value`).
+- `organization.taxID` remains the mandatory organization identity anchor for onboarding.
+
+## Route sector and serviceType
+
+- `sector` is not a PDF field. The authoritative value comes from the route path `/cds-{jurisdiction}/v1/{sector}/...`.
+- `serviceType` is not currently extracted from the annex AcroForm fields.
+- Today, if you need `OrganizationCredential.credentialSubject.makesOffer.serviceType`, send it through `organizationPayload.serviceType` or `organizationPayload.makesOffer.serviceType` in compat/demo flows.
+- Supported downstream capability values are documented in `src/api/models/verify-terms-fields.ts` as `VerifyTermsServiceCapability`.
+- Proposed next PDF/interface extensions are also documented in that file:
+  - `organization.contactPoint.email`
+  - `organization.participant.additionalType`
+  - `organization.hostingOrganization.url`
+  - `organization.hostingOrganization.identifier`
+
+## What matters for later `_create`
+
+- If you want `_verify` output to be reusable by `entity/did/document/_create`, send `body.data[].resource.controller.publicKeyJwk` during `_verify`.
+- The organization credential-signing key can be sent as an `application/jwk+json` attachment, but if omitted ICA can generate an ES384 keypair and return it in `_verify-response`.
+- When the signer certificate does not expose organization identity, the PDF must expose `organization.taxID` and `organization.legalName`.
 
 ## Runtime extraction during `_verify`
 

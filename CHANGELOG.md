@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+## 1.1.1 - 2026-07-21
+
+- Added the authorized-member autodiscovery aggregate at
+  `/{tenantId}/cds-{jurisdiction}/v1/{sector}/network/members/_discover`.
+  It returns `data[]` entries containing the locally issued schema.org `vc[]`,
+  resolved `did.document`, optional `dcat.document`, and exact signed Gaia-X
+  VC-JWT `attachments[]`, with participant first and configurable cache age.
+- Organization credentials now publish the canonical schema.org
+  `PropertyValue` registration identifier. Explicit `identifierType/value`
+  wins; otherwise ICA derives VAT/TAX from the signed tax field.
+- Added the reproducible GKE HTTPS profile for `ica.globaldatacare.es`:
+  - the active `34.175.75.120` address remains the public endpoint
+  - `ingress-nginx` terminates TLS and proxies to the internal ICA service
+  - `cert-manager` obtains and renews the Let's Encrypt certificate
+  - the canonical DID authority and OpenAPI origin are configured separately
+    as `ICA_EXTERNAL_DOMAIN` and `ICA_OPENAPI_SERVER_URL`
+
 # 1.1.0 - 2026-06-30
 
 - Merged the `REI94` implementation line into the current branch:

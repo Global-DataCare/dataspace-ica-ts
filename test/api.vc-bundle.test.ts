@@ -145,7 +145,11 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
     assert.equal(organizationSubject.legalName, 'ACME HEALTH SL');
     assert.equal(organizationSubject.taxID, 'VATES-A12345678');
     assert.equal(organizationSubject.sameAs, undefined);
-    assert.equal(organizationSubject.identifier, undefined);
+    assert.deepEqual(organizationSubject.identifier, {
+      '@type': 'PropertyValue',
+      additionalType: 'VAT',
+      value: 'VATES-A12345678',
+    });
     assert.equal(organizationSubject.sector, undefined);
     assert.equal(organizationSubject.name, undefined);
 
@@ -162,7 +166,11 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
     assert.equal(personSubject.memberOf?.['@type'], 'Organization');
     assert.equal(personSubject.memberOf?.legalName, 'ACME HEALTH SL');
     assert.equal(personSubject.memberOf?.taxID, 'VATES-A12345678');
-    assert.equal(personSubject.memberOf?.identifier, undefined);
+    assert.deepEqual(personSubject.memberOf?.identifier, {
+      '@type': 'PropertyValue',
+      additionalType: 'VAT',
+      value: 'VATES-A12345678',
+    });
     assert.equal(personSubject.worksFor, undefined);
 
     const organizationEvidence = organizationResource.evidence as Array<Record<string, any>>;
@@ -306,6 +314,8 @@ test('buildVerificationVcBundle maps annex form fields into credential subjects 
         'Organization.additionalType': 'sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider',
         'Organization.alternateName': 'acme',
         'Organization.registrationNumber': 'ES-SAN-REG-0001',
+        'Organization.identifierType': 'EUID',
+        'Organization.identifierValue': 'ES-SAN-REG-0001',
         'Person.email': 'zControllerHash',
         'Person.alternateName': 'controller-es384-20260309',
         'Person.additionalType': 'ES384',
@@ -327,6 +337,11 @@ test('buildVerificationVcBundle maps annex form fields into credential subjects 
     );
     assert.equal(organizationSubject.alternateName, 'acme');
     assert.equal(organizationSubject.registrationNumber, 'ES-SAN-REG-0001');
+    assert.deepEqual(organizationSubject.identifier, {
+      '@type': 'PropertyValue',
+      additionalType: 'EUID',
+      value: 'ES-SAN-REG-0001',
+    });
     assert.equal(organizationSubject.email, undefined);
     assert.equal(organizationSubject.url, 'member.example.org');
     assert.equal(personSubject.email, undefined);
