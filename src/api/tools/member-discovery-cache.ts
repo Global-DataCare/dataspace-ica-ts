@@ -28,6 +28,48 @@ export type DiscoveryFetchResult = {
 
 export type DiscoveryJsonFetcher = (url: string) => Promise<DiscoveryFetchResult>;
 
+/**
+ * Parses the transitional ICA host allowlist.
+ *
+ * Entries may be bare IPv4/IPv6 addresses, DNS names, or HTTP(S) origins. The
+ * comparison is deliberately hostname-only so an IP can move from HTTP to
+ * HTTPS without granting access to another host. Paths, credentials, queries
+ * and fragments are rejected to keep the SSRF boundary explicit.
+ */
+export function parseMemberDiscoveryAllowedHosts(csv: string | undefined): ReadonlySet<string> {
+  const hosts = new Set<string>();
+  for (const entry of String(csv || '').split(',').map((value) => value.trim()).filter(Boolean)) {
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(entry) ? entry : `https://${entry}`;
+    let parsed: URL;
+    try {
+      parsed = new URL(candidate);
+    } catch {
+      throw new Error(`Invalid ICA member discovery allowlist entry '${entry}'.`);
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)
+      || parsed.username
+      || parsed.password
+      || (parsed.pathname && parsed.pathname !== '/')
+      || parsed.search
+      || parsed.hash
+      || !parsed.hostname) {
+      throw new Error(`Invalid ICA member discovery allowlist entry '${entry}'. Use an IP, DNS name, or HTTP(S) origin.`);
+    }
+    hosts.add(parsed.hostname.toLowerCase());
+  }
+  return hosts;
+}
+
+/** Returns true only when the dataset URL is HTTP(S) and its host is allowed. */
+export function isMemberDiscoveryUrlAllowed(url: string, allowedHosts: ReadonlySet<string>): boolean {
+  try {
+    const parsed = new URL(url);
+    return ['http:', 'https:'].includes(parsed.protocol) && allowedHosts.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 type CachedMember = {
   expiresAtMs: number;
   value: IcaMemberDiscoveryData;

@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MemberDiscoveryCache, type DiscoveryJsonFetcher } from '../src/api/tools/member-discovery-cache.ts';
+import {
+  isMemberDiscoveryUrlAllowed,
+  MemberDiscoveryCache,
+  parseMemberDiscoveryAllowedHosts,
+  type DiscoveryJsonFetcher,
+} from '../src/api/tools/member-discovery-cache.ts';
 import type { IssuedCredentialRecord } from '../src/api/tools/verification-collections/types.ts';
 
 const did = 'did:web:member.example';
@@ -23,12 +28,22 @@ function credential(type: string, id: string): IssuedCredentialRecord {
     credential: {
       id,
       type: ['VerifiableCredential', type],
-      credentialSubject: { id: did, taxID: 'VATES-B42215152' },
+      credentialSubject: { id: did, taxID: 'VATES-B00000000' },
     },
     createdAt: '2026-07-21T00:00:00.000Z',
     updatedAt: '2026-07-21T00:00:00.000Z',
   };
 }
+
+test('member discovery host allowlist accepts IPs, DNS names and origins but rejects URL paths and credentials', () => {
+  const allowed = parseMemberDiscoveryAllowedHosts('192.0.2.10, member.example, https://catalog.example:8443');
+  assert.deepEqual([...allowed].sort(), ['192.0.2.10', 'catalog.example', 'member.example']);
+  assert.equal(isMemberDiscoveryUrlAllowed('http://192.0.2.10/.well-known/did.json', allowed), true);
+  assert.equal(isMemberDiscoveryUrlAllowed('https://member.example/.well-known/did.json', allowed), true);
+  assert.equal(isMemberDiscoveryUrlAllowed('https://unlisted.example/.well-known/did.json', allowed), false);
+  assert.throws(() => parseMemberDiscoveryAllowedHosts('https://member.example/path'), /Use an IP, DNS name, or HTTP\(S\) origin/);
+  assert.throws(() => parseMemberDiscoveryAllowedHosts('https://user:secret@member.example'), /Use an IP, DNS name, or HTTP\(S\) origin/);
+});
 
 test('MemberDiscoveryCache returns documents, current VCs and exact Gaia-X VC-JWT attachments, then reuses cache', async () => {
   let calls = 0;
