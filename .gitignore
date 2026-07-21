@@ -131,3 +131,6 @@ tools/
 
 # Private/customer-specific bootstrap scripts (keep out of public repo)
 scripts/*.private.sh
+
+# Local Cloud Run inspection output
+.tmp.cloudrun-*

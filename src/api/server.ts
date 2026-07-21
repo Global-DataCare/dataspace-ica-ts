@@ -75,6 +75,7 @@ import {
   findProviderDatasetById,
 } from './tools/dcat-catalog.ts';
 import { buildCatalogDdo } from './tools/ddo-catalog.ts';
+import { MemberDiscoveryCache } from './tools/member-discovery-cache.ts';
 import {
   buildControllerDidDocument,
   buildIcaDidDocument,
@@ -602,6 +603,8 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const backendAuthRequestManager = new BackendAuthRequestManager(backendAuthJobStore, backendAuthService);
   const backendAuthResponseManager = new BackendAuthResponseManager(backendAuthJobStore);
   const apiDocsHtml = buildApiDocsHtml();
+  const memberDiscoveryMaxAgeSeconds = Math.max(1, Number.parseInt(process.env.ICA_MEMBER_DISCOVERY_MAX_AGE_SECONDS || '300', 10) || 300);
+  const memberDiscoveryCache = new MemberDiscoveryCache(undefined, memberDiscoveryMaxAgeSeconds);
 
   async function buildActiveProviderDatasets(route: {
     tenantId: string;
@@ -848,6 +851,49 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           Array.isArray(didDocument.service) ? didDocument.service : [],
         );
         sendJson(res, 200, catalog, prefersJsonLd(req) ? 'application/ld+json' : 'application/json');
+        return;
+      }
+
+      const memberDiscoveryMatch = pathname.match(/^\/([^/]+)\/cds-([^/]+)\/v1\/([^/]+)\/network\/members\/_discover$/i);
+      if (memberDiscoveryMatch) {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const route = {
+          tenantId: decodeURIComponent(memberDiscoveryMatch[1] || ''),
+          jurisdiction: decodeURIComponent(memberDiscoveryMatch[2] || '').toUpperCase(),
+          sector: decodeURIComponent(memberDiscoveryMatch[3] || '').toLowerCase(),
+        };
+        const forceRefresh = ['1', 'true', 'yes'].includes((requestUrl.searchParams.get('refresh') || '').toLowerCase());
+        const [datasets, issuedCredentials, didDocuments] = await Promise.all([
+          buildActiveProviderDatasets(route),
+          verificationCollectionsService.listIssuedCredentials(),
+          verificationCollectionsService.listDidDocuments(),
+        ]);
+        const settled = await Promise.allSettled(datasets.map((dataset) => memberDiscoveryCache.resolve({
+          dataset,
+          issuedCredentials,
+          didDocuments,
+          forceRefresh,
+        })));
+        const data = settled
+          .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof memberDiscoveryCache.resolve>>> => result.status === 'fulfilled')
+          .map((result) => result.value);
+        const issues = settled.flatMap((result, index) => result.status === 'rejected' ? [{
+          member: datasets[index]?.publisherDid,
+          diagnostics: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }] : []);
+        res.setHeader('Cache-Control', `public, max-age=${memberDiscoveryMaxAgeSeconds}`);
+        sendJson(res, 200, {
+          data,
+          meta: {
+            generatedAt: new Date().toISOString(),
+            maxAgeSeconds: memberDiscoveryMaxAgeSeconds,
+            refreshed: forceRefresh,
+            ...(issues.length ? { issues } : {}),
+          },
+        });
         return;
       }
 

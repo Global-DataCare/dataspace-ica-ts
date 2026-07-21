@@ -136,6 +136,8 @@ const ANNEX_ORGANIZATION_ADDITIONAL_TYPE = 'organization.additionalType';
 const ANNEX_ORGANIZATION_SAME_AS = 'organization.sameAs';
 const ANNEX_ORGANIZATION_URL = 'organization.url';
 const ANNEX_ORGANIZATION_ALTERNATE_NAME = 'organization.alternateName';
+const ANNEX_ORGANIZATION_IDENTIFIER_TYPE = 'organization.identifierType';
+const ANNEX_ORGANIZATION_IDENTIFIER_VALUE = 'organization.identifierValue';
 const ANNEX_ORGANIZATION_REGISTRATION_NUMBER = 'organization.registrationNumber';
 const ANNEX_PERSON_EMAIL = 'person.email';
 const ANNEX_PERSON_ALTERNATE_NAME = 'person.alternateName';
@@ -229,6 +231,45 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+/**
+ * Resolves the schema.org PropertyValue used as the organization identifier in
+ * the dataspace. Explicit PDF identifier fields win. The legacy registration
+ * number is retained as a local registration and, only when neither exists,
+ * the normalized PDF/certificate tax identifier is copied as VAT/TAX.
+ *
+ * This is not itself a Gaia-X LegalRegistrationNumber credential. It is the
+ * jurisdiction-qualified source value that a GW/notary flow uses to obtain or
+ * reference that separate credential.
+ */
+function resolveOrganizationPropertyValueIdentifier(
+  result: VerifyResult,
+  organizationTaxId: string | undefined,
+  organizationRegistrationNumber: string | undefined,
+): Record<string, string> | undefined {
+  const explicitType = getAnnexField(result, ANNEX_ORGANIZATION_IDENTIFIER_TYPE);
+  const explicitValue = getAnnexField(result, ANNEX_ORGANIZATION_IDENTIFIER_VALUE);
+  if (explicitValue) {
+    return {
+      '@type': 'PropertyValue',
+      additionalType: explicitType || 'LOCAL',
+      value: explicitValue,
+    };
+  }
+  if (organizationRegistrationNumber) {
+    return {
+      '@type': 'PropertyValue',
+      additionalType: explicitType || 'LOCAL',
+      value: organizationRegistrationNumber,
+    };
+  }
+  if (!organizationTaxId) return undefined;
+  return {
+    '@type': 'PropertyValue',
+    additionalType: /^VAT[A-Z]{2}-/i.test(organizationTaxId) ? 'VAT' : 'TAX',
+    value: organizationTaxId,
+  };
 }
 
 /**
@@ -1103,6 +1144,11 @@ export function buildVerificationVcBundle(
     includeElectronicSignatureEvidence,
   );
   const organizationIdentifiers = resolveOrganizationSubjectIdentifiers(route, organizationTaxId, annexOrganizationDid);
+  const organizationPropertyValueIdentifier = resolveOrganizationPropertyValueIdentifier(
+    result,
+    organizationTaxId,
+    organizationRegistrationNumber,
+  );
 
   const organizationSubject: Record<string, unknown> = {
     ...extractAdditionalOrganizationDataFromPdf(result),
@@ -1114,6 +1160,9 @@ export function buildVerificationVcBundle(
   }
   if (organizationTaxId) {
     organizationSubject.taxID = organizationTaxId;
+  }
+  if (organizationPropertyValueIdentifier) {
+    organizationSubject.identifier = organizationPropertyValueIdentifier;
   }
   const organizationAddress = mergePostalAddress(organizationSubject.address, country);
   if (organizationAddress) {
@@ -1174,6 +1223,9 @@ export function buildVerificationVcBundle(
   }
   if (organizationTaxId) {
     organizationRef.taxID = organizationTaxId;
+  }
+  if (organizationPropertyValueIdentifier) {
+    organizationRef.identifier = organizationPropertyValueIdentifier;
   }
   const personSubject: Record<string, unknown> = {
     ...extractAdditionalPersonDataFromPdf(result),
