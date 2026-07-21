@@ -1,0 +1,8 @@
+controller:
+  ingressClass: nginx
+  ingressClassResource:
+    name: nginx
+  watchIngressWithoutClass: false
+  service:
+    type: LoadBalancer
+    loadBalancerIP: 34.175.75.120
