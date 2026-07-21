@@ -753,11 +753,11 @@ test('buildVerificationVcBundle uses VATPT when annex fiscal address ends in Por
 
     const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
       ...buildTestVerifyResult('pdf-org-identity-pt'),
-      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-B87617981,C=ES',
-      verifierVatId: 'VATES-B87617981',
+      signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-B00000000,C=ES',
+      verifierVatId: 'VATES-B00000000',
       annexFormFields: {
-        'Razon Social': 'Falck Portugal SA',
-        'CIF': '507910626',
+        'Razon Social': 'Example Portugal SA',
+        'CIF': '000000000',
         'Domicilio Fiscal': 'Rua de Lisboa 100, Lisboa, Portugal',
         'Representante legal': 'Joao Silva',
       },
@@ -765,8 +765,8 @@ test('buildVerificationVcBundle uses VATPT when annex fiscal address ends in Por
 
     const organizationResource = bundle.data[0].resource as Record<string, any>;
     const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
-    assert.equal(organizationSubject.taxID, 'VATPT-507910626');
-    assert.equal(organizationSubject.legalName, 'FALCK PORTUGAL SA');
+    assert.equal(organizationSubject.taxID, 'VATPT-000000000');
+    assert.equal(organizationSubject.legalName, 'EXAMPLE PORTUGAL SA');
 
     const personResource = bundle.data[1].resource as Record<string, any>;
     const personSubject = personResource.credentialSubject as Record<string, any>;
