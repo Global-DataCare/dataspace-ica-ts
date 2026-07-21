@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.1.2 - 2026-07-21
+
+- Autodiscovery now fails closed at the network boundary: ICA traverses only
+  HTTP(S) dataset hosts listed in `ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS`.
+- Documented the migration from the temporary IP/DNS allowlist to a persistent
+  host registry authorized by a governance VC issued to the host DID.
+- Replaced real organization identifiers in examples and tests with synthetic
+  placeholders.
+
 ## 1.1.1 - 2026-07-21
 
 - Added the authorized-member autodiscovery aggregate at

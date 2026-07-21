@@ -75,7 +75,11 @@ import {
   findProviderDatasetById,
 } from './tools/dcat-catalog.ts';
 import { buildCatalogDdo } from './tools/ddo-catalog.ts';
-import { MemberDiscoveryCache } from './tools/member-discovery-cache.ts';
+import {
+  isMemberDiscoveryUrlAllowed,
+  MemberDiscoveryCache,
+  parseMemberDiscoveryAllowedHosts,
+} from './tools/member-discovery-cache.ts';
 import {
   buildControllerDidDocument,
   buildIcaDidDocument,
@@ -605,6 +609,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
   const apiDocsHtml = buildApiDocsHtml();
   const memberDiscoveryMaxAgeSeconds = Math.max(1, Number.parseInt(process.env.ICA_MEMBER_DISCOVERY_MAX_AGE_SECONDS || '300', 10) || 300);
   const memberDiscoveryCache = new MemberDiscoveryCache(undefined, memberDiscoveryMaxAgeSeconds);
+  const memberDiscoveryAllowedHosts = parseMemberDiscoveryAllowedHosts(process.env.ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS);
 
   async function buildActiveProviderDatasets(route: {
     tenantId: string;
@@ -871,7 +876,15 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           verificationCollectionsService.listIssuedCredentials(),
           verificationCollectionsService.listDidDocuments(),
         ]);
-        const settled = await Promise.allSettled(datasets.map((dataset) => memberDiscoveryCache.resolve({
+        const allowedDatasets = datasets.filter((dataset) =>
+          isMemberDiscoveryUrlAllowed(dataset.accessUrl, memberDiscoveryAllowedHosts));
+        const blockedIssues = datasets
+          .filter((dataset) => !isMemberDiscoveryUrlAllowed(dataset.accessUrl, memberDiscoveryAllowedHosts))
+          .map((dataset) => ({
+            member: dataset.publisherDid,
+            diagnostics: `Discovery host for '${dataset.accessUrl}' is not present in ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS.`,
+          }));
+        const settled = await Promise.allSettled(allowedDatasets.map((dataset) => memberDiscoveryCache.resolve({
           dataset,
           issuedCredentials,
           didDocuments,
@@ -880,10 +893,10 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
         const data = settled
           .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof memberDiscoveryCache.resolve>>> => result.status === 'fulfilled')
           .map((result) => result.value);
-        const issues = settled.flatMap((result, index) => result.status === 'rejected' ? [{
-          member: datasets[index]?.publisherDid,
+        const issues = [...blockedIssues, ...settled.flatMap((result, index) => result.status === 'rejected' ? [{
+          member: allowedDatasets[index]?.publisherDid,
           diagnostics: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }] : []);
+        }] : [])];
         res.setHeader('Cache-Control', `public, max-age=${memberDiscoveryMaxAgeSeconds}`);
         sendJson(res, 200, {
           data,
