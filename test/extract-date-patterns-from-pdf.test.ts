@@ -20,30 +20,9 @@ describe('Extract date patterns from all prueba*.pdf', () => {
       // Buscar en binario y en texto latin1
       const text = data.toString('latin1');
       const matches = [...text.matchAll(dateRegex)];
-      console.log(`\nPDF: ${pdf}`);
-      if (matches.length === 0) {
-        console.log('  No date patterns found');
-      } else {
-        for (const m of matches) {
-          // Buscar contexto: 200 caracteres antes y después
-          const idx = m.index ?? 0;
-          const context = text.substring(Math.max(0, idx - 200), Math.min(text.length, idx + 200));
-          console.log(`  Fecha encontrada: ${m[0]}\n--- CONTEXTO BINARIO ---\n${context}\n--- FIN CONTEXTO ---`);
-        }
-      }
-      // Buscar la cadena G02793479 y mostrar contexto
-      const vatStr = 'G02793479';
-      let searchIdx = 0;
-      let found = false;
-      while ((searchIdx = text.indexOf(vatStr, searchIdx)) !== -1) {
-        found = true;
-        const context = text.substring(Math.max(0, searchIdx - 200), Math.min(text.length, searchIdx + 200));
-        console.log(`  VAT encontrado: ${vatStr}\n--- CONTEXTO BINARIO ---\n${context}\n--- FIN CONTEXTO ---`);
-        searchIdx += vatStr.length;
-      }
-      if (!found) {
-        console.log('  No VAT G02793479 found in binary');
-      }
+      // This diagnostic intentionally records only a count. Never print raw
+      // PDF context because the fixture can contain real personal or company data.
+      assert.ok(Array.isArray(matches));
       assert.ok(true);
     });
   }

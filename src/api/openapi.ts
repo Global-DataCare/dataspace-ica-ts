@@ -4080,7 +4080,7 @@ export function buildIcaVerifyOpenApiSpec(
           tags: ['08 network/credentials'],
           summary: 'Discover authorized ICA members from the bounded-age cache',
           description:
-            'Returns `data[]` with schema.org credentials in `vc[]`, exact Gaia-X VC-JWTs in DIDComm `attachments[]`, and resolved DID/DCAT documents plus provenance metadata. Set `refresh=true` to bypass the current in-memory snapshot.',
+            'Returns `data[]` with schema.org credentials in `vc[]`, exact Gaia-X VC-JWTs in DIDComm `attachments[]`, and resolved DID/DCAT documents plus provenance metadata. Only dataset hosts in `ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS` are traversed; blocked hosts appear in `meta.issues`. Set `refresh=true` to bypass the current in-memory snapshot.',
           parameters: [
             { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
             { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },

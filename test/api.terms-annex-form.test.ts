@@ -161,14 +161,14 @@ test(
 
 test('parseOrganizationIdentityFromPlainText maps VATPT when Domicilio Fiscal ends in Portugal and extracts Representante legal', () => {
   const text = [
-    'Razón Social: FALCK PORTUGAL, S.A.',
-    'CIF: 507910626',
+    'Razón Social: EXAMPLE PORTUGAL, S.A.',
+    'CIF: 000000000',
     'Domicilio Fiscal: Rua de Lisboa 100, 1000-100 Lisboa, Portugal',
     'Representante legal: Joao Silva',
   ].join('\n');
 
-  const parsed = parseOrganizationIdentityFromPlainText(text, ['VATES-B87617981'], 'ES');
-  assert.equal(parsed.taxID, 'VATPT-507910626');
-  assert.equal(parsed.legalName, 'FALCK PORTUGAL, S.A.');
+  const parsed = parseOrganizationIdentityFromPlainText(text, ['VATES-B00000000'], 'ES');
+  assert.equal(parsed.taxID, 'VATPT-000000000');
+  assert.equal(parsed.legalName, 'EXAMPLE PORTUGAL, S.A.');
   assert.equal(parsed.legalRepresentativeName, 'Joao Silva');
 });
