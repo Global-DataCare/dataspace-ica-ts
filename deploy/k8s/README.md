@@ -38,6 +38,11 @@ Versioning note:
 
 `cloud_deploy.sh` always triggers a deployment restart so updated runtime secrets/env are applied even when image tag stays the same.
 
+The active ICA staging endpoint keeps `34.175.75.120` and terminates HTTPS
+through the separately managed `ingress-nginx` and `cert-manager` profile in
+[`deploy/k8s/https`](./https/README.md). In that topology the application
+Service must remain `ClusterIP`; do not switch it back to `LoadBalancer`.
+
 `cloud_deploy.sh` expects these variables inside `.env.deploy.<env>`:
 - `FIRESTORE_PROJECT_ID`
 - `DEPLOY_REGION`

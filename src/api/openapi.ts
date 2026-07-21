@@ -4075,6 +4075,50 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
+      '/ica/cds-{jurisdiction}/v1/{sector}/network/members/_discover': {
+        get: {
+          tags: ['08 network/credentials'],
+          summary: 'Discover authorized ICA members from the bounded-age cache',
+          description:
+            'Returns `data[]` with schema.org credentials in `vc[]`, exact Gaia-X VC-JWTs in DIDComm `attachments[]`, and resolved DID/DCAT documents plus provenance metadata. Set `refresh=true` to bypass the current in-memory snapshot.',
+          parameters: [
+            { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
+            { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
+            { name: 'refresh', in: 'query', required: false, schema: { type: 'boolean', default: false } },
+          ],
+          responses: {
+            '200': {
+              description: 'Authorized member discovery aggregate.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['data', 'meta'],
+                    properties: {
+                      data: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['id', 'vc', 'did', 'attachments'],
+                          properties: {
+                            id: { type: 'string', example: 'did:web:member.example' },
+                            vc: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                            did: { type: 'object', additionalProperties: true },
+                            dcat: { type: 'object', additionalProperties: true },
+                            attachments: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                            meta: { type: 'object', additionalProperties: true },
+                          },
+                        },
+                      },
+                      meta: { type: 'object', additionalProperties: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       '/ica/cds-{jurisdiction}/v1/{sector}/network/credentials/{credentialType}/_issue': {
         post: {
           tags: ['08 network/credentials'],

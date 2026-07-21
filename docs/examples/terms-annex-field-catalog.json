@@ -1,0 +1,300 @@
+{
+  "document": "dataspace-ica-ts PDF field catalog",
+  "scope": "Fields extracted from signed PDFs or intended to be filled before signing",
+  "sourceFiles": [
+    "src/api/tools/terms-annex-form.ts",
+    "src/api/tools/vc-bundle.ts",
+    "src/api/request-parsing.ts",
+    "src/api/managers/verify-request-manager.ts"
+  ],
+  "fillableAcroFormFields": [
+    {
+      "name": "organization.additionalType",
+      "label": "Organization profile / additionalType",
+      "frontendFillable": true,
+      "extractedFromPdf": true,
+      "mappedTo": "organization VC credentialSubject.additionalType",
+      "example": "sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider"
+    },
+    {
+      "name": "organization.sameAs",
+      "label": "Organization sameAs",
+      "frontendFillable": true,
+      "extractedFromPdf": true,
+      "mappedTo": "organization VC credentialSubject.sameAs",
+      "example": "did:web:member.example.org"
+    },
+    {
+      "name": "organization.url",
+      "label": "Organization primary domain",
+      "frontendFillable": true,
+      "extractedFromPdf": true,
+      "mappedTo": "organization VC credentialSubject.url",
+      "example": "member.example.org"
+    },
+    {
+      "name": "organization.alternateName",
+      "label": "Organization alias",
+      "frontendFillable": true,
+      "extractedFromPdf": true,
+      "mappedTo": "organization VC credentialSubject.alternateName",
+      "example": "acme"
+    },
+    {
+      "name": "organization.registrationNumber",
+      "label": "Sector registration number",
+      "frontendFillable": true,
+      "extractedFromPdf": true,
+      "mappedTo": "organization VC credentialSubject.registrationNumber",
+      "example": "ES-SAN-REG-0001"
+    },
+    {
+      "name": "person.email",
+      "label": "Controller hash/email",
+      "frontendFillable": true,
+      "extractedFromPdf": true,
+      "mappedTo": "person VC credentialSubject.sameAs",
+      "notes": "If plain email is provided, backend hashes it before persistence.",
+      "example": "zControllerHash"
+    },
+    {
+      "name": "person.alternateName",
+      "label": "Controller key id (kid)",
+      "frontendFillable": true,
+      "extractedFromPdf": true,
+      "mappedTo": "person VC credentialSubject.alternateName",
+      "example": "controller-es384-20260309"
+    },
+    {
+      "name": "person.additionalType",
+      "label": "Controller algorithm",
+      "frontendFillable": true,
+      "extractedFromPdf": true,
+      "mappedTo": "person VC credentialSubject.additionalType",
+      "example": "ES384"
+    }
+  ],
+  "identityFieldsAcceptedDuringVerification": {
+    "organization": {
+      "canonicalFields": [
+        {
+          "name": "organization.taxID",
+          "frontendFillable": true,
+          "extractedFromPdf": true,
+          "purpose": "Visible organization tax identifier used when signer certificate does not contain organization tax ID or when signer belongs to verifier.",
+          "requiredWhen": [
+            "signer certificate lacks organization tax ID",
+            "the effective signer belongs to VERIFIERS_VAT_LIST and organization identity must come from the document"
+          ]
+        },
+        {
+          "name": "organization.legalName",
+          "frontendFillable": true,
+          "extractedFromPdf": true,
+          "purpose": "Visible organization legal name paired with organization.taxID.",
+          "requiredWhen": [
+            "signer certificate lacks organization tax ID",
+            "the effective signer belongs to VERIFIERS_VAT_LIST and organization identity must come from the document"
+          ]
+        },
+        {
+          "name": "organization.name",
+          "frontendFillable": true,
+          "extractedFromPdf": true,
+          "purpose": "Secondary accepted legal-name field; backend may backfill it from organization.legalName."
+        }
+      ],
+      "acceptedAliases": [
+        "organization.taxId",
+        "organization.tax id",
+        "organization.tax identifier",
+        "organization.taxIdentifier",
+        "organization.taxNumber",
+        "organization.tax number",
+        "organization.vat",
+        "organization.vatID",
+        "organization.vatId",
+        "organization.vat id",
+        "organization.vat number",
+        "organization.vatNumber",
+        "organization.vat/cif",
+        "organization.cif",
+        "organization.nif",
+        "taxID",
+        "taxId",
+        "tax id",
+        "tax identifier",
+        "taxNumber",
+        "tax number",
+        "vat",
+        "vatID",
+        "vatId",
+        "vat id",
+        "vat number",
+        "vatNumber",
+        "vat/cif",
+        "cif",
+        "nif",
+        "company tax id",
+        "company vat",
+        "organization identifier",
+        "identificacion empresa",
+        "identificación empresa",
+        "identificacion",
+        "identificación",
+        "organization.legalname",
+        "organization.legal name",
+        "organization.companyName",
+        "organization.company name",
+        "organization.company",
+        "organization.businessName",
+        "organization.business name",
+        "organization.organizationName",
+        "organization.organization name",
+        "organization.razonSocial",
+        "organization.razon social",
+        "legalName",
+        "legalname",
+        "legal name",
+        "name",
+        "companyName",
+        "company name",
+        "company",
+        "businessName",
+        "business name",
+        "organizationName",
+        "organization name",
+        "razonSocial",
+        "razon social",
+        "razón social"
+      ]
+    },
+    "representative": {
+      "canonicalFields": [
+        {
+          "name": "person.name",
+          "frontendFillable": true,
+          "extractedFromPdf": true,
+          "purpose": "Representative full name used when the person identity must come from the document instead of the signing certificate."
+        },
+        {
+          "name": "Representante legal",
+          "frontendFillable": true,
+          "extractedFromPdf": true,
+          "purpose": "Spanish visible-label alias accepted and sometimes backfilled into person.name."
+        },
+        {
+          "name": "person.identifier",
+          "frontendFillable": true,
+          "extractedFromPdf": true,
+          "purpose": "Representative identifier used as a fallback when it cannot be trusted from the signer certificate."
+        },
+        {
+          "name": "person.givenName",
+          "frontendFillable": true,
+          "extractedFromPdf": true,
+          "purpose": "Representative given name accepted as a split-name fallback."
+        },
+        {
+          "name": "person.familyName",
+          "frontendFillable": true,
+          "extractedFromPdf": true,
+          "purpose": "Representative family name accepted as a split-name fallback."
+        }
+      ],
+      "acceptedAliases": [
+        "person.fullName",
+        "person.fullname",
+        "person.legalRepresentativeName",
+        "person.representativeName",
+        "legalRepresentative.name",
+        "legalRepresentative.fullName",
+        "representative.name",
+        "representante legal",
+        "representante",
+        "person.id",
+        "person.serialNumber",
+        "person.serialnumber",
+        "person.nif",
+        "person.nie",
+        "person.dni",
+        "legalRepresentative.identifier",
+        "legalRepresentative.nif",
+        "representative.identifier",
+        "identificacion representante",
+        "identificación representante",
+        "person.givenname",
+        "legalRepresentative.givenName",
+        "representative.givenName",
+        "person.familyname",
+        "person.surname",
+        "legalRepresentative.familyName",
+        "representative.familyName",
+        "correo electronico",
+        "correo electrónico",
+        "email",
+        "e-mail"
+      ]
+    }
+  },
+  "proposedNextFieldsForPdfAndVcConsumption": [
+    {
+      "name": "organization.contactPoint.email",
+      "frontendFillable": true,
+      "extractedFromPdf": false,
+      "status": "proposed",
+      "mappedTo": "OrganizationCredential.credentialSubject.contactPoint.email",
+      "gwPriorityRule": "Prefer this as controller email over LegalRepresentativeCredential email when both exist"
+    },
+    {
+      "name": "organization.participant.additionalType",
+      "frontendFillable": true,
+      "extractedFromPdf": false,
+      "status": "proposed",
+      "mappedTo": "OrganizationCredential.credentialSubject.participant.additionalType",
+      "valueFormat": "comma-separated list",
+      "allowedTokens": [
+        "IndexReader",
+        "IndexProvider",
+        "DigitalTwinReader",
+        "DigitalTwinProvider"
+      ],
+      "rules": {
+        "maxItems": 2,
+        "maxIndexFamily": 1,
+        "maxDigitalTwinFamily": 1,
+        "minItems": 1
+      }
+    },
+    {
+      "name": "organization.hostingOrganization.url",
+      "frontendFillable": true,
+      "extractedFromPdf": false,
+      "status": "proposed",
+      "mappedTo": "OrganizationCredential.credentialSubject.hostingOrganization.url",
+      "notes": "Domain or IP for hosting endpoint used by _activate/_transaction"
+    },
+    {
+      "name": "organization.hostingOrganization.identifier",
+      "frontendFillable": true,
+      "extractedFromPdf": false,
+      "status": "proposed",
+      "mappedTo": "OrganizationCredential.credentialSubject.hostingOrganization.identifier",
+      "notes": "Hosting provider VAT/tax identifier"
+    },
+    {
+      "name": "organization.makesOffer.category",
+      "frontendFillable": false,
+      "extractedFromPdf": false,
+      "status": "existing-route-driven",
+      "mappedTo": "OrganizationCredential.credentialSubject.makesOffer.category",
+      "notes": "Authoritative source is route sector in ICA; signed/PDF source is future work"
+    }
+  ],
+  "notes": [
+    "The generated annex PDF currently creates only the 8 fillable AcroForm fields under fillableAcroFormFields.",
+    "During read/verify, field lookup is case-insensitive.",
+    "Visible identity fields can come either from AcroForm names or from text/visible extraction when enabled by verification settings.",
+    "This catalog is the dataspace-ica-ts equivalent of the individual-registration field list exported in gdc-common-utils-ts/__tests__/utils-individual-form-pdf.test.ts."
+  ]
+}
