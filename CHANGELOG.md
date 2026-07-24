@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Standardized the supported-sector catalog as the eight combinations of
+  `animal|health` with `care|tech|research|insurance`.
 - Simplified `HostServiceFormPdfFields` to legal host/provider/controller
   evidence. Fabric channels, permissions, block-zero fingerprints, chaincodes
   and mutable service policy are configured separately by governance and
