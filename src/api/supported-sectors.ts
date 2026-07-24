@@ -3,16 +3,25 @@ import type { AllowedSector } from './types.ts';
 export const DEFAULT_ICA_SUPPORTED_SECTORS_LANGUAGE = 'es-ES';
 
 export const DEFAULT_ICA_SUPPORTED_SECTORS = [
-  'health-care',
   'animal-care',
-  'onehealth-care',
-  'onehealth-research',
-  'onehealth-insurance',
+  'animal-tech',
+  'animal-research',
+  'animal-insurance',
+  'health-care',
+  'health-tech',
+  'health-research',
+  'health-insurance',
 ] as const satisfies readonly AllowedSector[];
 
 const DEFAULT_SECTOR_LABELS: Record<string, string> = {
-  'health-care': 'Salud humana',
   'animal-care': 'Salud animal',
+  'animal-tech': 'Tecnología para salud animal',
+  'animal-research': 'Investigación en salud animal',
+  'animal-insurance': 'Seguros de salud animal',
+  'health-care': 'Salud humana',
+  'health-tech': 'Tecnología para salud humana',
+  'health-research': 'Investigación en salud humana',
+  'health-insurance': 'Seguros de salud humana',
   'onehealth-care': 'Salud del entorno (One Health)',
   'onehealth-research': 'Investigación en salud (One Health)',
   'onehealth-insurance': 'Seguros de salud y entorno (One Health)',

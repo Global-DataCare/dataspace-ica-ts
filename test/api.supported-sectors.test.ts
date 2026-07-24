@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { createIcaApiServer } from '../src/api/server.ts';
 import { buildIcaVerifyOpenApiSpec } from '../src/api/openapi.ts';
 import { parseVerifyRoute } from '../src/api/path.ts';
+import { getConfiguredSupportedSectorIds } from '../src/api/supported-sectors.ts';
 
 async function withSupportedSectorsEnv<T>(
   value: string | undefined,
@@ -77,6 +78,21 @@ function buildMockResponse() {
     },
   };
 }
+
+test('ICA defaults to the animal and health sector matrix', async () => {
+  await withSupportedSectorsEnv(undefined, () => {
+    assert.deepEqual(getConfiguredSupportedSectorIds(), [
+      'animal-care',
+      'animal-tech',
+      'animal-research',
+      'animal-insurance',
+      'health-care',
+      'health-tech',
+      'health-research',
+      'health-insurance',
+    ]);
+  });
+});
 
 test('parseVerifyRoute uses ICA_SUPPORTED_SECTORS from env', async () => {
   await withSupportedSectorsEnv('custom-sector', async () => {
