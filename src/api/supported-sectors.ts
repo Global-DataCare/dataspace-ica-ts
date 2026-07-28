@@ -2,6 +2,16 @@ import type { AllowedSector } from './types.ts';
 
 export const DEFAULT_ICA_SUPPORTED_SECTORS_LANGUAGE = 'es-ES';
 
+/**
+ * ICA route sectors supported without an explicit environment override.
+ *
+ * The `animal-*` and `health-*` values are the canonical v2 catalog. The
+ * historical `onehealth-research` route remains independently addressable so
+ * existing signed credentials, whose DID and credential identifiers include
+ * that sector, can still be retrieved and verified. New registrations may be
+ * issued additionally under `health-research`; ICA must never rewrite the
+ * sector embedded in an existing signed artifact.
+ */
 export const DEFAULT_ICA_SUPPORTED_SECTORS = [
   'animal-care',
   'animal-tech',
@@ -11,6 +21,7 @@ export const DEFAULT_ICA_SUPPORTED_SECTORS = [
   'health-tech',
   'health-research',
   'health-insurance',
+  'onehealth-research',
 ] as const satisfies readonly AllowedSector[];
 
 const DEFAULT_SECTOR_LABELS: Record<string, string> = {
