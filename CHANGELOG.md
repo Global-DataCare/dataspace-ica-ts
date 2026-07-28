@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.1.6 - 2026-07-28
+
+- Paginate Firestore collection reads by document id so credential retrieval,
+  DID resolution and member discovery still see records beyond the former
+  arbitrary 200-document window.
+
 ## 1.1.5 - 2026-07-28
 
 - Pinned patched `fast-xml-parser`, `minimatch` and `brace-expansion`
