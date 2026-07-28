@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.1.5 - 2026-07-28
+
+- Fixed production image packaging by tracking every runtime module under
+  `src/api/tools/**`; the generic local `tools/` ignore rule had excluded four
+  modules imported by the API server and produced a non-starting image.
 - Documented the authoritative split-project staging topology: GKE, Ingress and
   `34.175.75.120` remain in `globaldatacare-test`, while the ICA image,
   Firestore, GCS and runtime identities remain in `globaldatacare-ica-dev`;
