@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.4 - 2026-07-28
+
 - Standardized the canonical supported-sector catalog as the eight combinations
   of `animal|health` with `care|tech|research|insurance`, while retaining
   `onehealth-research` as an independently addressable compatibility sector.
