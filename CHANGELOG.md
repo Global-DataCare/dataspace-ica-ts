@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- Standardized the supported-sector catalog as the eight combinations of
-  `animal|health` with `care|tech|research|insurance`.
+- Standardized the canonical supported-sector catalog as the eight combinations
+  of `animal|health` with `care|tech|research|insurance`, while retaining
+  `onehealth-research` as an independently addressable compatibility sector.
+  Existing signed credentials are never relabeled; an organization can be
+  reverified additionally under canonical `health-research`.
 - Simplified `HostServiceFormPdfFields` to legal host/provider/controller
   evidence. Fabric channels, permissions, block-zero fingerprints, chaincodes
   and mutable service policy are configured separately by governance and

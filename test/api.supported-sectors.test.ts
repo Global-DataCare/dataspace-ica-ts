@@ -79,7 +79,7 @@ function buildMockResponse() {
   };
 }
 
-test('ICA defaults to the animal and health sector matrix', async () => {
+test('ICA defaults to the canonical matrix plus the onehealth-research compatibility sector', async () => {
   await withSupportedSectorsEnv(undefined, () => {
     assert.deepEqual(getConfiguredSupportedSectorIds(), [
       'animal-care',
@@ -90,7 +90,20 @@ test('ICA defaults to the animal and health sector matrix', async () => {
       'health-tech',
       'health-research',
       'health-insurance',
+      'onehealth-research',
     ]);
+  });
+});
+
+test('ICA keeps legacy and canonical research routes independently addressable', async () => {
+  await withSupportedSectorsEnv(undefined, () => {
+    for (const sector of ['onehealth-research', 'health-research']) {
+      const parsed = parseVerifyRoute(`/ica/cds-ES/v1/${sector}/terms/pdf/contract/_verify`);
+      assert.ok(parsed);
+      assert.equal(parsed?.ok, true);
+      if (!parsed || !parsed.ok) continue;
+      assert.equal(parsed.context.sector, sector);
+    }
   });
 });
 
