@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Enforced the member-discovery credential-layer boundary: `vc[]` retains
+  schema.org VC JSON, while member-level DIDComm `attachments[]` accepts only
+  Gaia-X VC-JWT payloads with the expected `gx:LegalPerson` or
+  `gx:ServiceOffering` semantic properties. Schema.org credentials serialized
+  as JWT are rejected as Gaia-X participant attachments.
+
 ## 1.1.6 - 2026-07-28
 
 - Paginate Firestore collection reads by document id so credential retrieval,

@@ -13,6 +13,29 @@ const didUrl = 'https://member.example/.well-known/did.json';
 const participantUrl = 'https://member.example/.well-known/legal-participant.vc.json';
 const catalogUrl = 'https://member.example/dcat3/catalog';
 
+function vcJwt(credentialSubject: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'ES384', typ: 'vc+jwt' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({
+    iss: did,
+    sub: String(credentialSubject.id || did),
+    vc: {
+      '@context': ['https://www.w3.org/ns/credentials/v2'],
+      type: ['VerifiableCredential', 'LegalPerson'],
+      credentialSubject,
+    },
+  })).toString('base64url');
+  return `${header}.${payload}.signature`;
+}
+
+const participantJwt = vcJwt({
+  id: did,
+  type: 'gx:LegalPerson',
+  'gx:legalName': 'Synthetic Member',
+  'gx:legalRegistrationNumber': { id: 'https://notary.example/registration/synthetic-member' },
+  'gx:headquarterAddress': { 'gx:countryCode': 'ES' },
+  'gx:legalAddress': { 'gx:countryCode': 'ES' },
+});
+
 function credential(type: string, id: string): IssuedCredentialRecord {
   return {
     id,
@@ -53,7 +76,7 @@ test('MemberDiscoveryCache returns documents, current VCs and exact Gaia-X VC-JW
       { id: '#legal-participant', type: 'LegalPersonCredential', serviceEndpoint: participantUrl },
       { id: '#catalog', type: 'CatalogService', serviceEndpoint: catalogUrl },
     ] } };
-    if (url === participantUrl) return { document: { proof: { type: 'EnvelopedVerifiableCredential', id: 'data:application/vc+jwt,participant.jwt.sig' } } };
+    if (url === participantUrl) return { document: { proof: { type: 'EnvelopedVerifiableCredential', id: `data:application/vc+jwt,${participantJwt}` } } };
     if (url === catalogUrl) return { document: { '@type': 'dcat:Catalog' } };
     throw new Error('optional artifact unavailable');
   };
@@ -73,7 +96,47 @@ test('MemberDiscoveryCache returns documents, current VCs and exact Gaia-X VC-JW
   assert.equal(first.did.document.id, did);
   assert.equal(first.dcat?.document['@type'], 'dcat:Catalog');
   assert.equal(first.attachments[0]?.role, 'gaia-x-participant-vc-jwt');
-  assert.equal(first.attachments[0]?.data.json.jwt, 'participant.jwt.sig');
+  assert.equal(first.attachments[0]?.data.json.jwt, participantJwt);
   assert.deepEqual(second, first);
   assert.equal(calls, callsAfterFirst);
+});
+
+test('MemberDiscoveryCache rejects a schema.org OrganizationCredential mislabeled as Gaia-X participant JWT', async () => {
+  const schemaOrgJwt = vcJwt({
+    id: did,
+    '@type': 'Organization',
+    legalName: 'Synthetic Member',
+    taxID: 'VATES-B00000000',
+  });
+  const fetcher: DiscoveryJsonFetcher = async (url) => {
+    if (url === didUrl) return { document: { id: did, service: [
+      { id: '#legal-participant', type: 'LegalPersonCredential', serviceEndpoint: participantUrl },
+    ] } };
+    if (url === participantUrl) return {
+      document: {
+        proof: {
+          type: 'EnvelopedVerifiableCredential',
+          id: `data:application/vc+jwt,${schemaOrgJwt}`,
+        },
+      },
+    };
+    throw new Error('artifact unavailable');
+  };
+
+  const cache = new MemberDiscoveryCache(fetcher, 300);
+  await assert.rejects(
+    cache.resolve({
+      dataset: {
+        datasetId: 'member',
+        publisherDid: did,
+        title: 'Member',
+        accessUrl: didUrl,
+        jurisdiction: 'ES',
+        sector: 'health-care',
+      },
+      issuedCredentials: [credential('OrganizationCredential', 'urn:organization')],
+      didDocuments: [],
+    }),
+    /credentialSubject.type must be gx:LegalPerson/,
+  );
 });
