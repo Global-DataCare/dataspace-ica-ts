@@ -1,6 +1,6 @@
 {
   "name": "dataspace-ica",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "private": true,
   "type": "module",
   "description": "Private ICA CLI for onboarding validation, CSR signing and DCAT publication",
@@ -19,6 +19,7 @@
     "api:start": "node --env-file-if-exists=.env.deploy.dev ./src/api/server.ts",
     "api:dev": "node --env-file-if-exists=.env.deploy.dev --watch-path=./src ./src/api/server.ts",
     "api:local": "node --env-file-if-exists=.env.local ./src/api/server.ts",
+    "api:local:fabric": "NETWORK_MODE=local-network ICA_CREDENTIAL_LEDGER_ENABLED=true ICA_CREDENTIAL_LEDGER_REQUIRED=true HLF_CONNECTION_PEER=localhost:7051 ICA_FABRIC_TLS_SERVER_NAME=peer0-org1 node --env-file-if-exists=.env.local --env-file-if-exists=../gdc-unid-node-ts/.env.local-fabric ./src/api/server.ts",
     "api:local:gcloud": "node --env-file-if-exists=.env.local.gcloud ./src/api/server.ts",
     "remote:fullcycle:st-v2": "API_BASE_URL=https://34.36.211.126 CURL_INSECURE=true bash ./scripts/run-org-lifecycle-local.sh",
     "api:start:deploy:demo": "node --env-file-if-exists=.env.deploy.demo ./src/api/server.ts",
@@ -27,13 +28,21 @@
     "api:export": "node ./src/api/scripts/export-openapi.ts",
     "api:example:activate": "node ./src/api/scripts/print-activate-example.ts",
     "create:terms:pdf": "node ./src/api/scripts/generate-terms-annex-pdf.ts",
-    "api:test": "node --test ./test/api*.test.ts"
+    "api:test": "node --test ./test/api*.test.ts",
+    "test:fabric:credential": "node --test ./test/api.credential-ledger.test.ts",
+    "fabric:credential:read": "node ./scripts/read-fabric-credential.mjs",
+    "fabric:credential:read:local": "NETWORK_MODE=local-network ICA_CREDENTIAL_LEDGER_ENABLED=true ICA_CREDENTIAL_LEDGER_REQUIRED=true HLF_CONNECTION_PEER=localhost:7051 ICA_FABRIC_TLS_SERVER_NAME=peer0-org1 node --env-file-if-exists=.env.local --env-file-if-exists=../gdc-unid-node-ts/.env.local-fabric ./scripts/read-fabric-credential.mjs",
+    "fabric:credential:smoke": "node ./scripts/smoke-fabric-credential.mjs",
+    "fabric:credential:smoke:local": "NETWORK_MODE=local-network ICA_CREDENTIAL_LEDGER_ENABLED=true ICA_CREDENTIAL_LEDGER_REQUIRED=true HLF_CONNECTION_PEER=localhost:7051 ICA_FABRIC_TLS_SERVER_NAME=peer0-org1 node --env-file-if-exists=.env.local --env-file-if-exists=../gdc-unid-node-ts/.env.local-fabric ./scripts/smoke-fabric-credential.mjs",
+    "check:skills": "node ./scripts/check-local-skills.mjs"
   },
   "dependencies": {
     "@google-cloud/firestore": "^8.3.0",
     "@google-cloud/secret-manager": "^6.1.1",
     "@google-cloud/storage": "^7.19.0",
-    "gdc-common-utils-ts": "^2.3.7",
+    "@grpc/grpc-js": "^1.14.4",
+    "@hyperledger/fabric-gateway": "^1.12.0",
+    "gdc-common-utils-ts": "^2.3.8",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pg": "^8.22.0"

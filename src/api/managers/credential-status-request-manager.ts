@@ -5,6 +5,7 @@ import { buildCredentialStatusResponseLocation } from '../path.ts';
 import type { CredentialStatusResult, CredentialStatusRouteContext, RevocationStatus } from '../types.ts';
 import type { IssuedCredentialRecord, JsonObject } from '../tools/verification-collections-storage.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
+import { CredentialLedgerService } from '../tools/credential-ledger.ts';
 
 export type CredentialStatusSubmitOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -48,13 +49,16 @@ function resolveStatusFromRecord(record: IssuedCredentialRecord | undefined): {
 export class CredentialStatusRequestManager {
   private readonly jobStore: InMemoryEntityJobStore<CredentialStatusRouteContext, CredentialStatusResult>;
   private readonly collectionsService: VerificationCollectionsService;
+  private readonly credentialLedgerService: CredentialLedgerService;
 
   constructor(
     jobStore: InMemoryEntityJobStore<CredentialStatusRouteContext, CredentialStatusResult>,
     collectionsService: VerificationCollectionsService = new VerificationCollectionsService(),
+    credentialLedgerService: CredentialLedgerService = new CredentialLedgerService(),
   ) {
     this.jobStore = jobStore;
     this.collectionsService = collectionsService;
+    this.credentialLedgerService = credentialLedgerService;
   }
 
   async submit(route: CredentialStatusRouteContext, req: IncomingMessage): Promise<CredentialStatusSubmitOutcome> {
@@ -78,7 +82,25 @@ export class CredentialStatusRequestManager {
               subjectId: lookup.subjectId,
               credentialStatusId: lookup.credentialStatusId,
             });
-            const resolved = resolveStatusFromRecord(record);
+            const ledgerAsset = record && this.credentialLedgerService.config.enabled
+              ? await this.credentialLedgerService.getCredential(record.credentialId)
+              : undefined;
+            const resolved = ledgerAsset
+              ? {
+                status: ledgerAsset.status === 'active'
+                  ? 'good' as const
+                  : ledgerAsset.status === 'revoked'
+                    ? 'revoked' as const
+                    : 'unknown' as const,
+                revokedAt: ledgerAsset.status === 'revoked' && ledgerAsset.updatedAt
+                  ? new Date(
+                    typeof ledgerAsset.updatedAt === 'number'
+                      ? ledgerAsset.updatedAt * 1000
+                      : ledgerAsset.updatedAt,
+                  ).toISOString()
+                  : undefined,
+              }
+              : resolveStatusFromRecord(record);
             resultItems.push({
               status: resolved.status,
               checkedAt: nowIso,

@@ -27,6 +27,13 @@ import {
   parseVerifyRoute,
 } from '../src/api/path.ts';
 import { buildVerificationVcBundle } from '../src/api/server.ts';
+
+/**
+ * Flow contract: the asynchronous ICA lifecycle persists issued credentials,
+ * exact signed representations, evidence and DID bindings only after the
+ * relevant validation/anchoring steps, while test mode remains isolated from
+ * Fabric and lifecycle failures produce terminal responses.
+ */
 import { ActivateRequestManager } from '../src/api/managers/activate-request-manager.ts';
 import { AddEvidenceRequestManager } from '../src/api/managers/add-evidence-request-manager.ts';
 import { AddEvidenceResponseManager } from '../src/api/managers/add-evidence-response-manager.ts';
@@ -44,6 +51,7 @@ import { parseActivateSigningKeySubmission, parseRotateSubmission } from '../src
 import { SignatureVerificationManager } from '../src/api/signature-verification-manager.ts';
 import { AuditDocumentStorageService } from '../src/api/tools/audit-document-storage.ts';
 import { buildDidcommMessage } from '../src/api/tools/didcomm-message.ts';
+import type { CredentialLedgerService } from '../src/api/tools/credential-ledger.ts';
 import {
   activateSigningKey,
   resetActiveSigningKeysStateForTests,
@@ -905,7 +913,17 @@ test('VerifyResponseManager stores issued credentials and evidence using mem col
     store.enqueue('thid-persist-001', parsed.context);
     store.markSucceeded('thid-persist-001', verifyResult);
 
-    const manager = new VerifyResponseManager(store, collectionsService);
+    const anchoredCredentialIds: string[] = [];
+    const credentialLedgerService = {
+      async recordIssuedBundle(bundle: { data: Array<{ resource?: Record<string, unknown> }> }) {
+        bundle.data.forEach((entry) => {
+          const id = String(entry.resource?.id || '');
+          if (id) anchoredCredentialIds.push(id);
+        });
+        return [];
+      },
+    } as unknown as CredentialLedgerService;
+    const manager = new VerifyResponseManager(store, collectionsService, credentialLedgerService);
     const requestUrl = new URL(
       'http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-persist-001',
     );
@@ -918,9 +936,22 @@ test('VerifyResponseManager stores issued credentials and evidence using mem col
     const evidence = (await collectionsService.listEvidenceRecords())
       .filter((item) => item.thid === 'thid-persist-001');
     assert.equal(issued.length, 2);
+    assert.deepEqual(anchoredCredentialIds.sort(), issued.map((item) => item.credentialId).sort());
     assert.equal(evidence.length, 4);
     assert.equal(issued.every((item) => item.tenantId === 'acme'), true);
     assert.equal(evidence.every((item) => item.tenantId === 'acme'), true);
+    issued.forEach((item) => {
+      const jwt = item.representations?.vcJwt || '';
+      assert.equal(jwt.split('.').length, 3);
+      const payload = JSON.parse(Buffer.from(jwt.split('.')[1] || '', 'base64url').toString('utf8')) as Record<string, any>;
+      assert.equal(payload.jti, item.credentialId);
+      assert.equal(payload.sub, item.subjectId);
+      assert.equal(payload.vc?.id, item.credentialId);
+      assert.equal(
+        (item.credential.credentialStatus as Record<string, unknown>)?.id,
+        `${item.credentialId}#status`,
+      );
+    });
     const expectedVersionId = multibase58MultihashSha3_384Hex(TEST_SHA3_384_HEX);
     assert.equal((issued[0]?.credential?.meta as Record<string, unknown>)?.versionId, expectedVersionId);
     assert.equal((issued[1]?.credential?.meta as Record<string, unknown>)?.versionId, expectedVersionId);

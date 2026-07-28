@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased
+## 1.1.8 - 2026-07-28
+
+- Added opt-in Hyperledger Fabric registration of issued organization and legal
+  representative credentials in `credential-sc`, keyed by JSON `vc.id` / JWT
+  `jti`, with logical and exact representation hashes plus compact audit
+  evidence references.
+- Added Fabric-backed status/revocation, idempotent duplicate handling,
+  issuance-time `credentialStatus`, and persistence of the exact emitted
+  VC-JWT for later retrieval.
+- Preserved `NETWORK_MODE=test` as no-Fabric compatibility mode; documented and
+  tested the `local-network` to parallel `test-network` migration.
+- Matched every VC-JWT attachment to its logical credential by the shared
+  `credentialId` instead of relying on attachment order.
+- Updated to `gdc-common-utils-ts@^2.3.8`.
+- Recorded the countersigned Fundación UNID contract hashes, historical
+  `onehealth-research` credential ids/timestamps and the verified boundary
+  between the current Firestore/GCS-only ICA deployments and the Accuro/UNID
+  Fabric peers.
 
 ## 1.1.7 - 2026-07-28
 

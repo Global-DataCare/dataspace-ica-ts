@@ -15,6 +15,7 @@ import type {
 } from '../types.ts';
 import { buildVerificationVcBundle } from '../tools/vc-bundle.ts';
 import { buildVcJwtAttachments } from '../tools/vc-jwt.ts';
+import { CredentialLedgerService } from '../tools/credential-ledger.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 import { resolveVcIssuerDid } from '../tools/ica-identity.ts';
@@ -371,13 +372,16 @@ function buildFailedVerifyPayload(
 export class VerifyResponseManager {
   private readonly jobStore: InMemoryVerificationJobStore;
   private readonly collectionsService: VerificationCollectionsService;
+  private readonly credentialLedgerService: CredentialLedgerService;
 
   constructor(
     jobStore: InMemoryVerificationJobStore,
     collectionsService: VerificationCollectionsService = new VerificationCollectionsService(),
+    credentialLedgerService: CredentialLedgerService = new CredentialLedgerService(),
   ) {
     this.jobStore = jobStore;
     this.collectionsService = collectionsService;
+    this.credentialLedgerService = credentialLedgerService;
   }
 
   async poll(route: VerifyRouteContext, req: IncomingMessage, requestUrl: URL): Promise<VerifyPollOutcome> {
@@ -438,10 +442,16 @@ export class VerifyResponseManager {
     const issuerDid = resolveVcIssuerDid(req);
     const body = buildVerificationVcBundle(route, verificationResult, issuerDid) as VerifyBundleResponse;
     attachBootstrapKeysToVerificationEntries(verificationResult, body);
+    let responseBody: VerifyBundleResponse;
+    let vcJwtAttachments: DidcommAttachment[];
 
     try {
       await enrichVerificationBundleWithStoredVersionState(route, verificationResult, body, this.collectionsService);
-      await this.collectionsService.persistFromVerificationBundle(route, thid, body);
+      responseBody = cloneBundle(body);
+      removeInternalVersionMetaFromResponse(responseBody);
+      vcJwtAttachments = buildVcJwtAttachments(route, responseBody, issuerDid);
+      await this.credentialLedgerService.recordIssuedBundle(responseBody, vcJwtAttachments);
+      await this.collectionsService.persistFromVerificationBundle(route, thid, body, vcJwtAttachments);
     } catch (error: unknown) {
       const message = (error as Error)?.message || 'Verification collections persistence failed.';
       this.jobStore.markFailed(thid, message);
@@ -455,8 +465,6 @@ export class VerifyResponseManager {
       };
     }
 
-    const responseBody = cloneBundle(body);
-    removeInternalVersionMetaFromResponse(responseBody);
     return {
       type: 'succeeded',
       payload: buildDidcommVerifyMessage(
@@ -464,7 +472,7 @@ export class VerifyResponseManager {
         thid,
         responseBody,
         req,
-        buildVcJwtAttachments(route, responseBody, issuerDid),
+        vcJwtAttachments,
       ),
     };
   }

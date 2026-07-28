@@ -28,6 +28,7 @@ export function buildVcJwtAttachments(
       data: {
         json: {
           format: 'vc+jwt',
+          credentialId: String(entry.resource.id || ''),
           jwt: vcJwt,
         },
       },
