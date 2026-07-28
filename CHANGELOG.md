@@ -4,6 +4,9 @@
 
 ## 1.1.4 - 2026-07-28
 
+- Added an explicit Cloud Build upload manifest so the tracked npm package
+  manifests required by the Docker image are not excluded with root JSON
+  credential exports.
 - Standardized the canonical supported-sector catalog as the eight combinations
   of `animal|health` with `care|tech|research|insurance`, while retaining
   `onehealth-research` as an independently addressable compatibility sector.

@@ -1,0 +1,10 @@
+.gcloudignore
+.git
+.git/**
+
+#!include:.gitignore
+
+# Root JSON is ignored locally to avoid committing service-account exports,
+# but these tracked manifests are required by Docker's `COPY package*.json`.
+!package.json
+!package-lock.json
