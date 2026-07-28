@@ -149,84 +149,6 @@ function extractEnvelopedJwt(document: JsonObject): string {
   return decodeURIComponent(id.slice(prefix.length));
 }
 
-function decodeVcJwtCredential(jwt: string): JsonObject {
-  const parts = jwt.split('.');
-  if (parts.length !== 3 || parts.some((part) => !part)) {
-    throw new Error('Gaia-X attachment must contain one compact three-part VC-JWT.');
-  }
-  let payload: JsonObject;
-  try {
-    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as JsonObject;
-  } catch {
-    throw new Error('Gaia-X attachment VC-JWT payload is not valid base64url JSON.');
-  }
-  return asObject(payload.vc) || payload;
-}
-
-function credentialSubject(document: JsonObject): JsonObject | undefined {
-  const raw = document.credentialSubject;
-  if (Array.isArray(raw)) return raw.map(asObject).find((value): value is JsonObject => Boolean(value));
-  return asObject(raw);
-}
-
-function requireGaiaXProperties(subject: JsonObject, names: string[], role: string): void {
-  const missing = names.filter((name) => !(name in subject));
-  if (missing.length) {
-    throw new Error(`Gaia-X ${role} VC-JWT is missing required semantic properties: ${missing.join(', ')}.`);
-  }
-}
-
-/**
- * Rejects a schema.org VC that was merely serialized as JWT and mislabeled as
- * a Gaia-X discovery attachment.
- *
- * Signature/trust verification remains the credential-verifier boundary. This
- * check protects the independent semantic contract of the already-signed token:
- * participant attachments use `gx:LegalPerson`; service-offering attachments
- * use `gx:ServiceOffering` and the required Gaia-X properties.
- *
- * This is not the `_retrieve?format=vc+jwt` representation of ICA's
- * schema.org credential and it is not `credential.evidence[].attachments`.
- * It validates only the member-level `data[].attachments[]` contract returned
- * by `network/members/_discover`.
- *
- * @todo Move this transport-neutral semantic assertion and its fixtures to
- * `gdc-common-utils-ts`, next to the schema.org-to-Gaia-X converter and
- * `GaiaXVcJwtAttachment` types. ICA and publishing GWs must then import the
- * shared assertion instead of maintaining adapter-local copies.
- */
-export function assertGaiaXDiscoveryAttachmentSemantics(
-  jwt: string,
-  role: GaiaXCredentialAttachmentRoleValue,
-): void {
-  const document = decodeVcJwtCredential(jwt);
-  const subject = credentialSubject(document);
-  if (!subject) throw new Error(`Gaia-X ${role} VC-JWT requires one credentialSubject object.`);
-  const subjectType = asString(subject.type);
-
-  if (role === GaiaXCredentialAttachmentRole.Participant) {
-    if (subjectType !== 'gx:LegalPerson') {
-      throw new Error('Gaia-X participant VC-JWT credentialSubject.type must be gx:LegalPerson.');
-    }
-    requireGaiaXProperties(subject, [
-      'gx:legalName',
-      'gx:legalRegistrationNumber',
-      'gx:headquarterAddress',
-      'gx:legalAddress',
-    ], 'participant');
-  }
-
-  if (role === GaiaXCredentialAttachmentRole.ServiceOffering) {
-    if (subjectType !== 'gx:ServiceOffering') {
-      throw new Error('Gaia-X service-offering VC-JWT credentialSubject.type must be gx:ServiceOffering.');
-    }
-    requireGaiaXProperties(subject, [
-      'gx:providedBy',
-      'gx:serviceOfferingTermsAndConditions',
-    ], 'service-offering');
-  }
-}
-
 function sha256(document: JsonObject): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(document)).digest('hex')}`;
 }
@@ -243,9 +165,11 @@ function sha256(document: JsonObject): string {
  * The GW owns projection and signing: it converts the source Organization or
  * service claims into a Gaia-X draft with `gdc-common-utils-ts`, signs that
  * distinct draft as VC-JWT, and advertises the enveloped artifact from its DID.
- * ICA resolves, semantically validates and caches the exact token without
- * rewriting or re-signing it. Credential-internal audit evidence is never
- * promoted into the member-level DIDComm attachment array.
+ * ICA resolves and caches the exact token without rewriting or re-signing it.
+ * The shared attachment builders in `gdc-common-utils-ts` apply the canonical
+ * semantic assertion before accepting a participant or service-offering JWT.
+ * Credential-internal audit evidence is never promoted into the member-level
+ * DIDComm attachment array.
  */
 export class MemberDiscoveryCache {
   private readonly cache = new Map<string, CachedMember>();
@@ -301,7 +225,6 @@ export class MemberDiscoveryCache {
       || siblingWellKnownUrl(input.dataset.accessUrl, 'legal-participant.vc.json');
     const participant = await this.fetchJson(participantUrl);
     const participantJwt = extractEnvelopedJwt(participant.document);
-    assertGaiaXDiscoveryAttachmentSemantics(participantJwt, GaiaXCredentialAttachmentRole.Participant);
     const attachments = [buildGaiaXParticipantAttachment({
       id: participantUrl,
       jwt: participantJwt,
@@ -317,7 +240,6 @@ export class MemberDiscoveryCache {
       try {
         const artifact = await this.fetchJson(url);
         const jwt = extractEnvelopedJwt(artifact.document);
-        assertGaiaXDiscoveryAttachmentSemantics(jwt, candidate.role);
         attachments.push(buildGaiaXVcJwtAttachment({ id: url, jwt, role: candidate.role }));
       } catch {
         // Service offerings are optional per host capability; participant is not.
