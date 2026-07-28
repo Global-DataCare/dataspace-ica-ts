@@ -149,6 +149,74 @@ function extractEnvelopedJwt(document: JsonObject): string {
   return decodeURIComponent(id.slice(prefix.length));
 }
 
+function decodeVcJwtCredential(jwt: string): JsonObject {
+  const parts = jwt.split('.');
+  if (parts.length !== 3 || parts.some((part) => !part)) {
+    throw new Error('Gaia-X attachment must contain one compact three-part VC-JWT.');
+  }
+  let payload: JsonObject;
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as JsonObject;
+  } catch {
+    throw new Error('Gaia-X attachment VC-JWT payload is not valid base64url JSON.');
+  }
+  return asObject(payload.vc) || payload;
+}
+
+function credentialSubject(document: JsonObject): JsonObject | undefined {
+  const raw = document.credentialSubject;
+  if (Array.isArray(raw)) return raw.map(asObject).find((value): value is JsonObject => Boolean(value));
+  return asObject(raw);
+}
+
+function requireGaiaXProperties(subject: JsonObject, names: string[], role: string): void {
+  const missing = names.filter((name) => !(name in subject));
+  if (missing.length) {
+    throw new Error(`Gaia-X ${role} VC-JWT is missing required semantic properties: ${missing.join(', ')}.`);
+  }
+}
+
+/**
+ * Rejects a schema.org VC that was merely serialized as JWT and mislabeled as
+ * a Gaia-X discovery attachment.
+ *
+ * Signature/trust verification remains the credential-verifier boundary. This
+ * check protects the independent semantic contract of the already-signed token:
+ * participant attachments use `gx:LegalPerson`; service-offering attachments
+ * use `gx:ServiceOffering` and the required Gaia-X properties.
+ */
+export function assertGaiaXDiscoveryAttachmentSemantics(
+  jwt: string,
+  role: GaiaXCredentialAttachmentRoleValue,
+): void {
+  const document = decodeVcJwtCredential(jwt);
+  const subject = credentialSubject(document);
+  if (!subject) throw new Error(`Gaia-X ${role} VC-JWT requires one credentialSubject object.`);
+  const subjectType = asString(subject.type);
+
+  if (role === GaiaXCredentialAttachmentRole.Participant) {
+    if (subjectType !== 'gx:LegalPerson') {
+      throw new Error('Gaia-X participant VC-JWT credentialSubject.type must be gx:LegalPerson.');
+    }
+    requireGaiaXProperties(subject, [
+      'gx:legalName',
+      'gx:legalRegistrationNumber',
+      'gx:headquarterAddress',
+      'gx:legalAddress',
+    ], 'participant');
+  }
+
+  if (role === GaiaXCredentialAttachmentRole.ServiceOffering) {
+    if (subjectType !== 'gx:ServiceOffering') {
+      throw new Error('Gaia-X service-offering VC-JWT credentialSubject.type must be gx:ServiceOffering.');
+    }
+    requireGaiaXProperties(subject, [
+      'gx:providedBy',
+      'gx:serviceOfferingTermsAndConditions',
+    ], 'service-offering');
+  }
+}
+
 function sha256(document: JsonObject): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(document)).digest('hex')}`;
 }
@@ -215,9 +283,11 @@ export class MemberDiscoveryCache {
       text.includes('legal-participant') || text.includes('legalparticipant') || text.includes('legalperson'))
       || siblingWellKnownUrl(input.dataset.accessUrl, 'legal-participant.vc.json');
     const participant = await this.fetchJson(participantUrl);
+    const participantJwt = extractEnvelopedJwt(participant.document);
+    assertGaiaXDiscoveryAttachmentSemantics(participantJwt, GaiaXCredentialAttachmentRole.Participant);
     const attachments = [buildGaiaXParticipantAttachment({
       id: participantUrl,
-      jwt: extractEnvelopedJwt(participant.document),
+      jwt: participantJwt,
     })];
 
     const artifactCandidates: Array<{ file: string; role: GaiaXCredentialAttachmentRoleValue }> = [
@@ -229,7 +299,9 @@ export class MemberDiscoveryCache {
       const url = advertised || siblingWellKnownUrl(input.dataset.accessUrl, candidate.file);
       try {
         const artifact = await this.fetchJson(url);
-        attachments.push(buildGaiaXVcJwtAttachment({ id: url, jwt: extractEnvelopedJwt(artifact.document), role: candidate.role }));
+        const jwt = extractEnvelopedJwt(artifact.document);
+        assertGaiaXDiscoveryAttachmentSemantics(jwt, candidate.role);
+        attachments.push(buildGaiaXVcJwtAttachment({ id: url, jwt, role: candidate.role }));
       } catch {
         // Service offerings are optional per host capability; participant is not.
       }
