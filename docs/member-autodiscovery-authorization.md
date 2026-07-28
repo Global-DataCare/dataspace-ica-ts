@@ -72,11 +72,10 @@ Two similarly named fields are outside this aggregate contract:
   certificate or audit evidence. It is not copied into the member-level
   `data[].attachments[]`.
 
-The converter, Gaia-X draft models and attachment types already live in
-`gdc-common-utils-ts`.
-
-TODO: move the transport-neutral
-`assertGaiaXDiscoveryAttachmentSemantics(...)` implementation and shared
-positive/negative fixtures from `dataspace-ica-ts` into
-`gdc-common-utils-ts`. ICA and every GW that publishes or validates discovery
-attachments must then consume that single shared assertion.
+The converter, Gaia-X draft models, attachment types, shared positive/negative
+fixtures and transport-neutral
+`assertGaiaXDiscoveryAttachmentSemantics(...)` implementation live in
+`gdc-common-utils-ts` from version `2.3.7`. Its attachment builders invoke that
+assertion before accepting a token. ICA and every GW that publishes or
+validates discovery attachments must consume this shared implementation rather
+than maintain adapter-local semantic validators.

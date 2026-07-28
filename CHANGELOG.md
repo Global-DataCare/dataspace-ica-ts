@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.7 - 2026-07-28
+
 - Enforced the member-discovery credential-layer boundary: `vc[]` retains
   schema.org VC JSON, while member-level DIDComm `attachments[]` accepts only
   Gaia-X VC-JWT payloads with the expected `gx:LegalPerson` or
@@ -9,8 +11,12 @@
   as JWT are rejected as Gaia-X participant attachments.
 - Documented that `_retrieve` VC-JWT serialization and
   `credential.evidence[].attachments` are not member-level Gaia-X discovery
-  attachments, and recorded the remaining TODO to move ICA's semantic JWT
-  assertion into `gdc-common-utils-ts`.
+  attachments.
+- Updated to `gdc-common-utils-ts@^2.3.7`, removed ICA's adapter-local Gaia-X
+  semantic validator and delegated fail-closed validation to the shared
+  attachment builders and fixtures.
+- Pinned patched transitive `protobufjs` and `uuid` versions so the production
+  dependency audit remains clean.
 
 ## 1.1.6 - 2026-07-28
 
