@@ -4,6 +4,9 @@
 
 ## 1.1.5 - 2026-07-28
 
+- Pinned patched `fast-xml-parser`, `minimatch` and `brace-expansion`
+  transitive versions so the production dependency audit contains no high or
+  critical findings.
 - Fixed production image packaging by tracking every runtime module under
   `src/api/tools/**`; the generic local `tools/` ignore rule had excluded four
   modules imported by the API server and produced a non-starting image.
