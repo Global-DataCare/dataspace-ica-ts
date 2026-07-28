@@ -4080,7 +4080,7 @@ export function buildIcaVerifyOpenApiSpec(
           tags: ['08 network/credentials'],
           summary: 'Discover authorized ICA members from the bounded-age cache',
           description:
-            'Returns `data[]` with schema.org credentials in `vc[]`, exact Gaia-X VC-JWTs in DIDComm `attachments[]`, and resolved DID/DCAT documents plus provenance metadata. Only dataset hosts in `ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS` are traversed; blocked hosts appear in `meta.issues`. Set `refresh=true` to bypass the current in-memory snapshot.',
+            'Returns `data[]` with ICA-issued schema.org VC JSON in `vc[]`, exact signed Gaia-X VC-JWTs in member-level DIDComm `attachments[]`, and resolved DID/DCAT documents plus provenance metadata. `attachments[0]` is a distinct Gaia-X participant credential whose decoded subject uses `gx:LegalPerson`; it is never the schema.org OrganizationCredential merely serialized as JWT. Credential-internal `evidence[].attachments` remains audit evidence and is not returned as a member attachment. Only dataset hosts in `ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS` are traversed; blocked hosts appear in `meta.issues`. Set `refresh=true` to bypass the current in-memory snapshot.',
           parameters: [
             { name: 'jurisdiction', in: 'path', required: true, schema: supportedJurisdictionSchema },
             { name: 'sector', in: 'path', required: true, schema: supportedSectorSchema },
@@ -4102,10 +4102,18 @@ export function buildIcaVerifyOpenApiSpec(
                           required: ['id', 'vc', 'did', 'attachments'],
                           properties: {
                             id: { type: 'string', example: 'did:web:member.example' },
-                            vc: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                            vc: {
+                              type: 'array',
+                              description: 'ICA/GDC VC JSON credentials with schema.org subjects. OrganizationCredential is first.',
+                              items: { type: 'object', additionalProperties: true },
+                            },
                             did: { type: 'object', additionalProperties: true },
                             dcat: { type: 'object', additionalProperties: true },
-                            attachments: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                            attachments: {
+                              type: 'array',
+                              description: 'Member-level DIDComm attachments containing exact signed Gaia-X VC-JWTs. Participant gx:LegalPerson is first; schema.org JWT serialization and credential audit evidence are not valid here.',
+                              items: { type: 'object', additionalProperties: true },
+                            },
                             meta: { type: 'object', additionalProperties: true },
                           },
                         },
