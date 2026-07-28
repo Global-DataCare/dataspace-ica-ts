@@ -1,3 +1,12 @@
+// Flow contract: ICA member autodiscovery keeps three credential/evidence
+// layers independent. `data[].vc[]` contains ICA-issued schema.org VC JSON;
+// member-level `data[].attachments[]` contains exact signed Gaia-X VC-JWTs
+// whose decoded subjects use required `gx:` semantics; and
+// `credential.evidence[].attachments` remains audit evidence. These tests
+// protect participant-first ordering, cache reuse, the host allowlist, and
+// fail-closed rejection of a schema.org OrganizationCredential merely encoded
+// as JWT and mislabeled as a Gaia-X participant attachment.
+
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {

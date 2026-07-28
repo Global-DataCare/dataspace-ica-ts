@@ -39,3 +39,44 @@ The discovery response continues to return source artifacts, not inferred
 claims: schema.org credentials in `data[].vc`, the DID document with provenance
 in `data[].did`, exact signed Gaia-X VC-JWTs in DIDComm attachments, and the
 resolved DCAT catalog with its cache metadata.
+
+## Credential layers
+
+The discovery aggregate deliberately carries two different credential
+families:
+
+| Location | Meaning | Vocabulary and representation |
+| --- | --- | --- |
+| `data[].vc[]` | ICA/GDC credentials already issued for the member | VC JSON with schema.org subjects; `vc[0]` is the `OrganizationCredential` |
+| `data[].attachments[]` | Gaia-X credentials advertised by the member host | DIDComm attachments containing exact compact VC-JWTs; `attachments[0]` is the participant credential |
+
+The participant attachment is a distinct signed statement whose decoded
+`credentialSubject.type` is `gx:LegalPerson`. It contains the required
+`gx:legalName`, `gx:legalRegistrationNumber`, `gx:headquarterAddress` and
+`gx:legalAddress` properties. Optional service-offering attachments use
+`gx:ServiceOffering`, `gx:providedBy` and
+`gx:serviceOfferingTermsAndConditions`.
+
+It is invalid to take the schema.org `OrganizationCredential`, serialize that
+same credential as JWT and label it as a Gaia-X participant attachment. The GW
+uses the versioned converter in `gdc-common-utils-ts` to create a separate
+Gaia-X semantic draft, signs that draft as VC-JWT and advertises the enveloped
+artifact from its DID document. ICA validates and caches the exact advertised
+token; it does not convert, rewrite or re-sign it during discovery.
+
+Two similarly named fields are outside this aggregate contract:
+
+- `network/credentials/.../_retrieve?format=vc+jwt` is a JWT serialization of
+  the retrieved ICA/schema.org credential, not the Gaia-X participant token.
+- `credential.evidence[].attachments` belongs to the credential's PDF,
+  certificate or audit evidence. It is not copied into the member-level
+  `data[].attachments[]`.
+
+The converter, Gaia-X draft models and attachment types already live in
+`gdc-common-utils-ts`.
+
+TODO: move the transport-neutral
+`assertGaiaXDiscoveryAttachmentSemantics(...)` implementation and shared
+positive/negative fixtures from `dataspace-ica-ts` into
+`gdc-common-utils-ts`. ICA and every GW that publishes or validates discovery
+attachments must then consume that single shared assertion.

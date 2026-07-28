@@ -7,6 +7,10 @@
   Gaia-X VC-JWT payloads with the expected `gx:LegalPerson` or
   `gx:ServiceOffering` semantic properties. Schema.org credentials serialized
   as JWT are rejected as Gaia-X participant attachments.
+- Documented that `_retrieve` VC-JWT serialization and
+  `credential.evidence[].attachments` are not member-level Gaia-X discovery
+  attachments, and recorded the remaining TODO to move ICA's semantic JWT
+  assertion into `gdc-common-utils-ts`.
 
 ## 1.1.6 - 2026-07-28
 
