@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0 - 2026-07-29
+
+- Added fail-closed ICA signing bootstrap validation that binds the configured
+  private key and leaf certificate through the full X.509 chain to a pinned
+  Root CA certificate and its resolved `did:web` document.
+- Made `ICA_ROOT_CA_DID` an enforced trust identity when
+  `ICA_VC_SIGNING_TRUST_REQUIRED=true`, rather than sync-only metadata.
+- Loaded offline-issued `x5c`/chain material into the active signing method,
+  published it through dynamic DID/JWKS output, and exposed the public chain at
+  `/.well-known/x509.pem` and `/.well-known/x509.der`.
+- Documented the static `did:web:ca.unid.online` Root boundary and Kubernetes
+  Secret/ConfigMap split without deploying or changing staging infrastructure.
+
 ## 1.1.8 - 2026-07-28
 
 - Added opt-in Hyperledger Fabric registration of issued organization and legal

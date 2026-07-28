@@ -13,6 +13,7 @@ This directory is the curated documentation entrypoint for developers and operat
 7. [`05-operations-and-deployment/01-gke-and-security.md`](./05-operations-and-deployment/01-gke-and-security.md)
 8. [`06-architecture-and-reference/02-postgres-ipfs-gap.md`](./06-architecture-and-reference/02-postgres-ipfs-gap.md)
 9. [`06-architecture-and-reference/03-fabric-credential-registry.md`](./06-architecture-and-reference/03-fabric-credential-registry.md)
+10. [`06-architecture-and-reference/04-root-ca-and-ica-signing-trust.md`](./06-architecture-and-reference/04-root-ca-and-ica-signing-trust.md)
 
 ## Numbered sections
 

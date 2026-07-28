@@ -88,7 +88,9 @@ import {
 import {
   loadPublishedJwks,
   loadPublishedX509Der,
+  loadPublishedX509Pem,
 } from './tools/public-artifacts.ts';
+import { validateIcaSigningTrustFromEnv } from './tools/ica-root-trust.ts';
 import { bootstrapSelfSigningKey } from './tools/self-signing.ts';
 import { getConfiguredSupportedJurisdictionIds } from './supported-jurisdictions.ts';
 import { getSupportedSectorCodings, getSupportedSectorsLanguage } from './supported-sectors.ts';
@@ -807,11 +809,15 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           sendMethodNotAllowed(res, 'GET');
           return;
         }
-        const jwks = loadPublishedJwks();
-        if (!jwks) {
-          sendJson(res, 404, { issue: 'ICA public JWKS artifact not configured' });
-          return;
-        }
+        const publishedJwks = loadPublishedJwks();
+        const didDocument = publishedJwks ? undefined : buildIcaDidDocument(req);
+        const jwks = publishedJwks || {
+          keys: (Array.isArray(didDocument?.verificationMethod)
+            ? didDocument.verificationMethod as Array<Record<string, unknown>>
+            : [])
+            .map((method) => method.publicKeyJwk)
+            .filter((jwk) => Boolean(jwk && typeof jwk === 'object')),
+        };
         sendJson(res, 200, jwks);
         return;
       }
@@ -827,6 +833,20 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           return;
         }
         sendBinary(res, 200, x509Der, 'application/pkix-cert');
+        return;
+      }
+
+      if (pathname === '/.well-known/x509.pem') {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const x509Pem = loadPublishedX509Pem();
+        if (!x509Pem) {
+          sendJson(res, 404, { issue: 'ICA public X509 artifact not configured' });
+          return;
+        }
+        sendBinary(res, 200, Buffer.from(x509Pem), 'application/pem-certificate-chain');
         return;
       }
 
@@ -1872,6 +1892,12 @@ export async function startIcaApiServer(options: IcaApiServerOptions = {}) {
     if (selfBootstrap.warning) {
       console.warn(`WARNING: ${selfBootstrap.warning}`);
     }
+  }
+  const signingTrust = await validateIcaSigningTrustFromEnv();
+  if (signingTrust.validated) {
+    console.log(
+      `ICA signing trust validated root=${signingTrust.rootDid} chainLength=${signingTrust.chainLength} rootSha256=${signingTrust.rootCertificateSha256}.`,
+    );
   }
   const server = createIcaApiServer(options);
   server.listen(port, host, () => {

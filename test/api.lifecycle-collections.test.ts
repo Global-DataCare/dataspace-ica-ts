@@ -437,6 +437,9 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.equal(openApi.openapi, '3.1.0');
   assert.match(openApi.info.description, /alternateName \"ica\"/i);
   assert.ok(openApi.paths['/.well-known/did.json']);
+  assert.ok(openApi.paths['/.well-known/jwks.json']);
+  assert.ok(openApi.paths['/.well-known/x509.pem']);
+  assert.ok(openApi.paths['/.well-known/x509.der']);
   assert.ok(openApi.paths['/did.json']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{membertype}/{role}/{idHash}/did.json']);
   assert.ok(Array.isArray(openApi.tags));

@@ -15,6 +15,9 @@ const required = [
   'identity-local',
   'identity-global',
   'credential-sc',
+  'ICA_VC_SIGNING_TRUST_REQUIRED',
+  'ICA_ROOT_CA_DID',
+  'did:web:ca.unid.online',
 ];
 const missing = required.filter((token) => !skill.includes(token));
 if (missing.length) {

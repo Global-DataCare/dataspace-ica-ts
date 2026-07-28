@@ -6,8 +6,12 @@ import {
   scryptSync,
 } from 'node:crypto';
 import type { SupportedSigningAlgorithm } from '../types.ts';
-import { getPreferredSigningKey } from './active-signing-keys.ts';
+import { activateSigningKey, getPreferredSigningKey } from './active-signing-keys.ts';
 import { deriveDeterministicEcPrivateKeyPem } from './deterministic-key-material.ts';
+import {
+  certificatePemToX5c,
+  loadIcaSigningCertificateChainFromEnv,
+} from './ica-root-trust.ts';
 import { resolveSeedPassphrase } from './seed-passphrase-provider.ts';
 
 type BootstrapResult = {
@@ -242,10 +246,28 @@ export async function bootstrapSelfSigningKey(): Promise<BootstrapResult> {
 
   const envPrivateKey = (process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM || '').trim();
   if (envPrivateKey) {
-    const alg = parseSupportedSigningAlgorithm(process.env.ICA_VC_SIGNING_ALG);
+    const configuredAlg = parseSupportedSigningAlgorithm(process.env.ICA_VC_SIGNING_ALG);
     const kid = (process.env.ICA_VC_SIGNING_KEY_ID || '').trim() || buildKidFromPrivateKeyPem(envPrivateKey);
+    const publicJwk = createPublicKey(createPrivateKey(envPrivateKey)).export({ format: 'jwk' }) as PublicJwk;
+    const alg = configuredAlg
+      || (publicJwk.kty === 'EC' && publicJwk.crv === 'P-384' ? 'ES384'
+        : publicJwk.kty === 'EC' && publicJwk.crv === 'secp256k1' ? 'ES256K'
+          : publicJwk.kty === 'RSA' ? 'RS256'
+            : publicJwk.kty === 'OKP' ? 'EdDSA'
+              : undefined);
+    if (!alg) throw new Error('Unable to infer ICA VC signing algorithm from the configured private key.');
     if (!process.env.ICA_VC_SIGNING_KEY_ID) {
       process.env.ICA_VC_SIGNING_KEY_ID = kid;
+    }
+    const certificateChainPem = loadIcaSigningCertificateChainFromEnv();
+    if (certificateChainPem.length) {
+      activateSigningKey({
+        kid,
+        alg,
+        privateKeyPem: envPrivateKey,
+        x5c: certificateChainPem.map(certificatePemToX5c),
+        x5u: String(process.env.ICA_VC_SIGNING_X5U || '').trim() || undefined,
+      });
     }
     return {
       enabled: true,

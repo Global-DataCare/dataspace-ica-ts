@@ -9,6 +9,7 @@ export type ActiveSigningKeyRecord = {
   privateKeyPem: string;
   publicJwk: JsonObject;
   x5c?: string[];
+  x5u?: string;
   activatedAt: string;
 };
 
@@ -148,6 +149,7 @@ function buildRecordFromInput(input: {
   alg: string;
   privateKeyPem: string;
   x5c?: string[];
+  x5u?: string;
   certificateChainPem?: string[];
   activatedAt?: string;
 }): ActiveSigningKeyRecord {
@@ -158,12 +160,17 @@ function buildRecordFromInput(input: {
   assertAlgorithmMatchesKey(alg, publicJwk);
   const kid = (input.kid || '').trim() || buildKidFromPublicJwk(publicJwk);
   const x5c = normalizeX5cInput(input.x5c, input.certificateChainPem);
+  const x5u = String(input.x5u || '').trim();
+  if (x5u && !x5u.startsWith('https://')) {
+    throw new Error('x5u must use HTTPS.');
+  }
   return {
     kid,
     alg,
     privateKeyPem,
     publicJwk,
     ...(x5c?.length ? { x5c } : {}),
+    ...(x5u ? { x5u } : {}),
     activatedAt: input.activatedAt || new Date().toISOString(),
   };
 }
@@ -178,6 +185,7 @@ export function activateSigningKey(input: {
   alg: string;
   privateKeyPem: string;
   x5c?: string[];
+  x5u?: string;
   certificateChainPem?: string[];
 }): ActiveSigningKeyRecord {
   loadState();
@@ -230,6 +238,7 @@ export function upsertDidSigningMethods(
       alg: entry.alg,
       use: 'sig',
       ...(entry.x5c?.length ? { x5c: entry.x5c } : {}),
+      ...(entry.x5u ? { x5u: entry.x5u } : {}),
     },
   }));
   return {
