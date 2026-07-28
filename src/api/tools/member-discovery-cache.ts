@@ -184,6 +184,16 @@ function requireGaiaXProperties(subject: JsonObject, names: string[], role: stri
  * check protects the independent semantic contract of the already-signed token:
  * participant attachments use `gx:LegalPerson`; service-offering attachments
  * use `gx:ServiceOffering` and the required Gaia-X properties.
+ *
+ * This is not the `_retrieve?format=vc+jwt` representation of ICA's
+ * schema.org credential and it is not `credential.evidence[].attachments`.
+ * It validates only the member-level `data[].attachments[]` contract returned
+ * by `network/members/_discover`.
+ *
+ * @todo Move this transport-neutral semantic assertion and its fixtures to
+ * `gdc-common-utils-ts`, next to the schema.org-to-Gaia-X converter and
+ * `GaiaXVcJwtAttachment` types. ICA and publishing GWs must then import the
+ * shared assertion instead of maintaining adapter-local copies.
  */
 export function assertGaiaXDiscoveryAttachmentSemantics(
   jwt: string,
@@ -229,6 +239,13 @@ function sha256(document: JsonObject): string {
  * artifacts advertised by that DID, and its DCAT catalog. Current schema.org
  * VCs remain the locally issued ICA records in `vc[]`; they are never converted
  * into, or substituted for, signed Gaia-X attachments.
+ *
+ * The GW owns projection and signing: it converts the source Organization or
+ * service claims into a Gaia-X draft with `gdc-common-utils-ts`, signs that
+ * distinct draft as VC-JWT, and advertises the enveloped artifact from its DID.
+ * ICA resolves, semantically validates and caches the exact token without
+ * rewriting or re-signing it. Credential-internal audit evidence is never
+ * promoted into the member-level DIDComm attachment array.
  */
 export class MemberDiscoveryCache {
   private readonly cache = new Map<string, CachedMember>();
