@@ -9,7 +9,9 @@ import { createIcaApiServer } from '../src/api/server.ts';
 import { buildIcaDidDocument } from '../src/api/tools/ica-identity.ts';
 
 /**
- * Mirrors the lightweight request/response harness already used by the ICA API unit tests.
+ * Flow contract: ICA serves an operator-provided DID, JWKS and exact public
+ * X.509 chain without regenerating or rewriting trust material. The lightweight
+ * request/response harness mirrors the other ICA API unit tests.
  */
 function buildMockRequest(url: string, method = 'GET', headers: Record<string, string> = {}): IncomingMessage {
   const req = Readable.from([]) as IncomingMessage & Readable;
@@ -93,10 +95,12 @@ test('ICA well-known endpoints can be served directly from generated public arti
       ],
     };
     const x509 = Buffer.from('0123456789abcdef', 'hex');
+    const x509Pem = '-----BEGIN CERTIFICATE-----\nSYNTHETIC\n-----END CERTIFICATE-----';
 
     writeFileSync(path.join(tempDir, 'did-test-eur-ica.member.example.json'), JSON.stringify(did, null, 2));
     writeFileSync(path.join(tempDir, 'jwks-test-eur-ica.member.example.json'), JSON.stringify(jwks, null, 2));
     writeFileSync(path.join(tempDir, 'x509.der'), x509);
+    writeFileSync(path.join(tempDir, 'x509.pem'), x509Pem);
 
     // The runtime should behave as a thin publisher over the generated files, not as a second source of truth.
     process.env.ICA_PUBLIC_ARTIFACTS_DIR = tempDir;
@@ -123,6 +127,12 @@ test('ICA well-known endpoints can be served directly from generated public arti
     await handler(x509Req, x509Res.res);
     assert.equal(x509Res.res.statusCode, 200);
     assert.equal(x509Res.getBodyBuffer().equals(x509), true);
+
+    const x509PemReq = buildMockRequest('/.well-known/x509.pem');
+    const x509PemRes = buildMockResponse();
+    await handler(x509PemReq, x509PemRes.res);
+    assert.equal(x509PemRes.res.statusCode, 200);
+    assert.equal(x509PemRes.getBodyText(), x509Pem);
 
     const builtDid = buildIcaDidDocument();
     assert.equal(builtDid.id, 'did:web:test-eur-ica.member.example');

@@ -2137,6 +2137,63 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
+      '/.well-known/jwks.json': {
+        get: {
+          tags: ['01 discovery'],
+          summary: 'Get ICA signing JWKS',
+          description: 'Returns the active public signing JWKs with the exact x5c/x5u chain loaded during offline CA activation.',
+          responses: {
+            '200': {
+              description: 'ICA public signing keys.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['keys'],
+                    properties: {
+                      keys: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/.well-known/x509.pem': {
+        get: {
+          tags: ['01 discovery'],
+          summary: 'Get ICA X.509 signing chain as PEM',
+          responses: {
+            '200': {
+              description: 'ICA leaf-to-Root public certificate chain.',
+              content: {
+                'application/pem-certificate-chain': {
+                  schema: { type: 'string' },
+                },
+              },
+            },
+            '404': { description: 'No active CA-signed chain is configured.' },
+          },
+        },
+      },
+      '/.well-known/x509.der': {
+        get: {
+          tags: ['01 discovery'],
+          summary: 'Get ICA X.509 signing chain as concatenated DER',
+          responses: {
+            '200': {
+              description: 'ICA leaf-to-Root public certificate chain.',
+              content: {
+                'application/pkix-cert': {
+                  schema: { type: 'string', format: 'binary' },
+                },
+              },
+            },
+            '404': { description: 'No active CA-signed chain is configured.' },
+          },
+        },
+      },
       '/.well-known/dspace-version': {
         get: {
           tags: ['01 discovery'],
