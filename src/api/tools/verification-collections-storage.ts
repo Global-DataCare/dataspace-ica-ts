@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { VerifyBundleResponse, VerifyRouteContext } from '../types.ts';
+import type { DidcommAttachment, VerifyBundleResponse, VerifyRouteContext } from '../types.ts';
 import {
   createVerificationCollectionsAdapter,
   resetVerificationCollectionsMemAdapterStateForTests,
@@ -126,6 +126,7 @@ function extractCredentialRecords(
   thid: string,
   bundle: VerifyBundleResponse,
   nowIso: string,
+  attachments: DidcommAttachment[] = [],
 ): { issued: IssuedCredentialRecord[]; evidence: EvidenceRecord[] } {
   const issued: IssuedCredentialRecord[] = [];
   const evidence: EvidenceRecord[] = [];
@@ -136,6 +137,9 @@ function extractCredentialRecords(
 
     const recordId = `urn:uuid:${randomUUID()}`;
     const credentialId = asNonEmptyString(resource.id) || recordId;
+    const vcJwt = attachments
+      .map((attachment) => asJsonObject(attachment.data?.json))
+      .find((json) => asNonEmptyString(json?.credentialId) === credentialId);
     const subject = asJsonObject(resource.credentialSubject);
     const subjectId = asNonEmptyString(subject?.id) || '';
     const issuerId = asNonEmptyString(resource.issuer);
@@ -156,6 +160,7 @@ function extractCredentialRecords(
       subjectId,
       issuerId,
       credential: resource,
+      ...(asNonEmptyString(vcJwt?.jwt) ? { representations: { vcJwt: asNonEmptyString(vcJwt?.jwt) } } : {}),
       ...(asJsonObject(entry.publicKeyJwk) ? { publicKeyJwk: asJsonObject(entry.publicKeyJwk) } : {}),
       ...(asNonEmptyString(entry.keySource) ? { keySource: asNonEmptyString(entry.keySource) as 'attachment' | 'generated' } : {}),
       originDataspaceDid: issuerId || undefined,
@@ -247,9 +252,10 @@ export class VerificationCollectionsService {
     route: VerifyRouteContext,
     thid: string,
     bundle: VerifyBundleResponse,
+    attachments: DidcommAttachment[] = [],
   ): Promise<void> {
     const nowIso = new Date().toISOString();
-    const extracted = extractCredentialRecords(route, thid, bundle, nowIso);
+    const extracted = extractCredentialRecords(route, thid, bundle, nowIso, attachments);
     const didBindings = extractDidBindingRecords(route, thid, bundle, nowIso);
     if (!extracted.issued.length && !extracted.evidence.length && !didBindings.length) {
       return;

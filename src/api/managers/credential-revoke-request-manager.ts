@@ -6,6 +6,7 @@ import type { CredentialRevokeResult, CredentialRevokeRouteContext } from '../ty
 import type { JsonObject } from '../tools/verification-collections-storage.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 import { DataspaceSyncService } from '../tools/dataspace-sync.ts';
+import { CredentialLedgerService } from '../tools/credential-ledger.ts';
 
 export type CredentialRevokeSubmitOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -31,15 +32,18 @@ export class CredentialRevokeRequestManager {
   private readonly jobStore: InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>;
   private readonly collectionsService: VerificationCollectionsService;
   private readonly dataspaceSyncService: DataspaceSyncService;
+  private readonly credentialLedgerService: CredentialLedgerService;
 
   constructor(
     jobStore: InMemoryEntityJobStore<CredentialRevokeRouteContext, CredentialRevokeResult>,
     collectionsService: VerificationCollectionsService = new VerificationCollectionsService(),
     dataspaceSyncService: DataspaceSyncService = new DataspaceSyncService(),
+    credentialLedgerService: CredentialLedgerService = new CredentialLedgerService(),
   ) {
     this.jobStore = jobStore;
     this.collectionsService = collectionsService;
     this.dataspaceSyncService = dataspaceSyncService;
+    this.credentialLedgerService = credentialLedgerService;
   }
 
   async submit(route: CredentialRevokeRouteContext, req: IncomingMessage): Promise<CredentialRevokeSubmitOutcome> {
@@ -68,6 +72,11 @@ export class CredentialRevokeRequestManager {
             }
 
             const credential = { ...record.credential } as JsonObject;
+            await this.credentialLedgerService.revokeCredential(record.credentialId, {
+              timestamp: nowIso,
+              actor: entry.revokedBy,
+              reason: entry.reason,
+            });
             const previousStatus = asJsonObject(credential.credentialStatus) || {};
             const nextStatus: JsonObject = {
               ...previousStatus,

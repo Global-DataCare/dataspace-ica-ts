@@ -1214,6 +1214,10 @@ export function buildVerificationVcBundle(
     credentialSubject: organizationSubject,
     evidence: organizationEvidence,
   };
+  (unsignedOrganizationVc as unknown as Record<string, unknown>).credentialStatus = {
+    id: `${unsignedOrganizationVc.id}#status`,
+    type: 'SimpleCredentialStatus2026',
+  };
 
   const organizationRef: Record<string, unknown> = {
     '@type': 'Organization',
@@ -1289,6 +1293,12 @@ export function buildVerificationVcBundle(
     credentialSubject: personSubject,
     evidence: personEvidence,
   } : undefined;
+  if (unsignedPersonVc) {
+    (unsignedPersonVc as unknown as Record<string, unknown>).credentialStatus = {
+      id: `${unsignedPersonVc.id}#status`,
+      type: 'SimpleCredentialStatus2026',
+    };
+  }
 
   const proofCreatedAtOverride = deterministicVcByContract ? verifierEvidenceTimestamp : undefined;
   const organizationVc = attachProofToCredential(
