@@ -1,5 +1,23 @@
 # Deploy to Kubernetes (GKE)
 
+## Authoritative active staging topology
+
+The active ICA staging deployment is intentionally split across two GCP
+projects:
+
+- `globaldatacare-test` owns only the GKE cluster, namespace, Ingress and the
+  public IP `34.175.75.120`.
+- `globaldatacare-ica-dev` owns the ICA Artifact Registry image, Firestore
+  database, GCS audit bucket and runtime Google service accounts.
+- the Kubernetes service account in `globaldatacare-test` impersonates the
+  runtime Google service account in `globaldatacare-ica-dev` through
+  cross-project Workload Identity.
+
+This is the supported staging topology, not a pending data migration. Do not
+move or duplicate ICA persistence into `globaldatacare-test`, and do not push
+the deployable ICA image there. The separate `st-v2` IP `34.36.211.126` is not
+the active staging endpoint.
+
 ## GKE vs Cloud Run URL behavior
 
 This repository deploy script (`./cloud_deploy.sh`) targets **GKE** (Kubernetes), not Cloud Run.

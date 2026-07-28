@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Documented the authoritative split-project staging topology: GKE, Ingress and
+  `34.175.75.120` remain in `globaldatacare-test`, while the ICA image,
+  Firestore, GCS and runtime identities remain in `globaldatacare-ica-dev`;
+  this is not a pending persistence migration.
+
 ## 1.1.4 - 2026-07-28
 
 - Added an explicit Cloud Build upload manifest so the tracked npm package
