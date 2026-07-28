@@ -64,6 +64,27 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   ledger cannot commit. Use this for the staging cutover gate.
 - Chaincode is `credential-sc` unless explicitly overridden.
 
+## Root CA and ICA signing trust
+
+- The Root CA is an offline authority whose public static surface is
+  `did:web:ca.unid.online`, its JWKS/X.509 chain and trust metadata. It is not
+  an online issuance service and its private key never enters ICA or
+  Kubernetes.
+- ICA receives its own private key plus an offline-signed leaf-to-Root chain.
+  `ICA_VC_SIGNING_TRUST_REQUIRED=true` must fail startup unless the private key
+  matches the leaf, every certificate signature is valid, the terminal Root
+  matches `ICA_ROOT_CA_CERT_SHA256`, and the resolved `ICA_ROOT_CA_DID`
+  verification method matches that same Root certificate.
+- X.509 proves the cryptographic chain; `ICA_ROOT_CA_DID` binds the Root public
+  key to the governed web authority and discovery metadata. The DID is not a
+  second key and is not redundant with the certificate.
+- Keep `ICA_VC_SIGNING_PRIVATE_KEY_PEM` and
+  `ICA_VC_SIGNING_CERTIFICATE_CHAIN_PEM` in a Kubernetes Secret. The Root DID,
+  Root certificate pin and ICA `x5u` are public ConfigMap values.
+- ICA publishes its exact active chain at `/.well-known/x509.pem` and includes
+  the same `x5c`/`x5u` in DID/JWKS signing methods. Do not generate a fallback
+  self-signed production key.
+
 ## Verification workflow
 
 1. Run `npm run test:fabric:credential`.
