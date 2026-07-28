@@ -89,6 +89,7 @@ async function importFirestoreModuleDynamically(): Promise<any> {
 }
 
 export class VerificationCollectionsFirestoreAdapter implements VerificationCollectionsAdapter {
+  private static readonly LIST_PAGE_SIZE = 200;
   private firestoreClientPromise: Promise<any> | null = null;
   private readonly config: VerificationCollectionsConfig;
 
@@ -112,6 +113,40 @@ export class VerificationCollectionsFirestoreAdapter implements VerificationColl
       })();
     }
     return this.firestoreClientPromise;
+  }
+
+  /**
+   * Reads a complete Firestore collection in deterministic document-id pages.
+   *
+   * ICA callers resolve current credentials, DID bindings and discovery data
+   * after loading the collection through this adapter. Returning an arbitrary
+   * first page would make recently issued records disappear once a collection
+   * exceeds the Firestore page size.
+   */
+  private async listCollectionRecords<T>(collectionName: string): Promise<T[]> {
+    const client = await this.getClient();
+    const collection = client.collection(collectionName);
+    const records: T[] = [];
+    let lastDocument: any;
+
+    while (true) {
+      let query = collection
+        .orderBy('__name__')
+        .limit(VerificationCollectionsFirestoreAdapter.LIST_PAGE_SIZE);
+      if (lastDocument) {
+        query = query.startAfter(lastDocument);
+      }
+
+      const snapshot = await query.get();
+      records.push(...snapshot.docs.map((doc: any) => doc.data() as T));
+
+      if (snapshot.docs.length < VerificationCollectionsFirestoreAdapter.LIST_PAGE_SIZE) {
+        break;
+      }
+      lastDocument = snapshot.docs[snapshot.docs.length - 1];
+    }
+
+    return records;
   }
 
   async storeIssuedCredentials(records: IssuedCredentialRecord[]): Promise<void> {
@@ -163,27 +198,27 @@ export class VerificationCollectionsFirestoreAdapter implements VerificationColl
   }
 
   async listIssuedCredentials(): Promise<IssuedCredentialRecord[]> {
-    const client = await this.getClient();
-    const snapshot = await client.collection(resolveIssuedCredentialsCollectionName(this.config.firestoreCollectionPrefix)).limit(200).get();
-    return snapshot.docs.map((doc: any) => doc.data() as IssuedCredentialRecord);
+    return this.listCollectionRecords<IssuedCredentialRecord>(
+      resolveIssuedCredentialsCollectionName(this.config.firestoreCollectionPrefix),
+    );
   }
 
   async listEvidenceRecords(): Promise<EvidenceRecord[]> {
-    const client = await this.getClient();
-    const snapshot = await client.collection(resolveEvidenceCollectionName(this.config.firestoreCollectionPrefix)).limit(200).get();
-    return snapshot.docs.map((doc: any) => doc.data() as EvidenceRecord);
+    return this.listCollectionRecords<EvidenceRecord>(
+      resolveEvidenceCollectionName(this.config.firestoreCollectionPrefix),
+    );
   }
 
   async listDidBindings(): Promise<DidBindingRecord[]> {
-    const client = await this.getClient();
-    const snapshot = await client.collection(resolveDidBindingsCollectionName(this.config.firestoreCollectionPrefix)).limit(200).get();
-    return snapshot.docs.map((doc: any) => doc.data() as DidBindingRecord);
+    return this.listCollectionRecords<DidBindingRecord>(
+      resolveDidBindingsCollectionName(this.config.firestoreCollectionPrefix),
+    );
   }
 
   async listDidDocuments(): Promise<DidDocumentRecord[]> {
-    const client = await this.getClient();
-    const snapshot = await client.collection(resolveDidDocumentsCollectionName(this.config.firestoreCollectionPrefix)).limit(200).get();
-    return snapshot.docs.map((doc: any) => doc.data() as DidDocumentRecord);
+    return this.listCollectionRecords<DidDocumentRecord>(
+      resolveDidDocumentsCollectionName(this.config.firestoreCollectionPrefix),
+    );
   }
 }
 
