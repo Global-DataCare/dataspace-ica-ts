@@ -309,7 +309,8 @@ function signCredentialRecord(
   ) as unknown as Record<string, unknown>;
 
   if (format === 'vc+jwt') {
-    const vcJwt = convertCredentialToVcJwt(vc, signingRoute, issuerDid || undefined);
+    const vcJwt = record.representations?.vcJwt
+      || convertCredentialToVcJwt(vc, signingRoute, issuerDid || undefined);
     return { signedCredential, vcJwt };
   }
   return { signedCredential };

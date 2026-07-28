@@ -12,6 +12,7 @@ This directory is the curated documentation entrypoint for developers and operat
 6. [`04-examples-and-tests/01-examples-fixtures-and-tests.md`](./04-examples-and-tests/01-examples-fixtures-and-tests.md)
 7. [`05-operations-and-deployment/01-gke-and-security.md`](./05-operations-and-deployment/01-gke-and-security.md)
 8. [`06-architecture-and-reference/02-postgres-ipfs-gap.md`](./06-architecture-and-reference/02-postgres-ipfs-gap.md)
+9. [`06-architecture-and-reference/03-fabric-credential-registry.md`](./06-architecture-and-reference/03-fabric-credential-registry.md)
 
 ## Numbered sections
 

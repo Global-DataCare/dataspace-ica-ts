@@ -33,6 +33,13 @@ export type IssuedCredentialRecord = {
   originDataspaceDid?: string;
   dataspacePublications?: DataspacePublication[];
   contentHashSha3_384?: string;
+  /**
+   * Exact signed representations emitted at issuance. Both entries share
+   * `credentialId`; they are not independent credentials or status records.
+   */
+  representations?: {
+    vcJwt?: string;
+  };
   createdAt: string;
   updatedAt: string;
 };

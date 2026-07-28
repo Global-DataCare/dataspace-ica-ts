@@ -21,6 +21,8 @@ In this repo, the `api.*.test.ts` files are one of the best sources of truth for
   discovery/catalog output
 - [`../../test/api.backend-auth.test.ts`](../../test/api.backend-auth.test.ts)
   backend auth migration-related behavior
+- [`../../test/api.credential-ledger.test.ts`](../../test/api.credential-ledger.test.ts)
+  VC id/JWT identity, hashing, idempotency, and runtime-mode Fabric gates
 
 ## Example assets
 
@@ -47,6 +49,13 @@ Run type checking:
 
 ```bash
 npm run typecheck
+```
+
+Validate the local Fabric credential contract and local skill:
+
+```bash
+npm run test:fabric:credential
+npm run check:skills
 ```
 
 ## Suggested reading path for a new developer
