@@ -7,6 +7,12 @@
 - `GET /api-docs`
 - `GET /.well-known/did.json`
 - `GET /.well-known/jwks.json`
+- `GET /.well-known/x509.pem`
+- `GET /.well-known/x509.der`
+
+The DID/JWKS and X.509 endpoints expose the same active public ICA signing
+material. In the required trust profile, ICA validates that chain against the
+pinned Root DID before it starts listening.
 
 ## Verification flow
 

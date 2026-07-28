@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { getPreferredSigningKey } from './active-signing-keys.ts';
 
 type JsonObject = Record<string, unknown>;
 
@@ -79,11 +80,35 @@ export function loadPublishedJwks(): JsonObject | null {
  */
 export function loadPublishedX509Der(): Buffer | null {
   const baseDir = resolvePublicArtifactsDir();
-  if (!baseDir || !existsSync(baseDir)) return null;
-  const filePath = findArtifactFile(process.env.ICA_PUBLIC_X509_DER_FILE, baseDir, [
-    'x509.der',
-    'x509-chain.der',
-  ]);
-  if (!filePath) return null;
-  return readFileSync(filePath);
+  if (baseDir && existsSync(baseDir)) {
+    const filePath = findArtifactFile(process.env.ICA_PUBLIC_X509_DER_FILE, baseDir, [
+      'x509.der',
+      'x509-chain.der',
+    ]);
+    if (filePath) return readFileSync(filePath);
+  }
+  const active = getPreferredSigningKey(undefined);
+  if (!active?.x5c?.length) return null;
+  return Buffer.concat(active.x5c.map((entry) => Buffer.from(entry, 'base64')));
+}
+
+/**
+ * Loads or builds the PEM certificate chain referenced by an ICA signing
+ * method's x5u. This contains public certificates only.
+ */
+export function loadPublishedX509Pem(): string | null {
+  const baseDir = resolvePublicArtifactsDir();
+  if (baseDir && existsSync(baseDir)) {
+    const filePath = findArtifactFile(process.env.ICA_PUBLIC_X509_PEM_FILE, baseDir, [
+      'x509.pem',
+      'x509-chain.pem',
+    ]);
+    if (filePath) return readFileSync(filePath, 'utf8');
+  }
+  const active = getPreferredSigningKey(undefined);
+  if (!active?.x5c?.length) return null;
+  return active.x5c.map((entry) => {
+    const body = entry.match(/.{1,64}/g)?.join('\n') || entry;
+    return `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----`;
+  }).join('\n');
 }
