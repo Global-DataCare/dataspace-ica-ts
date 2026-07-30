@@ -92,6 +92,12 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
 - Keep `ICA_VC_SIGNING_PRIVATE_KEY_PEM` and
   `ICA_VC_SIGNING_CERTIFICATE_CHAIN_PEM` in a Kubernetes Secret. The Root DID,
   Root certificate pin and ICA `x5u` are public ConfigMap values.
+- Staging may regenerate the ICA-owned ES384 leaf private key from
+  `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE`. This seed is not a Root/issuer/Fabric
+  key. Generate its public CSR in `dataspace-ca-ts` with the explicit
+  `ica-vc-runtime-v1` derivation profile so the CSR `kid` matches the deployed
+  ICA key; never transfer the generated private PEM to the UNID Root operator.
+  An explicit `ICA_VC_SIGNING_PRIVATE_KEY_PEM` takes precedence over the seed.
 - ICA publishes its exact active chain at `/.well-known/x509.pem` and includes
   the same `x5c`/`x5u` in DID/JWKS signing methods. Do not generate a fallback
   self-signed production key.
