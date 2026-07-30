@@ -8,6 +8,7 @@ import {
   type Identity,
 } from '@hyperledger/fabric-gateway';
 import type { DidcommAttachment, VerifyBundleResponse } from '../types.ts';
+import type { IcaNetworkKind } from '../network-kind.ts';
 
 type JsonObject = Record<string, unknown>;
 type Environment = Record<string, string | undefined>;
@@ -194,8 +195,11 @@ export function buildCredentialLedgerProjection(vcInput: JsonObject, vcJwt: stri
  * ICA_CREDENTIAL_LEDGER_ENABLED so an existing staging runtime cannot acquire
  * ledger side effects accidentally.
  */
-export function loadCredentialLedgerConfigFromEnv(env: Environment = process.env): CredentialLedgerConfig {
-  const networkMode = asString(env.NETWORK_MODE).toLowerCase() || 'test';
+export function loadCredentialLedgerConfigFromEnv(
+  env: Environment = process.env,
+  requestedNetworkKind?: IcaNetworkKind,
+): CredentialLedgerConfig {
+  const networkMode = requestedNetworkKind || asString(env.NETWORK_MODE).toLowerCase() || 'test';
   const localNetwork = networkMode === 'local-network';
   const fabricCapable = localNetwork || networkMode === 'test-network' || networkMode === 'network';
   const explicitlyEnabled = parseBoolean(env.ICA_CREDENTIAL_LEDGER_ENABLED, false);

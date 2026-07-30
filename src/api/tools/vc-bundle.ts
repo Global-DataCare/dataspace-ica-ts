@@ -28,6 +28,11 @@ import {
   normalizeSameAsHash,
 } from './multihash.ts';
 import { loadIcaSecurityConfigFromEnv } from '../security-mode.ts';
+import {
+  HOST_SERVICE_FORM_VERSION,
+  HostServiceFormPdfFieldName,
+} from '../models/host-service-form-pdf-fields.ts';
+import { validateHostServiceFormPdfFields } from './host-service-form-pdf-validation.ts';
 
 function normalizeDnKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, '');
@@ -1316,6 +1321,84 @@ export function buildVerificationVcBundle(
     )
     : undefined;
 
+  let hostingServiceVc: VerifiableCredentialV2 | undefined;
+  const hostFormVersion = getAnnexField(result, HostServiceFormPdfFieldName.formVersion);
+  if (hostFormVersion) {
+    const hostFields = result.annexFormFields || {};
+    const hostValidation = validateHostServiceFormPdfFields(hostFields);
+    if (!hostValidation.valid) {
+      throw new Error(
+        `Signed host-service form is invalid: missing=${hostValidation.missingFields.join(',') || 'none'}`
+        + ` errors=${hostValidation.errors.join(' ') || 'none'}`,
+      );
+    }
+    if (hostFormVersion !== HOST_SERVICE_FORM_VERSION) {
+      throw new Error(`Unsupported host-service form version "${hostFormVersion}".`);
+    }
+    const hostUrl = getAnnexField(result, HostServiceFormPdfFieldName.url) || '';
+    const providerIdentifierValue =
+      getAnnexField(result, HostServiceFormPdfFieldName.providerIdentifierValue);
+    const providerTaxID = getAnnexField(result, HostServiceFormPdfFieldName.providerTaxID);
+    const providerIdentifierAdditionalType =
+      getAnnexField(result, HostServiceFormPdfFieldName.providerIdentifierAdditionalType);
+    const ownerEmail = getAnnexField(result, HostServiceFormPdfFieldName.ownerEmail) || '';
+    const ownerCredentialMaterial =
+      getAnnexField(result, HostServiceFormPdfFieldName.ownerHasCredentialMaterial) || '';
+    const hostSubject: Record<string, unknown> = {
+      id: hostUrl,
+      '@type': 'Service',
+      serviceType: 'DataSpaceHostingService',
+      url: hostUrl,
+      provider: {
+        '@type': 'Organization',
+        legalName: getAnnexField(result, HostServiceFormPdfFieldName.providerLegalName),
+        address: {
+          '@type': 'PostalAddress',
+          addressCountry: getAnnexField(
+            result,
+            HostServiceFormPdfFieldName.providerAddressCountry,
+          )?.toUpperCase(),
+        },
+        ...(providerTaxID ? { taxID: providerTaxID } : {}),
+        ...(providerIdentifierValue ? {
+          identifier: {
+            '@type': 'PropertyValue',
+            value: providerIdentifierValue,
+            additionalType: providerIdentifierAdditionalType,
+          },
+        } : {}),
+      },
+      owner: {
+        '@type': 'Person',
+        sameAs: normalizeSameAsHash(ownerEmail),
+        hasCredential: {
+          material: ownerCredentialMaterial,
+        },
+      },
+    };
+    const unsignedHostingServiceVc: VerifiableCredentialV2 = {
+      id: deterministicVcByContract
+        ? `urn:${dataspaceUrnNamespace}:${urnSector}:hosting-service:vc:${documentContentCid}`
+        : `urn:uuid:${randomUUID()}`,
+      '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
+      type: ['VerifiableCredential', 'ServiceCredential', 'HostingServiceCredential'],
+      issuer: issuerDid,
+      validFrom: verifierEvidenceTimestamp,
+      credentialSubject: hostSubject,
+      evidence: organizationEvidence,
+    };
+    (unsignedHostingServiceVc as unknown as Record<string, unknown>).credentialStatus = {
+      id: `${unsignedHostingServiceVc.id}#status`,
+      type: 'SimpleCredentialStatus2026',
+    };
+    hostingServiceVc = attachProofToCredential(
+      unsignedHostingServiceVc,
+      route,
+      issuerDid,
+      proofCreatedAtOverride,
+    );
+  }
+
   const entryOutcome = buildOperationOutcome(
     result.ok ? 'information' : 'warning',
     result.ok ? 'informational' : 'processing',
@@ -1353,6 +1436,21 @@ export function buildVerificationVcBundle(
         ),
       },
       resource: personVc,
+    });
+  }
+
+  if (hostingServiceVc) {
+    data.push({
+      type: 'HostingService-verification-v1.0',
+      response: {
+        status: '200',
+        outcome: buildOperationOutcome(
+          'information',
+          'informational',
+          'Hosting service credential extracted from the verified host authorization document.',
+        ),
+      },
+      resource: hostingServiceVc,
     });
   }
 

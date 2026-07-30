@@ -499,7 +499,7 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/network/policies/delegations/_upsert'],
   );
-  const verifySuccessExample = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response']
+  const verifySuccessExample = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response']
     ?.post
     ?.responses?.['200']
     ?.content?.['application/didcomm-plain+json']
@@ -555,9 +555,9 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.ok(
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/communications/_rotate'],
   );
-  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify']);
+  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify']);
   assert.ok(
-    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response'],
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response'],
   );
   const activateDidcommExamples =
     openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate']
@@ -626,7 +626,7 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   );
 
   const verifyErrorSchema =
-    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify']
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify']
       ?.post
       ?.responses?.['400']
       ?.content?.['application/didcomm-plain+json']
@@ -638,7 +638,7 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.equal(verifyErrorSchema?.properties?.body?.properties?.result, undefined);
 
   const verifyPollingExamples =
-    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response']
+    openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response']
       ?.post
       ?.responses?.['200']
       ?.content?.['application/didcomm-plain+json']

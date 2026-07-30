@@ -10,7 +10,9 @@ V2 separates two different keys during onboarding:
 
 ## Request Contract
 
-`terms/pdf/contract/_verify` now uses these inputs:
+`{networkKind}/pdf/contract/_verify` now uses these inputs. `networkKind` is
+`test`, `local-network`, `test-network` or `network`; the legacy `terms`
+segment remains an alias for `test`.
 
 1. PDF attachment:
    - `attachments[].media_type = application/pdf`

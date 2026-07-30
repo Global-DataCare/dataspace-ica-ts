@@ -1600,7 +1600,7 @@ test('buildOrganizationDidDocument attaches deterministic x5c chain in self-CA s
   assert.equal((firstJwk.x5c as string[]).length, 3);
 });
 
-test('buildOrganizationDidDocument attaches x5c chain from active ICA signing key when self-CA is disabled', (t) => {
+test('buildOrganizationDidDocument attaches x5c chain from the dedicated organization CA', (t) => {
   try {
     execFileSync('openssl', ['version'], { stdio: 'ignore' });
   } catch {
@@ -1611,6 +1611,8 @@ test('buildOrganizationDidDocument attaches x5c chain from active ICA signing ke
   const envBackup = {
     ICA_CREATE_DID_SELF_CA_STAGING: process.env.ICA_CREATE_DID_SELF_CA_STAGING,
     ICA_CREATE_DID_SELF_CA_NOT_BEFORE: process.env.ICA_CREATE_DID_SELF_CA_NOT_BEFORE,
+    ICA_ORGANIZATION_CA_PRIVATE_KEY_PEM: process.env.ICA_ORGANIZATION_CA_PRIVATE_KEY_PEM,
+    ICA_ORGANIZATION_CA_X5C_JSON: process.env.ICA_ORGANIZATION_CA_X5C_JSON,
   };
   t.after(() => {
     for (const [key, value] of Object.entries(envBackup)) {
@@ -1619,17 +1621,23 @@ test('buildOrganizationDidDocument attaches x5c chain from active ICA signing ke
     }
     resetActiveSigningKeysStateForTests();
     resetOrganizationSelfCaCacheForTests();
+    if (envBackup.ICA_ORGANIZATION_CA_PRIVATE_KEY_PEM === undefined) {
+      delete process.env.ICA_ORGANIZATION_CA_PRIVATE_KEY_PEM;
+    } else {
+      process.env.ICA_ORGANIZATION_CA_PRIVATE_KEY_PEM = envBackup.ICA_ORGANIZATION_CA_PRIVATE_KEY_PEM;
+    }
+    if (envBackup.ICA_ORGANIZATION_CA_X5C_JSON === undefined) {
+      delete process.env.ICA_ORGANIZATION_CA_X5C_JSON;
+    } else {
+      process.env.ICA_ORGANIZATION_CA_X5C_JSON = envBackup.ICA_ORGANIZATION_CA_X5C_JSON;
+    }
   });
 
   delete process.env.ICA_CREATE_DID_SELF_CA_STAGING;
   process.env.ICA_CREATE_DID_SELF_CA_NOT_BEFORE = '20240101000000Z';
   resetActiveSigningKeysStateForTests();
-  activateSigningKey({
-    kid: 'ica-issuer-es384-001',
-    alg: 'ES384',
-    privateKeyPem: ICA_ISSUER_TEST_PRIVATE_KEY_PEM,
-    x5c: [ICA_ISSUER_TEST_X5C],
-  });
+  process.env.ICA_ORGANIZATION_CA_PRIVATE_KEY_PEM = ICA_ISSUER_TEST_PRIVATE_KEY_PEM;
+  process.env.ICA_ORGANIZATION_CA_X5C_JSON = JSON.stringify([ICA_ISSUER_TEST_X5C]);
 
   const organizationPublicKeyJwk = deriveDeterministicEcPrivateKeyPem('org-ica-leaf-seed', 'P-384').publicJwk;
   const controllerPublicKeyJwk = deriveDeterministicEcPrivateKeyPem('controller-ica-leaf-seed', 'P-384').publicJwk;

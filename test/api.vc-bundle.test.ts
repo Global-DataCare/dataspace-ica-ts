@@ -4,6 +4,7 @@ import {
   serializeServiceCapabilityTokens,
   ServiceCapability,
 } from 'gdc-common-utils-ts/constants/service-capabilities';
+import { UrnPrefixes } from 'gdc-common-utils-ts/constants/urn';
 import { parseVerifyRoute } from '../src/api/path.ts';
 import { buildVerificationVcBundle } from '../src/api/server.ts';
 import { resetActiveSigningKeysStateForTests, activateSigningKey } from '../src/api/tools/active-signing-keys.ts';
@@ -224,6 +225,48 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
       process.env.ORG_PUBLIC_DOMAIN_NODE_OPERATOR = previousOrganizationDidPublicDomain;
     }
   }
+});
+
+test('buildVerificationVcBundle emits a signed HostingServiceCredential only for the signed host form', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/ica/cds-ES/v1/health-care/terms/pdf/contract/_verify');
+  assert.ok(parsed?.ok);
+  if (!parsed?.ok) return;
+  const result = {
+    ...buildTestVerifyResult('host-service'),
+    annexFormFields: {
+      formVersion: '1.0',
+      url: 'https://host.example.org',
+      'provider.legalName': 'Example Provider Foundation',
+      'provider.address.addressCountry': 'ES',
+      'provider.identifier.additionalType': 'TAX',
+      'provider.identifier.value': 'VATES-X0000000X',
+      'owner.email': 'controller@example.org',
+      'owner.hasCredential.material':
+        `${UrnPrefixes.JwkThumbprintSha256KeyId}${'A'.repeat(43)}`,
+    },
+  } as VerifyResult;
+
+  const bundle = withDefaultDidWebDomain(() =>
+    buildVerificationVcBundle(parsed.context, result, 'did:web:ica.example.org'));
+  const hostEntry = bundle.data.find((entry) => entry.type === 'HostingService-verification-v1.0');
+  assert.ok(hostEntry);
+  const credential = hostEntry.resource as Record<string, any>;
+  assert.deepEqual(
+    credential.type,
+    ['VerifiableCredential', 'ServiceCredential', 'HostingServiceCredential'],
+  );
+  assert.equal(credential.issuer, 'did:web:ica.example.org');
+  assert.equal(credential.credentialSubject.id, 'https://host.example.org');
+  assert.equal(
+    credential.credentialSubject.owner.sameAs,
+    normalizeSameAsHash('controller@example.org'),
+  );
+  assert.equal(
+    credential.credentialSubject.owner.hasCredential.material,
+    `${UrnPrefixes.JwkThumbprintSha256KeyId}${'A'.repeat(43)}`,
+  );
+  assert.ok(credential.proof?.jws);
 });
 
 test('buildVerificationVcBundle does not expose non-schema.org controller field', () => {

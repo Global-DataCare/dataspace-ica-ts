@@ -284,7 +284,7 @@ function buildSigningRoute(record: IssuedCredentialRecord): VerifyRouteContext {
     tenantId: record.tenantId,
     jurisdiction: record.jurisdiction,
     sector: record.sector,
-    section: 'terms',
+    section: record.networkKind || 'test',
     format: 'pdf',
     resourceType: asNonEmptyString(record.resourceType) || 'contract',
     action: '_verify',

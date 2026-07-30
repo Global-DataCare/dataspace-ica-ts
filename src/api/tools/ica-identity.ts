@@ -42,6 +42,7 @@ import type { SupportedSigningAlgorithm, VerifyRouteContext } from '../types.ts'
 import { getPreferredSigningKey, listActiveSigningKeys, upsertDidSigningMethods } from './active-signing-keys.ts';
 import { resolveControllerMemberDescriptor } from './controller-identity.ts';
 import { loadPublishedDidDocument, loadPublishedJwks } from './public-artifacts.ts';
+import { buildOrganizationCertificationVerificationMethod } from './organization-certification-authority.ts';
 import { useInvalidProofForTestResourceVersion } from './self-signing.ts';
 
 type JsonObject = Record<string, unknown>;
@@ -51,6 +52,7 @@ type SigningKeyMaterial = {
   publicJwk: JsonObject;
   alg: SupportedSigningAlgorithm;
   keyId: string;
+  trustedChain: boolean;
 };
 
 type ControllerVerificationMethod = {
@@ -269,7 +271,7 @@ function resolveApiBasePathTemplate(): string {
 function resolveVerifyServiceEndpoint(): string {
   const explicit = (process.env.ICA_DID_SERVICE_ENDPOINT || '').trim();
   if (explicit) return explicit;
-  return `${resolveApiBasePathTemplate()}/terms/pdf/{resourceType}/_verify`;
+  return `${resolveApiBasePathTemplate()}/{networkKind}/pdf/{resourceType}/_verify`;
 }
 
 function resolveDcatCatalogServiceEndpoint(): string {
@@ -385,7 +387,16 @@ function resolveEnvSigningKeyMaterial(): SigningKeyMaterial | null {
   const publicJwk = createPublicKey(privateKey).export({ format: 'jwk' }) as JsonObject;
   const keyId = (process.env.ICA_VC_SIGNING_KEY_ID || 'key-1').trim();
   const alg = resolveSigningAlgorithm(process.env.ICA_VC_SIGNING_ALG, publicJwk);
-  return { privateKey, publicJwk, alg, keyId };
+  return {
+    privateKey,
+    publicJwk,
+    alg,
+    keyId,
+    trustedChain: Boolean(
+      (process.env.ICA_VC_SIGNING_X5C_JSON || '').trim()
+      || (process.env.ICA_VC_SIGNING_CERTIFICATE_CHAIN_PEM || '').trim(),
+    ),
+  };
 }
 
 function resolvePreferredSigningAlgorithmFromEnv(): SupportedSigningAlgorithm | undefined {
@@ -401,9 +412,28 @@ function resolveSigningKeyMaterial(): SigningKeyMaterial | null {
       publicJwk: activated.publicJwk,
       alg: activated.alg,
       keyId: activated.kid,
+      trustedChain: Boolean(activated.x5c?.length),
     };
   }
   return resolveEnvSigningKeyMaterial();
+}
+
+function assertSigningContext(
+  route: VerifyRouteContext,
+  signing: SigningKeyMaterial | null,
+): void {
+  if (route.section === 'test') return;
+  if (!signing) {
+    throw new Error(`networkKind=${route.section} requires an active VC signing key.`);
+  }
+  if (
+    (route.section === 'test-network' || route.section === 'network')
+    && !signing.trustedChain
+  ) {
+    throw new Error(
+      `networkKind=${route.section} requires an externally chained VC signing key with x5c.`,
+    );
+  }
 }
 
 function normalizeKid(raw: string | undefined): string {
@@ -842,6 +872,11 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
   mergeSigningMethods(document, issuerDid);
   mergeCommunicationMethods(document, issuerDid);
   ensureLegacySigningX5u(document, issuerDid);
+  const organizationCertificationMethod =
+    buildOrganizationCertificationVerificationMethod(issuerDid);
+  if (organizationCertificationMethod) {
+    appendVerificationMethod(document, organizationCertificationMethod);
+  }
 
   const controllerDescriptor = resolveControllerMemberDescriptor(issuerDid);
   if (controllerDescriptor?.did) {
@@ -863,6 +898,16 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
     type: 'DataSpaceIcaVerifyService',
     serviceEndpoint,
   });
+
+  if (organizationCertificationMethod) {
+    appendDidService(document, {
+      id: `${issuerDid}#organization-certification`,
+      type: 'X509OrganizationCertificationService',
+      serviceEndpoint:
+        process.env.ICA_ORGANIZATION_CA_X5U
+        || `${issuerDid.startsWith('did:web:') ? `https://${resolveDidWebAuthority(issuerDid)}` : ''}/.well-known/organization-ca.pem`,
+    });
+  }
 
   if (dcatCatalogServiceEndpoint) {
     appendDidService(document, {
@@ -956,10 +1001,11 @@ export function attachProofToCredential(
   const canonicalVcWithoutProof = canonicalizeJsonValue(vcWithoutProof);
 
   const signing = resolveSigningKeyMaterial();
+  assertSigningContext(route, signing);
   const verificationMethod = `${issuerDid}#${signing?.keyId || (process.env.ICA_VC_SIGNING_KEY_ID || 'key-1').trim()}`;
 
   const isTestVersion = route.resourceType.toLowerCase().startsWith('test-');
-  if (isTestVersion && useInvalidProofForTestResourceVersion()) {
+  if (route.section === 'test' && isTestVersion && useInvalidProofForTestResourceVersion()) {
     return {
       ...canonicalVcWithoutProof,
       proof: {
@@ -1002,6 +1048,7 @@ export function convertCredentialToVcJwt(
 ): string {
   const issuerDid = (issuerDidInput || '').trim() || resolveIcaIssuerDid();
   const signing = resolveSigningKeyMaterial();
+  assertSigningContext(route, signing);
   const isTestVersion = route.resourceType.toLowerCase().startsWith('test-');
 
   if (!signing) {

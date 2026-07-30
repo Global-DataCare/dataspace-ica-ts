@@ -89,8 +89,17 @@ npm run typecheck
 
 ## Key Endpoints
 
-- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify`
-- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response`
+
+`networkKind` is part of the signed credential context:
+
+- `test`: test signature, no Fabric;
+- `local-network`: signature plus local Fabric anchoring;
+- `test-network`: externally chained staging signature plus Kubernetes Fabric;
+- `network`: externally chained production signature plus production Fabric.
+
+The old `terms` path segment remains an alias of `test`.
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate-response`
 - `GET /.well-known/did.json`
@@ -239,7 +248,7 @@ JSON
 )
 
 curl -i -X POST \
-  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/terms/pdf/$VERSION/_verify" \
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/test/pdf/$VERSION/_verify" \
   -H "Content-Type: application/didcomm-plain+json" \
   --data "$VERIFY_PAYLOAD"
 ```
@@ -250,12 +259,12 @@ If `Content-Type` is not `application/didcomm-plain+json`, API returns `415 Unsu
 
 ```bash
 curl -sS -X POST \
-  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/terms/pdf/$VERSION/_verify-response?thid=$THID" | jq .
+  "$BASE/$TENANT/cds-$JUR/v1/$SECTOR/test/pdf/$VERSION/_verify-response?thid=$THID" | jq .
 ```
 
 `Location` returned by `202` does not include `thid`; send `thid` in query or JSON body on every poll.
 
-Successful terminal response example (`POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response`):
+Successful terminal response example (`POST /ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response`):
 
 ```json
 {
@@ -977,8 +986,12 @@ Verification and keys:
   `/.well-known/x509.pem` URL even before its certificate chain is provisioned.
   ML-DSA and ML-KEM keys do not inherit legacy X.509 metadata.
 
-- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify`
-- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response`
+- `/.well-known/x509.pem` publishes the `CA:FALSE` chain for the ICA VC
+  signing key. `/.well-known/organization-ca.pem` publishes the separate
+  `CA:TRUE` subordinate chain used to issue organization/tenant X.509 leaves.
+  The two private keys and lifecycles must never be collapsed.
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate-response`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_rotate` (stub)
