@@ -39,12 +39,17 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
 - If `vc.id` already exists with the same logical hash, skip creation. If the
   same id has a different logical hash, fail closed.
 
-## Runtime modes
+## Route network contexts
 
-- `NETWORK_MODE=test`: compatibility mode, always no Fabric even if ledger
-  flags are present.
-- `NETWORK_MODE=local-network`: Fabric enabled on `identity-local`.
-- `NETWORK_MODE=test-network`: Fabric remains opt-in. Organization,
+- The canonical verification route is
+  `/{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify`.
+  `networkKind`, not the PDF signature policy, selects the credential signing
+  and registration context for that request.
+- `test` always means no Fabric. The historical path segment `terms` is only
+  an input alias for `test`; polling locations return the canonical `test`
+  segment.
+- `local-network` enables Fabric on `identity-local`.
+- `test-network` is the externally trusted staging context. Organization,
   representative/employee, location, identity-evidence and identity-event
   credentials for EU organizations use `identity-eu`. Natural-person
   individual credentials, identity evidence and identity events use
@@ -60,6 +65,12 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   approves/commits required chaincodes and records health/audit state. Do not
   give a portal user peer-admin certificates. Membership permits ledger
   visibility; ACL, endorsement and chaincode rules independently gate writes.
+- `network` is the production Fabric context and uses the same fail-closed
+  server-controlled channel routing rules.
+- `NETWORK_MODE=test` remains the legacy deployment default and compatibility
+  input, but it must not override an explicit canonical route `networkKind`.
+  The request can select whether anchoring applies; it can never name a Fabric
+  channel, MSP, peer, ACL or endorsement policy.
 - `ICA_CREDENTIAL_LEDGER_REQUIRED=true` makes issuance/revocation fail if the
   ledger cannot commit. Use this for the staging cutover gate.
 - Chaincode is `credential-sc` unless explicitly overridden.
@@ -84,6 +95,16 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
 - ICA publishes its exact active chain at `/.well-known/x509.pem` and includes
   the same `x5c`/`x5u` in DID/JWKS signing methods. Do not generate a fallback
   self-signed production key.
+- The VC-signing certificate is a `CA:FALSE` ES384 leaf. A different ES384
+  subordinate certificate with `CA:TRUE` and `pathLen=0` issues public
+  organization/tenant X.509 leaves and is published at
+  `/.well-known/organization-ca.pem`. Never use the VC-signing leaf as an
+  organization certificate issuer.
+- An organization/tenant certificate is not a Fabric identity. A host that
+  operates a peer proves a Root-authorized `HostingServiceCredential`, then
+  generates its Fabric MSP/TLS private keys and CSRs locally for enrollment.
+  ICA must support several governed dataspace ICA DIDs; the issuer that
+  verified a tenant remains visible in that tenant's certificate chain.
 
 ## Verification workflow
 
