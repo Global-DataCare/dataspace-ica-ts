@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.1 - 2026-07-30
+
 - Publish the canonical `/.well-known/jwks.json` projection from the ICA DID
   verification methods and advertise it from the DID document.
 - Add public-only ICA communication JWKS configuration with strict separation:

@@ -1197,7 +1197,7 @@ test('buildVerifyResponseLocation builds canonical polling path', () => {
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
   const location = buildVerifyResponseLocation(parsed.context);
-  assert.equal(location, '/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response');
+  assert.equal(location, '/acme/cds-ES/v1/animal-care/test/pdf/202630011200/_verify-response');
 });
 
 test('InMemoryVerificationJobStore tracks queued running and succeeded states', () => {
@@ -1279,7 +1279,7 @@ test('VerifyRequestManager accepted job includes thid query in Location', async 
   if (outcome.type !== 'accepted') return;
   assert.equal(
     outcome.location,
-    '/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-submit-001',
+    '/acme/cds-ES/v1/animal-care/test/pdf/202630011200/_verify-response?thid=thid-submit-001',
   );
   assert.equal(outcome.retryAfter, 5);
 });
@@ -1330,7 +1330,7 @@ test('VerifyRequestManager accepts DIDComm plaintext attachment payload', async 
   if (outcome.type !== 'accepted') return;
   assert.equal(
     outcome.location,
-    '/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-didcomm-attach-001',
+    '/acme/cds-ES/v1/animal-care/test/pdf/202630011200/_verify-response?thid=thid-didcomm-attach-001',
   );
   assert.equal(outcome.retryAfter, 5);
   await new Promise((resolve) => setImmediate(resolve));
