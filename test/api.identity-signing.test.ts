@@ -357,6 +357,50 @@ test('bootstrapSelfSigningKey auto-generates local ES384 key in self mode', asyn
   }
 });
 
+test('bootstrapSelfSigningKey attaches an offline chain to the seed-derived ICA key', async () => {
+  const previous = {
+    seed: process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE,
+    seedConfig: process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG,
+    privateKey: process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM,
+    chain: process.env.ICA_VC_SIGNING_CERTIFICATE_CHAIN_PEM,
+    x5u: process.env.ICA_VC_SIGNING_X5U,
+    keyId: process.env.ICA_VC_SIGNING_KEY_ID,
+    alg: process.env.ICA_VC_SIGNING_ALG,
+  };
+  process.env.ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE = 'synthetic-seed-backed-chain';
+  process.env.ICA_VC_PRIVATE_KEY_SEED_CONFIG = '10:1:1:48';
+  process.env.ICA_VC_SIGNING_CERTIFICATE_CHAIN_PEM =
+    '-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----';
+  process.env.ICA_VC_SIGNING_X5U = 'https://ica.example.test/.well-known/x509.pem';
+  delete process.env.ICA_VC_SIGNING_PRIVATE_KEY_PEM;
+  delete process.env.ICA_VC_SIGNING_KEY_ID;
+  delete process.env.ICA_VC_SIGNING_ALG;
+  resetActiveSigningKeysStateForTests();
+
+  try {
+    const result = await bootstrapSelfSigningKey();
+    const preferred = getPreferredSigningKey(undefined);
+    assert.equal(result.source, 'generated-seed');
+    assert.equal(result.warning, undefined);
+    assert.equal(preferred?.kid, result.kid);
+    assert.deepEqual(preferred?.x5c, ['AQID']);
+    assert.equal(preferred?.x5u, 'https://ica.example.test/.well-known/x509.pem');
+  } finally {
+    resetActiveSigningKeysStateForTests();
+    const restore = (name: string, value: string | undefined) => {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    };
+    restore('ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE', previous.seed);
+    restore('ICA_VC_PRIVATE_KEY_SEED_CONFIG', previous.seedConfig);
+    restore('ICA_VC_SIGNING_PRIVATE_KEY_PEM', previous.privateKey);
+    restore('ICA_VC_SIGNING_CERTIFICATE_CHAIN_PEM', previous.chain);
+    restore('ICA_VC_SIGNING_X5U', previous.x5u);
+    restore('ICA_VC_SIGNING_KEY_ID', previous.keyId);
+    restore('ICA_VC_SIGNING_ALG', previous.alg);
+  }
+});
+
 test('attachProofToCredential can produce valid test proof when ICA_SELF_SIGN_TEST_VALID_PROOF=true', async () => {
   const previousUnifiedFlag = process.env.ICA_ENABLE_TEST_TERMS_PREFIX;
   const previousValidProof = process.env.ICA_SELF_SIGN_TEST_VALID_PROOF;
