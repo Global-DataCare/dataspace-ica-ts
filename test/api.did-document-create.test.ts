@@ -1,6 +1,10 @@
 // Carga automática de variables de entorno desde .env.local para los tests
 import dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
+// Flow contract: DID creation always resolves an explicit node-operator domain;
+// tests use the documentation-only example domain and never depend on a local
+// developer .env file.
+process.env.DID_WEB_DOMAIN ||= 'globaldatacare.es';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';

@@ -379,7 +379,7 @@ test('VerifyResponseManager pending job returns Location with thid query', async
   if (outcome.type !== 'pending') return;
   assert.equal(
     outcome.location,
-    '/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify-response?thid=thid-pending-001',
+    '/acme/cds-ES/v1/animal-care/test/pdf/202630011200/_verify-response?thid=thid-pending-001',
   );
   assert.equal(outcome.retryAfter, 5);
 });
@@ -443,7 +443,7 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
   assert.ok(openApi.paths['/did.json']);
   assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{membertype}/{role}/{idHash}/did.json']);
   assert.ok(Array.isArray(openApi.tags));
-  assert.equal(openApi.tags.some((tag) => tag.name.endsWith('terms/pdf')), true);
+  assert.equal(openApi.tags.some((tag) => tag.name.endsWith('networkKind/pdf')), true);
   assert.equal(openApi.tags.some((tag) => tag.name.endsWith('network/evidence')), true);
   assert.equal(openApi.tags.some((tag) => tag.name.endsWith('network/policies')), true);
   assert.equal(openApi.tags.some((tag) => tag.name.endsWith('catalog/dcat3')), true);
