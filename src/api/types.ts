@@ -87,7 +87,7 @@ export interface VerifyRouteContext {
   tenantId: string;
   jurisdiction: string;
   sector: AllowedSector;
-  section: 'terms';
+  section: import('./network-kind.ts').IcaNetworkKind;
   format: 'pdf';
   resourceType: string;
   action: VerifyAction;
@@ -134,7 +134,7 @@ export interface TermsRemoveRouteContext {
   tenantId: string;
   jurisdiction: string;
   sector: AllowedSector;
-  section: 'terms';
+  section: import('./network-kind.ts').IcaNetworkKind;
   format: 'pdf';
   resourceType: string;
   action: TermsRemoveAction;

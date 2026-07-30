@@ -87,6 +87,7 @@ import {
   resolveControllerDidDocumentPath,
 } from './tools/ica-identity.ts';
 import {
+  loadPublishedOrganizationCaPem,
   loadPublishedX509Der,
   loadPublishedX509Pem,
 } from './tools/public-artifacts.ts';
@@ -669,13 +670,13 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           controllerDid: controllerDidDocument?.id || undefined,
           controllerDidPath,
           endpoints: {
-            verify: 'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify',
+            verify: 'POST /ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify',
             verifyResponse:
-              'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response',
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response',
             removeTerms:
-              'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove',
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_remove',
             removeTermsResponse:
-              'POST /ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove-response',
+              'POST /ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_remove-response',
             activate:
               'POST /ica/cds-{jurisdiction}/v1/{sector}/entity/keys/credentials/_activate',
             activateResponse:
@@ -839,6 +840,25 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           return;
         }
         sendBinary(res, 200, Buffer.from(x509Pem), 'application/pem-certificate-chain');
+        return;
+      }
+
+      if (pathname === '/.well-known/organization-ca.pem') {
+        if (method !== 'GET') {
+          sendMethodNotAllowed(res, 'GET');
+          return;
+        }
+        const organizationCaPem = loadPublishedOrganizationCaPem();
+        if (!organizationCaPem) {
+          sendJson(res, 404, { issue: 'ICA organization certification CA is not configured' });
+          return;
+        }
+        sendBinary(
+          res,
+          200,
+          Buffer.from(organizationCaPem),
+          'application/pem-certificate-chain',
+        );
         return;
       }
 

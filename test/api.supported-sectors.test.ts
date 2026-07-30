@@ -202,7 +202,7 @@ test('buildIcaVerifyOpenApiSpec documents ICA configuration discovery', async ()
       ?.examples?.versionDoc?.value as { icaConfiguration?: string } | undefined;
     assert.equal(versionDoc?.icaConfiguration, '/.well-known/ica-configuration');
 
-    const verifySectorParam = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify']
+    const verifySectorParam = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify']
       ?.post
       ?.parameters
       ?.find((parameter: any) => parameter?.name === 'sector') as { schema?: { enum?: string[] } } | undefined;
@@ -218,7 +218,7 @@ test('buildIcaVerifyOpenApiSpec leaves sector as free-form string when ICA_SUPPO
   await withSupportedSectorsEnv('*', async () => {
     await withDataspaceTitleEnv('PROCUREDATA', async () => {
       const openApi = buildIcaVerifyOpenApiSpec();
-    const verifySectorParam = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify']
+    const verifySectorParam = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify']
       ?.post
       ?.parameters
       ?.find((parameter: any) => parameter?.name === 'sector') as { schema?: { type?: string; enum?: string[]; example?: string } } | undefined;

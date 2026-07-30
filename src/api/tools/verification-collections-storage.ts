@@ -153,6 +153,7 @@ function extractCredentialRecords(
       tenantId: route.tenantId,
       jurisdiction: route.jurisdiction.toUpperCase(),
       sector: route.sector,
+      networkKind: route.section,
       resourceType: route.resourceType,
       thid,
       credentialType: credentialType || 'VerifiableCredential',

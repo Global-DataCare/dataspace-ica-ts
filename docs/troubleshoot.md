@@ -93,9 +93,14 @@ Las rutas de verificación de ICA están en v1 bajo:
 Eso significa que, en logs, debes buscar especialmente requests a:
 
 ```text
-/ica/cds-ES/v1/.../terms/pdf/.../_verify
-/ica/cds-ES/v1/.../terms/pdf/.../_verify-response
+/ica/cds-ES/v1/.../{networkKind}/pdf/.../_verify
+/ica/cds-ES/v1/.../{networkKind}/pdf/.../_verify-response
 ```
+
+Use `test`, `local-network`, `test-network` or `network` for
+`{networkKind}`. Historical requests with `terms` are accepted as the `test`
+alias and their polling location is returned with the canonical `test`
+segment.
 
 Filtros rápidos:
 

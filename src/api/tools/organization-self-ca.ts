@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { computeRfc7638JwkThumbprint } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type { SupportedSigningAlgorithm } from '../types.ts';
-import { getActiveSigningKeyByAlg } from './active-signing-keys.ts';
+import { loadOrganizationCertificationAuthority } from './organization-certification-authority.ts';
 
 type JsonObject = Record<string, unknown>;
 
@@ -603,8 +603,8 @@ function maybeAttachOrganizationIcaIssuedX5c(input: {
     return input.publicKeyJwk;
   }
 
-  const activeIssuer = getActiveSigningKeyByAlg('ES384');
-  if (!activeIssuer?.x5c?.length) {
+  const activeIssuer = loadOrganizationCertificationAuthority();
+  if (!activeIssuer?.x5c.length) {
     return input.publicKeyJwk;
   }
 

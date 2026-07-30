@@ -520,6 +520,6 @@ test('filterProviderDatasetsByActiveDidDocuments hides removed organizations fro
 
 test('OpenAPI publishes _remove and _remove-response endpoints', () => {
   const openApi = buildIcaVerifyOpenApiSpec({ serverUrl: 'http://localhost:3310' });
-  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove']);
-  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove-response']);
+  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_remove']);
+  assert.ok(openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_remove-response']);
 });

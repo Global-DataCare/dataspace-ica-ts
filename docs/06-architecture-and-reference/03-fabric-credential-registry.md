@@ -112,10 +112,21 @@ Expected result: two active assets. Repeating the same deterministic PDF keeps
 the same two asset ids. Revoking one id changes that asset once and covers both
 of its representations.
 
-## Staging migration: test to test-network
+## Route context migration: test to test-network
 
 Do not reinterpret the current `NETWORK_MODE=test` deployment. It remains the
-legacy no-Fabric profile.
+legacy no-Fabric default. The canonical PDF path carries a typed
+`networkKind`:
+
+```text
+/{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify
+```
+
+`test` is no-Fabric, `local-network` anchors locally, `test-network` anchors in
+staging, and `network` anchors in production. `terms` remains an accepted alias
+for `test`, but response locations are canonicalized to `test`. This path
+value selects the VC signing/registration context; checking the electronic
+signatures in the PDF is a separate operation.
 
 Use a parallel staging deployment and progress through these gates:
 
@@ -149,7 +160,8 @@ Use a parallel staging deployment and progress through these gates:
 The current ICA runtime accepts one configured channel per deployment. A
 separate individual profile uses `ICA_CREDENTIAL_LEDGER_CHANNEL=identity-global`
 until typed server-side multi-channel routing is implemented. A request may
-never choose the Fabric channel.
+choose the typed anchoring context but may never choose the Fabric channel,
+MSP, peer, ACL or endorsement policy.
 
 There is no automatic backfill in this change. Existing credentials issued in
 legacy `test` should be inventoried and either reissued deterministically or
@@ -164,3 +176,18 @@ is the trust-anchor/ICA authorization lifecycle (CA certificates, ICA signing
 keys and revocation), in a separate typed asset model. X.509 material in an ICA
 or organization DID document supports key validation; it does not replace the
 per-credential issuance and revocation registry described here.
+
+The ICA has two public X.509 roles which must not share a certificate:
+
+- an ES384 `CA:FALSE` leaf signs VCs and is published through
+  `/.well-known/x509.pem`;
+- a dedicated ES384 `CA:TRUE`, `pathLen=0` subordinate issues organization and
+  tenant leaves and is published through
+  `/.well-known/organization-ca.pem`.
+
+Neither certificate is a Fabric MSP identity. A host that operates a peer must
+first present its signed `HostingServiceCredential` and a Root governance
+decision. It then generates the MSP and TLS private keys and CSRs locally and
+enrolls against Fabric CA; no tenant receives a Fabric private key merely by
+being registered in ICA. Multiple governed dataspace ICAs are supported, and
+each tenant certificate retains the chain of the ICA that issued it.

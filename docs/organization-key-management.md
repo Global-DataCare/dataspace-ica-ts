@@ -73,4 +73,4 @@ Organization deletion should be authorized by the controller message-signing key
 
 That keeps delete semantics aligned with the same controller binding used during onboarding.
 
-The offboarding contract is documented in [`organization-terms-remove-v2.md`](./organization-terms-remove-v2.md). The preferred business endpoint is `_remove` under `terms/pdf/{resourceType}`, not a generic `_delete`.
+The offboarding contract is documented in [`organization-terms-remove-v2.md`](./organization-terms-remove-v2.md). The preferred business endpoint is `_remove` under `{networkKind}/pdf/{resourceType}`, not a generic `_delete`.

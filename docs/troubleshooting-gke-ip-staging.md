@@ -159,7 +159,7 @@ ICA_CORS_ALLOW_ORIGINS=*
 Verified with:
 
 ```bash
-curl -sk -X OPTIONS 'https://34.36.211.126/ica/cds-ES/v1/animal-care/terms/pdf/contract/_verify' \
+curl -sk -X OPTIONS 'https://34.36.211.126/ica/cds-ES/v1/animal-care/test-network/pdf/contract/_verify' \
   -H 'Origin: http://localhost:8081' \
   -H 'Access-Control-Request-Method: POST' \
   -H 'Access-Control-Request-Headers: content-type' \
@@ -372,7 +372,7 @@ gcloud compute backend-services get-health <backend-service> --global
 ### Test CORS preflight
 
 ```bash
-curl -sk -X OPTIONS 'https://34.36.211.126/ica/cds-ES/v1/animal-care/terms/pdf/contract/_verify' \
+curl -sk -X OPTIONS 'https://34.36.211.126/ica/cds-ES/v1/animal-care/test-network/pdf/contract/_verify' \
   -H 'Origin: http://localhost:8081' \
   -H 'Access-Control-Request-Method: POST' \
   -H 'Access-Control-Request-Headers: content-type' \

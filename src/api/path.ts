@@ -42,11 +42,12 @@ import {
   isSupportedJurisdiction,
 } from './supported-jurisdictions.ts';
 import { getSupportedSectorErrorMessage, isSupportedSector } from './supported-sectors.ts';
+import { parseIcaNetworkKind } from './network-kind.ts';
 
 const VERIFY_ROUTE_REGEX =
-  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/terms\/pdf\/(?<resourceType>[^/]+)\/(?<action>_verify(?:-response)?)$/i;
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/(?<networkKind>terms|test|local-network|test-network|network)\/pdf\/(?<resourceType>[^/]+)\/(?<action>_verify(?:-response)?)$/i;
 const TERMS_REMOVE_ROUTE_REGEX =
-  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/terms\/pdf\/(?<resourceType>[^/]+)\/(?<action>_remove(?:-response)?)$/i;
+  /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/(?<networkKind>terms|test|local-network|test-network|network)\/pdf\/(?<resourceType>[^/]+)\/(?<action>_remove(?:-response)?)$/i;
 const ENTITY_KEYS_ROUTE_REGEX =
   /^\/(?<tenantId>[^/]+)\/cds-(?<jurisdiction>[^/]+)\/v1\/(?<sector>[^/]+)\/entity\/keys\/(?<resourceType>credentials|communications)\/(?<action>_(?:activate(?:-response)?|rotate(?:-response)?))$/i;
 const ENTITY_DID_DOCUMENT_ROUTE_REGEX =
@@ -301,6 +302,8 @@ export function parseVerifyRoute(pathname: string): ParsedRoute | null {
   const sector = match.groups.sector.trim().toLowerCase() as AllowedSector;
   const rawResourceType = match.groups.resourceType.trim();
   const action = asAction(match.groups.action.trim());
+  const networkKind = parseIcaNetworkKind(match.groups.networkKind);
+  if (!networkKind) return { ok: false, statusCode: 400, message: 'Invalid networkKind.' };
 
   if (!tenantId) {
     return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
@@ -339,7 +342,7 @@ export function parseVerifyRoute(pathname: string): ParsedRoute | null {
       tenantId,
       jurisdiction,
       sector,
-      section: 'terms',
+      section: networkKind,
       format: 'pdf',
       resourceType: parsedResourceType.normalized,
       action,
@@ -360,6 +363,8 @@ export function parseTermsRemoveRoute(pathname: string): ParsedTermsRemoveRoute 
   const sector = match.groups.sector.trim().toLowerCase() as AllowedSector;
   const rawResourceType = match.groups.resourceType.trim();
   const action = asTermsRemoveAction(match.groups.action.trim());
+  const networkKind = parseIcaNetworkKind(match.groups.networkKind);
+  if (!networkKind) return { ok: false, statusCode: 400, message: 'Invalid networkKind.' };
 
   if (!tenantId) {
     return { ok: false, statusCode: 400, message: 'tenantId is required in path.' };
@@ -390,7 +395,7 @@ export function parseTermsRemoveRoute(pathname: string): ParsedTermsRemoveRoute 
       tenantId,
       jurisdiction,
       sector,
-      section: 'terms',
+      section: networkKind,
       format: 'pdf',
       resourceType: parsedResourceType.normalized,
       action,
@@ -402,7 +407,7 @@ export function buildTermsRemoveResponseLocation(
   context: TermsRemoveRouteContext,
   params?: Record<string, string | undefined>,
 ): string {
-  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/terms/pdf/${context.resourceType}/_remove-response`;
+  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/${context.section}/pdf/${context.resourceType}/_remove-response`;
   if (!params) return base;
   const entries = Object.entries(params).filter(([, value]) => value && value.trim());
   if (!entries.length) return base;
@@ -418,7 +423,7 @@ export function buildVerifyResponseLocation(
   context: VerifyRouteContext,
   params?: Record<string, string | undefined>,
 ): string {
-  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/terms/pdf/${context.resourceType}/_verify-response`;
+  const base = `/${context.tenantId}/cds-${context.jurisdiction}/v1/${context.sector}/${context.section}/pdf/${context.resourceType}/_verify-response`;
   if (!params) return base;
   const entries = Object.entries(params).filter(([, value]) => value && value.trim());
   if (!entries.length) return base;
