@@ -41,7 +41,7 @@ import type { VerifiableCredentialV2 } from 'gdc-common-utils-ts/models/verifiab
 import type { SupportedSigningAlgorithm, VerifyRouteContext } from '../types.ts';
 import { getPreferredSigningKey, listActiveSigningKeys, upsertDidSigningMethods } from './active-signing-keys.ts';
 import { resolveControllerMemberDescriptor } from './controller-identity.ts';
-import { loadPublishedDidDocument } from './public-artifacts.ts';
+import { loadPublishedDidDocument, loadPublishedJwks } from './public-artifacts.ts';
 import { useInvalidProofForTestResourceVersion } from './self-signing.ts';
 
 type JsonObject = Record<string, unknown>;
@@ -93,6 +93,134 @@ function tryParseJson(value: string | undefined): JsonObject | null {
   } catch {
     return null;
   }
+}
+
+function asNonEmptyString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function asJsonObject(value: unknown): JsonObject | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as JsonObject
+    : null;
+}
+
+function parseIcaCommunicationPublicJwks(): JsonObject[] {
+  const raw = (process.env.ICA_COMMUNICATION_JWKS_JSON || '').trim();
+  if (!raw) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`ICA_COMMUNICATION_JWKS_JSON must be valid JSON: ${(error as Error).message}`);
+  }
+  const document = asJsonObject(parsed);
+  if (!document || !Array.isArray(document.keys)) {
+    throw new Error('ICA_COMMUNICATION_JWKS_JSON must be a JWKS object with keys[].');
+  }
+
+  const seenKids = new Set<string>();
+  return document.keys.map((candidate, index) => {
+    const key = asJsonObject(candidate);
+    if (!key) {
+      throw new Error(`ICA_COMMUNICATION_JWKS_JSON keys[${index}] must be a JWK object.`);
+    }
+    const privateMembers = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k', 'priv', 'secretKey', 'secretKeyBytes', 'dBytes'];
+    const exposedPrivateMember = privateMembers.find((member) => key[member] !== undefined);
+    if (exposedPrivateMember) {
+      throw new Error(
+        `ICA_COMMUNICATION_JWKS_JSON keys[${index}] must be public-only; remove "${exposedPrivateMember}".`,
+      );
+    }
+
+    const kid = asNonEmptyString(key.kid);
+    if (!kid) throw new Error(`ICA_COMMUNICATION_JWKS_JSON keys[${index}].kid is required.`);
+    if (seenKids.has(kid)) throw new Error(`ICA_COMMUNICATION_JWKS_JSON contains duplicate kid "${kid}".`);
+    seenKids.add(kid);
+
+    const alg = asNonEmptyString(key.alg);
+    const crv = asNonEmptyString(key.crv);
+    if (alg === 'ML-DSA-44') {
+      if (key.kty !== 'AKP' || !asNonEmptyString(key.pub)) {
+        throw new Error(
+          `ICA_COMMUNICATION_JWKS_JSON keys[${index}] ML-DSA-44 requires kty="AKP" and public "pub".`,
+        );
+      }
+      return { ...key, kid, kty: 'AKP', alg: 'ML-DSA-44', use: 'sig', purposes: ['didcomm-sign'] };
+    }
+    if (crv === 'ML-KEM-768' || alg === 'ML-KEM-768') {
+      if (key.kty !== 'OKP' || crv !== 'ML-KEM-768' || !asNonEmptyString(key.x)) {
+        throw new Error(
+          `ICA_COMMUNICATION_JWKS_JSON keys[${index}] ML-KEM-768 requires kty="OKP", crv="ML-KEM-768" and public "x".`,
+        );
+      }
+      return {
+        ...key,
+        kid,
+        kty: 'OKP',
+        crv: 'ML-KEM-768',
+        alg: 'ML-KEM-768',
+        use: 'enc',
+        purposes: ['didcomm-enc'],
+      };
+    }
+    throw new Error(
+      `ICA_COMMUNICATION_JWKS_JSON keys[${index}] must use ML-DSA-44 or ML-KEM-768.`,
+    );
+  });
+}
+
+function appendDidRelationship(document: JsonObject, relationship: 'authentication' | 'keyAgreement', methodId: string): void {
+  const values = Array.isArray(document[relationship])
+    ? [...document[relationship] as unknown[]]
+    : [];
+  if (!values.some((entry) => entry === methodId || asJsonObject(entry)?.id === methodId)) {
+    values.push(methodId);
+  }
+  document[relationship] = values;
+}
+
+function mergeCommunicationMethods(document: JsonObject, issuerDid: string): void {
+  const keys = parseIcaCommunicationPublicJwks();
+  if (!keys.length) return;
+
+  const methods = Array.isArray(document.verificationMethod)
+    ? [...document.verificationMethod as unknown[]]
+    : [];
+  const methodIds = new Set(
+    methods
+      .map((entry) => asNonEmptyString(asJsonObject(entry)?.id))
+      .filter(Boolean),
+  );
+
+  for (const publicKeyJwk of keys) {
+    const kid = asNonEmptyString(publicKeyJwk.kid);
+    const methodId = `${issuerDid}#${kid}`;
+    if (methodIds.has(methodId)) {
+      const existingMethod = methods
+        .map(asJsonObject)
+        .find((method) => asNonEmptyString(method?.id) === methodId);
+      const existingJwk = asJsonObject(existingMethod?.publicKeyJwk);
+      if (existingJwk?.alg !== publicKeyJwk.alg || existingJwk?.crv !== publicKeyJwk.crv) {
+        throw new Error(`ICA communication kid "${kid}" collides with another DID verification method.`);
+      }
+    } else {
+      methods.push({
+        id: methodId,
+        type: 'JsonWebKey2020',
+        controller: issuerDid,
+        publicKeyJwk,
+      });
+      methodIds.add(methodId);
+    }
+    if (publicKeyJwk.alg === 'ML-DSA-44') {
+      appendDidRelationship(document, 'authentication', methodId);
+    } else {
+      appendDidRelationship(document, 'keyAgreement', methodId);
+    }
+  }
+  document.verificationMethod = methods;
 }
 
 function parseOptionalJsonObject(value: string | undefined): JsonObject | undefined {
@@ -175,6 +303,41 @@ function resolveIssuerServiceEndpoint(issuerDid: string): string {
   const explicit = (process.env.ICA_DCP_ISSUER_SERVICE_ENDPOINT || '').trim();
   if (!explicit) return '';
   return explicit;
+}
+
+function resolveJwksServiceEndpoint(issuerDid: string): string {
+  const authority = resolveDidWebAuthority(issuerDid);
+  return authority
+    ? `https://${authority}/.well-known/jwks.json`
+    : '/.well-known/jwks.json';
+}
+
+function resolveLegacySigningX5u(issuerDid: string): string {
+  const explicit = (process.env.ICA_VC_SIGNING_X5U || '').trim();
+  if (explicit) return explicit;
+  const authority = resolveDidWebAuthority(issuerDid);
+  return authority
+    ? `https://${authority}/.well-known/x509.pem`
+    : '/.well-known/x509.pem';
+}
+
+function ensureLegacySigningX5u(document: JsonObject, issuerDid: string): void {
+  if (!Array.isArray(document.verificationMethod)) return;
+  const x5u = resolveLegacySigningX5u(issuerDid);
+  document.verificationMethod = (document.verificationMethod as unknown[]).map((entry) => {
+    const method = asJsonObject(entry);
+    const publicKeyJwk = asJsonObject(method?.publicKeyJwk);
+    if (!method || !publicKeyJwk || publicKeyJwk.alg !== 'ES384' || asNonEmptyString(publicKeyJwk.x5u)) {
+      return entry;
+    }
+    return {
+      ...method,
+      publicKeyJwk: {
+        ...publicKeyJwk,
+        x5u,
+      },
+    };
+  });
 }
 
 function appendDidService(document: JsonObject, service: JsonObject): void {
@@ -677,6 +840,8 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
     }
   }
   mergeSigningMethods(document, issuerDid);
+  mergeCommunicationMethods(document, issuerDid);
+  ensureLegacySigningX5u(document, issuerDid);
 
   const controllerDescriptor = resolveControllerMemberDescriptor(issuerDid);
   if (controllerDescriptor?.did) {
@@ -686,6 +851,12 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
       appendVerificationMethod(document, controllerVerificationMethod.method);
     }
   }
+
+  appendDidService(document, {
+    id: `${issuerDid}#jwks`,
+    type: 'JsonWebKeyService2020',
+    serviceEndpoint: resolveJwksServiceEndpoint(issuerDid),
+  });
 
   appendDidService(document, {
     id: `${issuerDid}#verify-terms`,
@@ -717,6 +888,30 @@ export function buildIcaDidDocument(req?: IncomingMessage): JsonObject {
   }
 
   return document;
+}
+
+export function buildIcaJwks(req?: IncomingMessage): JsonObject {
+  const published = loadPublishedJwks();
+  const publishedKeys = Array.isArray(published?.keys)
+    ? (published.keys as unknown[]).map(asJsonObject).filter((entry): entry is JsonObject => Boolean(entry))
+    : [];
+  const didDocument = buildIcaDidDocument(req);
+  const didKeys = (Array.isArray(didDocument.verificationMethod)
+    ? didDocument.verificationMethod as unknown[]
+    : [])
+    .map((method) => asJsonObject(method)?.publicKeyJwk)
+    .map(asJsonObject)
+    .filter((entry): entry is JsonObject => Boolean(entry));
+  const keys = [...publishedKeys];
+  const seenKids = new Set(keys.map((key) => asNonEmptyString(key.kid)).filter(Boolean));
+  for (const key of didKeys) {
+    const kid = asNonEmptyString(key.kid);
+    if (!kid || !seenKids.has(kid)) {
+      keys.push(key);
+      if (kid) seenKids.add(kid);
+    }
+  }
+  return { ...(published || {}), keys };
 }
 
 export function resolveControllerDidDocumentPath(req?: IncomingMessage): string | null {

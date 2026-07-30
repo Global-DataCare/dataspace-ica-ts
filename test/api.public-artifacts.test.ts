@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { createIcaApiServer } from '../src/api/server.ts';
-import { buildIcaDidDocument } from '../src/api/tools/ica-identity.ts';
+import { buildIcaDidDocument, buildIcaJwks } from '../src/api/tools/ica-identity.ts';
 
 /**
  * Flow contract: ICA serves an operator-provided DID, JWKS and exact public
@@ -154,5 +154,136 @@ test('ICA well-known endpoints can be served directly from generated public arti
       process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
     }
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('ICA publishes ML-DSA and ML-KEM separately from VC assertion methods', async () => {
+  const previousCommunicationJwks = process.env.ICA_COMMUNICATION_JWKS_JSON;
+  const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
+  const previousArtifactsDir = process.env.ICA_PUBLIC_ARTIFACTS_DIR;
+  try {
+    delete process.env.ICA_PUBLIC_ARTIFACTS_DIR;
+    process.env.ICA_DIDCOMM_ISSUER_DID = 'did:web:ica.example.com';
+    process.env.ICA_COMMUNICATION_JWKS_JSON = JSON.stringify({
+      keys: [
+        { kid: 'ica-comm-sign-1', kty: 'AKP', alg: 'ML-DSA-44', pub: 'mldsa-public' },
+        { kid: 'ica-comm-enc-1', kty: 'OKP', crv: 'ML-KEM-768', x: 'mlkem-public' },
+      ],
+    });
+
+    const server = createIcaApiServer();
+    const handler = server.listeners('request')[0] as ((req: IncomingMessage, res: ServerResponse) => Promise<void> | void);
+    const didRes = buildMockResponse();
+    await handler(buildMockRequest('/.well-known/did.json'), didRes.res);
+    const did = JSON.parse(didRes.getBodyText()) as Record<string, any>;
+
+    assert.ok(did.verificationMethod.some((method: Record<string, any>) =>
+      method.id === 'did:web:ica.example.com#ica-comm-sign-1'
+      && method.publicKeyJwk.alg === 'ML-DSA-44'
+      && method.publicKeyJwk.use === 'sig'));
+    assert.ok(did.verificationMethod.some((method: Record<string, any>) =>
+      method.id === 'did:web:ica.example.com#ica-comm-enc-1'
+      && method.publicKeyJwk.crv === 'ML-KEM-768'
+      && method.publicKeyJwk.use === 'enc'));
+    assert.ok(did.authentication.includes('did:web:ica.example.com#ica-comm-sign-1'));
+    assert.ok(did.keyAgreement.includes('did:web:ica.example.com#ica-comm-enc-1'));
+    assert.ok(!(did.assertionMethod || []).includes('did:web:ica.example.com#ica-comm-sign-1'));
+    assert.ok(did.service.some((service: Record<string, unknown>) =>
+      service.id === 'did:web:ica.example.com#jwks'
+      && service.serviceEndpoint === 'https://ica.example.com/.well-known/jwks.json'));
+
+    const jwksRes = buildMockResponse();
+    await handler(buildMockRequest('/.well-known/jwks.json'), jwksRes.res);
+    const jwks = JSON.parse(jwksRes.getBodyText()) as Record<string, any>;
+    assert.ok(jwks.keys.some((key: Record<string, unknown>) => key.kid === 'ica-comm-sign-1'));
+    assert.ok(jwks.keys.some((key: Record<string, unknown>) => key.kid === 'ica-comm-enc-1'));
+  } finally {
+    if (previousCommunicationJwks === undefined) delete process.env.ICA_COMMUNICATION_JWKS_JSON;
+    else process.env.ICA_COMMUNICATION_JWKS_JSON = previousCommunicationJwks;
+    if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
+    else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
+    if (previousArtifactsDir === undefined) delete process.env.ICA_PUBLIC_ARTIFACTS_DIR;
+    else process.env.ICA_PUBLIC_ARTIFACTS_DIR = previousArtifactsDir;
+  }
+});
+
+test('ICA rejects private or unsupported communication key material', () => {
+  const previousCommunicationJwks = process.env.ICA_COMMUNICATION_JWKS_JSON;
+  try {
+    process.env.ICA_COMMUNICATION_JWKS_JSON = JSON.stringify({
+      keys: [{ kid: 'leaked', kty: 'OKP', crv: 'ML-KEM-768', x: 'public', d: 'private' }],
+    });
+    assert.throws(() => buildIcaDidDocument(), /must be public-only/);
+
+    process.env.ICA_COMMUNICATION_JWKS_JSON = JSON.stringify({
+      keys: [{ kid: 'legacy', kty: 'EC', crv: 'P-384', x: 'x', y: 'y' }],
+    });
+    assert.throws(() => buildIcaDidDocument(), /must use ML-DSA-44 or ML-KEM-768/);
+  } finally {
+    if (previousCommunicationJwks === undefined) delete process.env.ICA_COMMUNICATION_JWKS_JSON;
+    else process.env.ICA_COMMUNICATION_JWKS_JSON = previousCommunicationJwks;
+  }
+});
+
+test('ICA publishes x5u only on the legacy ES384 key before certificate provisioning', () => {
+  const previousDocument = process.env.ICA_DID_DOCUMENT_JSON;
+  const previousIssuerDid = process.env.ICA_DIDCOMM_ISSUER_DID;
+  const previousCommunicationJwks = process.env.ICA_COMMUNICATION_JWKS_JSON;
+  const previousX5u = process.env.ICA_VC_SIGNING_X5U;
+  const previousArtifactsDir = process.env.ICA_PUBLIC_ARTIFACTS_DIR;
+  try {
+    delete process.env.ICA_PUBLIC_ARTIFACTS_DIR;
+    delete process.env.ICA_VC_SIGNING_X5U;
+    process.env.ICA_DIDCOMM_ISSUER_DID = 'did:web:ica.example.com';
+    process.env.ICA_DID_DOCUMENT_JSON = JSON.stringify({
+      id: 'did:web:ica.example.com',
+      verificationMethod: [{
+        id: 'did:web:ica.example.com#legacy',
+        controller: 'did:web:ica.example.com',
+        type: 'JsonWebKey2020',
+        publicKeyJwk: {
+          kid: 'legacy',
+          kty: 'EC',
+          crv: 'P-384',
+          alg: 'ES384',
+          use: 'sig',
+          x: 'legacy-x',
+          y: 'legacy-y',
+        },
+      }],
+      assertionMethod: ['did:web:ica.example.com#legacy'],
+    });
+    process.env.ICA_COMMUNICATION_JWKS_JSON = JSON.stringify({
+      keys: [
+        { kid: 'pqc-sign', kty: 'AKP', alg: 'ML-DSA-44', pub: 'pqc-sign-public' },
+        { kid: 'pqc-enc', kty: 'OKP', crv: 'ML-KEM-768', x: 'pqc-enc-public' },
+      ],
+    });
+
+    const did = buildIcaDidDocument() as Record<string, any>;
+    const keys = did.verificationMethod.map((method: Record<string, any>) => method.publicKeyJwk);
+    assert.equal(
+      keys.find((key: Record<string, unknown>) => key.alg === 'ES384')?.x5u,
+      'https://ica.example.com/.well-known/x509.pem',
+    );
+    assert.equal(keys.find((key: Record<string, unknown>) => key.alg === 'ML-DSA-44')?.x5u, undefined);
+    assert.equal(keys.find((key: Record<string, unknown>) => key.alg === 'ML-KEM-768')?.x5u, undefined);
+
+    const jwks = buildIcaJwks() as Record<string, any>;
+    assert.equal(jwks.keys.find((key: Record<string, unknown>) => key.alg === 'ES384')?.x5u,
+      'https://ica.example.com/.well-known/x509.pem');
+    assert.equal(jwks.keys.find((key: Record<string, unknown>) => key.alg === 'ML-DSA-44')?.x5u, undefined);
+    assert.equal(jwks.keys.find((key: Record<string, unknown>) => key.alg === 'ML-KEM-768')?.x5u, undefined);
+  } finally {
+    if (previousDocument === undefined) delete process.env.ICA_DID_DOCUMENT_JSON;
+    else process.env.ICA_DID_DOCUMENT_JSON = previousDocument;
+    if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
+    else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
+    if (previousCommunicationJwks === undefined) delete process.env.ICA_COMMUNICATION_JWKS_JSON;
+    else process.env.ICA_COMMUNICATION_JWKS_JSON = previousCommunicationJwks;
+    if (previousX5u === undefined) delete process.env.ICA_VC_SIGNING_X5U;
+    else process.env.ICA_VC_SIGNING_X5U = previousX5u;
+    if (previousArtifactsDir === undefined) delete process.env.ICA_PUBLIC_ARTIFACTS_DIR;
+    else process.env.ICA_PUBLIC_ARTIFACTS_DIR = previousArtifactsDir;
   }
 });
