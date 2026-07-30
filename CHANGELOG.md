@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.2.2 - 2026-07-30
+
+- Allow the existing deterministic ICA VC seed to remain the private-key
+  custody mechanism when an offline-issued `x5c` chain is configured, exposing
+  that exact chain and `x5u` through the active DID/JWKS signing method.
+- Document the explicit `dataspace-ca-ts` runtime-compatible CSR profile and
+  clarify that the ICA seed never derives a Root, issuer or Fabric key.
+
 ## 1.2.1 - 2026-07-30
 
 - Publish the canonical `/.well-known/jwks.json` projection from the ICA DID
