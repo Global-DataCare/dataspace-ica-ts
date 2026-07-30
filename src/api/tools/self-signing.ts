@@ -302,6 +302,16 @@ export async function bootstrapSelfSigningKey(): Promise<BootstrapResult> {
     : generatePrivateKeyPem(alg);
   const generatedKid = configuredKid || buildKidFromPrivateKeyPem(privateKeyPem);
   installRuntimeEnvSigningKey(privateKeyPem, alg, generatedKid);
+  const certificateChainPem = loadIcaSigningCertificateChainFromEnv();
+  if (certificateChainPem.length) {
+    activateSigningKey({
+      kid: generatedKid,
+      alg,
+      privateKeyPem,
+      x5c: certificateChainPem.map(certificatePemToX5c),
+      x5u: String(process.env.ICA_VC_SIGNING_X5U || '').trim() || undefined,
+    });
+  }
 
   return {
     enabled: true,
@@ -309,8 +319,10 @@ export async function bootstrapSelfSigningKey(): Promise<BootstrapResult> {
     alg,
     kid: generatedKid,
     source: seedPassphrase ? 'generated-seed' : 'generated-random',
-    warning: explicitSelfSign
-      ? 'Self-signing key is active; signatures are not chained to an external CA.'
-      : 'No VC signing key configured; generated local self-signing key (not chained to external CA).',
+    warning: certificateChainPem.length
+      ? undefined
+      : explicitSelfSign
+        ? 'Self-signing key is active; signatures are not chained to an external CA.'
+        : 'No VC signing key configured; generated local self-signing key (not chained to external CA).',
   };
 }
