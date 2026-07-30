@@ -83,14 +83,15 @@ import {
 import {
   buildControllerDidDocument,
   buildIcaDidDocument,
+  buildIcaJwks,
   resolveControllerDidDocumentPath,
 } from './tools/ica-identity.ts';
 import {
-  loadPublishedJwks,
   loadPublishedX509Der,
   loadPublishedX509Pem,
 } from './tools/public-artifacts.ts';
 import { validateIcaSigningTrustFromEnv } from './tools/ica-root-trust.ts';
+import { bootstrapIcaCommunicationKeys } from './tools/ica-communication-keys.ts';
 import { bootstrapSelfSigningKey } from './tools/self-signing.ts';
 import { getConfiguredSupportedJurisdictionIds } from './supported-jurisdictions.ts';
 import { getSupportedSectorCodings, getSupportedSectorsLanguage } from './supported-sectors.ts';
@@ -809,16 +810,7 @@ export function createIcaApiServer(options: IcaApiServerOptions = {}) {
           sendMethodNotAllowed(res, 'GET');
           return;
         }
-        const publishedJwks = loadPublishedJwks();
-        const didDocument = publishedJwks ? undefined : buildIcaDidDocument(req);
-        const jwks = publishedJwks || {
-          keys: (Array.isArray(didDocument?.verificationMethod)
-            ? didDocument.verificationMethod as Array<Record<string, unknown>>
-            : [])
-            .map((method) => method.publicKeyJwk)
-            .filter((jwk) => Boolean(jwk && typeof jwk === 'object')),
-        };
-        sendJson(res, 200, jwks);
+        sendJson(res, 200, buildIcaJwks(req));
         return;
       }
 
@@ -1892,6 +1884,14 @@ export async function startIcaApiServer(options: IcaApiServerOptions = {}) {
     if (selfBootstrap.warning) {
       console.warn(`WARNING: ${selfBootstrap.warning}`);
     }
+  }
+  const communicationBootstrap = await bootstrapIcaCommunicationKeys();
+  if (communicationBootstrap.enabled) {
+    console.log(
+      `ICA PQC communication identity ready source=${communicationBootstrap.source}`
+      + `${communicationBootstrap.signingKid ? ` signingKid=${communicationBootstrap.signingKid}` : ''}`
+      + `${communicationBootstrap.encryptionKid ? ` encryptionKid=${communicationBootstrap.encryptionKid}` : ''}.`,
+    );
   }
   const signingTrust = await validateIcaSigningTrustFromEnv();
   if (signingTrust.validated) {
