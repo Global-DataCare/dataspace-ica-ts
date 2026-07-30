@@ -956,10 +956,26 @@ Discovery:
 - `GET /openapi.json`
 - `GET /api-docs`
 - `GET /.well-known/did.json`
+- `GET /.well-known/jwks.json`
 - `GET /did.json`
 - `GET /ica/cds-{jurisdiction}/v1/{sector}/{membertype}/{role}/{idHash}/did.json` (controller/member DID when configured)
 
 Verification and keys:
+
+- The ICA VC issuer key remains a separate `ES384` verification method under
+  `assertionMethod`.
+- `ICA_COMMUNICATION_JWKS_JSON` accepts public-only `ML-DSA-44` and
+  `ML-KEM-768` keys. The former is published under `authentication`, the latter
+  under `keyAgreement`, and both are included in `/.well-known/jwks.json`.
+- `ICA_COMMUNICATION_KEY_SEED_PASSPHRASE` derives both keypairs
+  deterministically with separate domains and keeps their private bytes in the
+  runtime identity. If absent, the existing VC seed is used only as the root
+  input for those distinct derivations.
+- Private JWK members and secret key bytes are rejected; they belong in the
+  runtime wallet/KMS, never in the DID document or public JWKS.
+- Only the legacy `ES384` JWK publishes `x5u`, defaulting to the canonical
+  `/.well-known/x509.pem` URL even before its certificate chain is provisioned.
+  ML-DSA and ML-KEM keys do not inherit legacy X.509 metadata.
 
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response`
