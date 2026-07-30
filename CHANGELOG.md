@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Publish the canonical `/.well-known/jwks.json` projection from the ICA DID
+  verification methods and advertise it from the DID document.
+- Add public-only ICA communication JWKS configuration with strict separation:
+  `ML-DSA-44` under `authentication`, `ML-KEM-768` under `keyAgreement`, while
+  legacy `ES384` VC issuance remains under `assertionMethod`.
+- Bootstrap deterministic, domain-separated ICA communication keypairs from a
+  dedicated runtime seed, with a staging-compatible fallback to the existing VC
+  seed; private ML-DSA/ML-KEM material remains in runtime memory.
+- Publish the canonical `x5u` placeholder exclusively on the legacy `ES384`
+  verification key in both DID and JWKS; PQC keys remain free of X.509 metadata
+  until a separate PQC certificate contract exists.
+
 ## 1.2.0 - 2026-07-29
 
 - Added fail-closed ICA signing bootstrap validation that binds the configured

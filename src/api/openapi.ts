@@ -2140,11 +2140,11 @@ export function buildIcaVerifyOpenApiSpec(
       '/.well-known/jwks.json': {
         get: {
           tags: ['01 discovery'],
-          summary: 'Get ICA signing JWKS',
-          description: 'Returns the active public signing JWKs with the exact x5c/x5u chain loaded during offline CA activation.',
+          summary: 'Get ICA public JWKS',
+          description: 'Returns the active ES384 VC verification keys and the configured ML-DSA/ML-KEM communication public keys.',
           responses: {
             '200': {
-              description: 'ICA public signing keys.',
+              description: 'ICA public VC-signing and communication keys.',
               content: {
                 'application/json': {
                   schema: {
