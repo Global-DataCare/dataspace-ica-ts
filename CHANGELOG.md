@@ -13,6 +13,18 @@
 - Publish the canonical `x5u` placeholder exclusively on the legacy `ES384`
   verification key in both DID and JWKS; PQC keys remain free of X.509 metadata
   until a separate PQC certificate contract exists.
+- Separate the ICA `CA:FALSE` VC-signing identity from a dedicated `CA:TRUE`
+  organization certification authority, publish the latter in the ICA DID and
+  at `/.well-known/organization-ca.pem`, and refuse to issue tenant X.509
+  leaves from a non-CA certificate.
+- Replace the canonical PDF route section `terms` with typed `networkKind`
+  values (`test`, `local-network`, `test-network`, `network`), retain `terms`
+  as an alias of `test`, and select Fabric anchoring per request rather than
+  from one process-global mode.
+- Require an active signing key outside `test` and an externally chained
+  `x5c` signing identity for `test-network` and `network`.
+- Emit a signed schema.org `HostingServiceCredential` when the verified PDF
+  contains the complete versioned host-service form.
 
 ## 1.2.0 - 2026-07-29
 

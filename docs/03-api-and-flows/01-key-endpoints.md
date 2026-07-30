@@ -16,8 +16,11 @@ pinned Root DID before it starts listening.
 
 ## Verification flow
 
-- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify`
-- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify`
+- `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response`
+
+`networkKind` is `test`, `local-network`, `test-network` or `network`. The
+legacy `terms` segment remains accepted as an alias of `test`.
 
 Purpose:
 

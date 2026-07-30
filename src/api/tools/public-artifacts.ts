@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { getPreferredSigningKey } from './active-signing-keys.ts';
+import { loadOrganizationCertificationAuthority } from './organization-certification-authority.ts';
 
 type JsonObject = Record<string, unknown>;
 
@@ -108,6 +109,20 @@ export function loadPublishedX509Pem(): string | null {
   const active = getPreferredSigningKey(undefined);
   if (!active?.x5c?.length) return null;
   return active.x5c.map((entry) => {
+    const body = entry.match(/.{1,64}/g)?.join('\n') || entry;
+    return `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----`;
+  }).join('\n');
+}
+
+/**
+ * Publishes only the dedicated `CA:TRUE` chain used to issue organization
+ * leaves. It is deliberately distinct from the ICA VC-signing `CA:FALSE`
+ * chain served at `/.well-known/x509.pem`.
+ */
+export function loadPublishedOrganizationCaPem(): string | null {
+  const authority = loadOrganizationCertificationAuthority();
+  if (!authority?.x5c.length) return null;
+  return authority.x5c.map((entry) => {
     const body = entry.match(/.{1,64}/g)?.join('\n') || entry;
     return `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----`;
   }).join('\n');

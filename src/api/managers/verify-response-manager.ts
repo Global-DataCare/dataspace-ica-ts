@@ -15,7 +15,10 @@ import type {
 } from '../types.ts';
 import { buildVerificationVcBundle } from '../tools/vc-bundle.ts';
 import { buildVcJwtAttachments } from '../tools/vc-jwt.ts';
-import { CredentialLedgerService } from '../tools/credential-ledger.ts';
+import {
+  CredentialLedgerService,
+  loadCredentialLedgerConfigFromEnv,
+} from '../tools/credential-ledger.ts';
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 import { resolveVcIssuerDid } from '../tools/ica-identity.ts';
@@ -32,6 +35,7 @@ function sameRoute(a: VerifyRouteContext, b: VerifyRouteContext): boolean {
     a.tenantId === b.tenantId &&
     a.jurisdiction.toLowerCase() === b.jurisdiction.toLowerCase() &&
     a.sector === b.sector &&
+    a.section === b.section &&
     a.resourceType === b.resourceType
   );
 }
@@ -372,12 +376,12 @@ function buildFailedVerifyPayload(
 export class VerifyResponseManager {
   private readonly jobStore: InMemoryVerificationJobStore;
   private readonly collectionsService: VerificationCollectionsService;
-  private readonly credentialLedgerService: CredentialLedgerService;
+  private readonly credentialLedgerService?: CredentialLedgerService;
 
   constructor(
     jobStore: InMemoryVerificationJobStore,
     collectionsService: VerificationCollectionsService = new VerificationCollectionsService(),
-    credentialLedgerService: CredentialLedgerService = new CredentialLedgerService(),
+    credentialLedgerService?: CredentialLedgerService,
   ) {
     this.jobStore = jobStore;
     this.collectionsService = collectionsService;
@@ -450,7 +454,11 @@ export class VerifyResponseManager {
       responseBody = cloneBundle(body);
       removeInternalVersionMetaFromResponse(responseBody);
       vcJwtAttachments = buildVcJwtAttachments(route, responseBody, issuerDid);
-      await this.credentialLedgerService.recordIssuedBundle(responseBody, vcJwtAttachments);
+      const credentialLedgerService = this.credentialLedgerService
+        || new CredentialLedgerService({
+          config: loadCredentialLedgerConfigFromEnv(process.env, route.section),
+        });
+      await credentialLedgerService.recordIssuedBundle(responseBody, vcJwtAttachments);
       await this.collectionsService.persistFromVerificationBundle(route, thid, body, vcJwtAttachments);
     } catch (error: unknown) {
       const message = (error as Error)?.message || 'Verification collections persistence failed.';
