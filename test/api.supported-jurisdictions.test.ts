@@ -104,7 +104,7 @@ test('buildIcaVerifyOpenApiSpec documents supported jurisdictions', async () => 
       } | undefined;
     assert.deepEqual(supportedJurisdictionsExample?.jurisdictions, ['ES', 'PT']);
 
-    const verifyJurisdictionParam = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify']
+    const verifyJurisdictionParam = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify']
       ?.post
       ?.parameters
       ?.find((parameter: any) => parameter?.name === 'jurisdiction') as { schema?: { enum?: string[] } } | undefined;

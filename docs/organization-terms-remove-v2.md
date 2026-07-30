@@ -18,8 +18,8 @@ It is not a generic hard-delete endpoint. It means:
 ## Endpoint
 
 ```text
-POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove
-POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove-response
+POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_remove
+POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_remove-response
 ```
 
 ## Authorization Model

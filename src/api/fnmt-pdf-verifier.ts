@@ -1046,7 +1046,7 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
             tenantId: this.config.templatePreloadTenantId,
             jurisdiction,
             sector,
-            section: 'terms',
+            section: 'test',
             format: 'pdf',
             resourceType,
             action: '_verify',

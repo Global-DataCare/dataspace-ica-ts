@@ -21,6 +21,7 @@ export type IssuedCredentialRecord = {
   tenantId: string;
   jurisdiction: string;
   sector: string;
+  networkKind?: import('../../network-kind.ts').IcaNetworkKind;
   resourceType: string;
   thid: string;
   credentialType: string;

@@ -446,7 +446,7 @@ const DCAT_DISCOVERY_CATALOG_EXAMPLE = {
       '@type': 'dcat:DataService',
       'dcterms:title': 'DataSpaceIcaVerifyService',
       'dcterms:identifier': 'did:web:localhost%3A3310#verify-terms',
-      'dcat:endpointURL': 'https://ica.example.org/ica/cds-ES/v1/{sector}/terms/pdf/{resourceType}/_verify',
+      'dcat:endpointURL': 'https://ica.example.org/ica/cds-ES/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify',
     },
     {
       '@id': 'did:web:localhost%3A3310#dsp-catalog-service',
@@ -1429,7 +1429,7 @@ const VERIFY_RESPONSE_FAILED_EXAMPLE = {
           tenantId: 'ica',
           jurisdiction: 'ES',
           sector: 'animal-care',
-          section: 'terms',
+          section: 'test',
           format: 'pdf',
           resourceType: '202603051133',
           status: 'failed',
@@ -1943,6 +1943,18 @@ export function buildIcaVerifyOpenApiSpec(
         enum: supportedSectorIds,
         example: supportedSectorExample,
       } as const;
+  const networkKindParameter = {
+    name: 'networkKind',
+    in: 'path',
+    required: true,
+    schema: {
+      type: 'string',
+      enum: ['test', 'local-network', 'test-network', 'network'],
+      example: 'test-network',
+    },
+    description:
+      'VC signing and registration context: test has no Fabric; local-network anchors locally; test-network anchors staging; network anchors production. Legacy "terms" is accepted as an alias of test but is not canonical.',
+  } as const;
   const supportedSectorCodings = getSupportedSectorCodings();
   const supportedSectorsLanguage = getSupportedSectorsLanguage();
   const spec = {
@@ -1960,7 +1972,7 @@ export function buildIcaVerifyOpenApiSpec(
         description: 'Service metadata and DID document endpoints.',
       },
       {
-        name: '02 terms/pdf',
+        name: '02 networkKind/pdf',
         description: 'FNMT PDF verification flow (_verify / _verify-response).',
       },
       {
@@ -2074,7 +2086,7 @@ export function buildIcaVerifyOpenApiSpec(
                           {
                             id: 'did:web:localhost%3A3310#verify-terms',
                             type: 'DataSpaceIcaVerifyService',
-                            serviceEndpoint: '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify',
+                            serviceEndpoint: '/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify',
                           },
                           {
                             id: 'did:web:localhost%3A3310#dsp-catalog-service',
@@ -2115,7 +2127,7 @@ export function buildIcaVerifyOpenApiSpec(
                           {
                             id: 'did:web:localhost%3A3310#verify-terms',
                             type: 'DataSpaceIcaVerifyService',
-                            serviceEndpoint: '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify',
+                            serviceEndpoint: '/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify',
                           },
                           {
                             id: 'did:web:localhost%3A3310#dsp-catalog-service',
@@ -4990,9 +5002,9 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
-      '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify': {
+      '/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify': {
         post: {
-          tags: ['02 terms/pdf'],
+          tags: ['02 networkKind/pdf'],
           summary: 'Submit PDF verification job',
           description:
             'Starts an async PDF verification job and returns polling location in headers.\n\n'
@@ -5019,6 +5031,7 @@ export function buildIcaVerifyOpenApiSpec(
             + '**Swagger UI**\n'
             + '- known Dropbox share links in `attachments[].data.links` are normalized from `dl=0` to `dl=1` before sending',
           parameters: [
+            networkKindParameter,
             {
               name: 'jurisdiction',
               in: 'path',
@@ -5301,9 +5314,9 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
-      '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove': {
+      '/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_remove': {
         post: {
-          tags: ['02 terms/pdf'],
+          tags: ['02 networkKind/pdf'],
           summary: 'Remove accepted organization terms asynchronously',
           description:
             'Starts async removal of accepted organization terms for an onboarded organization.\n\n'
@@ -5329,6 +5342,7 @@ export function buildIcaVerifyOpenApiSpec(
             + '**Polling**\n'
             + '- poll `_remove-response` with the same `thid`',
           parameters: [
+            networkKindParameter,
             {
               name: 'jurisdiction',
               in: 'path',
@@ -5408,7 +5422,7 @@ export function buildIcaVerifyOpenApiSpec(
                 Location: {
                   schema: { type: 'string' },
                   description:
-                    'Polling endpoint URL including the generated `thid` query parameter, for example `/ica/cds-ES/v1/animal-care/terms/pdf/contract/_remove-response?thid=thid-remove-001`.',
+                    'Polling endpoint URL including the generated `thid` query parameter, for example `/ica/cds-ES/v1/animal-care/test/pdf/contract/_remove-response?thid=thid-remove-001`.',
                 },
                 'Retry-After': {
                   schema: { type: 'string' },
@@ -5945,11 +5959,12 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
-      '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_remove-response': {
+      '/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_remove-response': {
         post: {
-          tags: ['02 terms/pdf'],
+          tags: ['02 networkKind/pdf'],
           summary: 'Poll organization terms removal result',
           parameters: [
+            networkKindParameter,
             {
               name: 'jurisdiction',
               in: 'path',
@@ -6360,9 +6375,9 @@ export function buildIcaVerifyOpenApiSpec(
           },
         },
       },
-      '/ica/cds-{jurisdiction}/v1/{sector}/terms/pdf/{resourceType}/_verify-response': {
+      '/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response': {
         post: {
-          tags: ['02 terms/pdf'],
+          tags: ['02 networkKind/pdf'],
           summary: 'Poll async verification result',
           description:
             'Returns the verification result.\n\n'
@@ -6379,6 +6394,7 @@ export function buildIcaVerifyOpenApiSpec(
             + '- `getOrganizationKeyMaterialFromVerifyResponse()` reads organization bootstrap keys\n'
             + '- `getControllerBindingPublicKeyFromVerifyResponse()` reads the controller binding key',
           parameters: [
+            networkKindParameter,
             {
               name: 'jurisdiction',
               in: 'path',
