@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.3 - 2026-08-09
+
 - Move environment-specific maintenance, GKE, IAM, discovery and incident
   runbooks into the private ICA operations repository; retain only generic
   parameterized deployment guidance and manifests in this source repository.
