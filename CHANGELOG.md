@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Move environment-specific maintenance, GKE, IAM, discovery and incident
+  runbooks into the private ICA operations repository; retain only generic
+  parameterized deployment guidance and manifests in this source repository.
+- Reuse `gdc-common-utils-ts` for compatibility-preserving deterministic EC
+  bootstrap, RFC 7638 key identifiers, controller alias multihashes and
+  extensible membership-scope validation.
+- Remove the historical product scope allowlist. Deployments may pass
+  `--allowed-sectors`; otherwise any valid
+  `<service-category>:<membership-profile>` value is accepted.
+- Remove product-specific local Fabric env paths and live staging addresses
+  from package scripts.
+
+- Preserve a stable controller DID plus additional public JWKS from `_verify`
+  through DID `_create`, reject binding changes/private members/duplicates, and
+  use the stable controller DID in the organization DID. Multikey controllers
+  require an explicit DID; the single-key `did:key` fallback remains compatible.
+
 ## 1.2.2 - 2026-07-30
 
 - Allow the existing deterministic ICA VC seed to remain the private-key
@@ -46,7 +63,7 @@
 - Loaded offline-issued `x5c`/chain material into the active signing method,
   published it through dynamic DID/JWKS output, and exposed the public chain at
   `/.well-known/x509.pem` and `/.well-known/x509.der`.
-- Documented the static `did:web:ca.unid.online` Root boundary and Kubernetes
+- Documented the deployment-configured offline Root DID boundary and Kubernetes
   Secret/ConfigMap split without deploying or changing staging infrastructure.
 
 ## 1.1.8 - 2026-07-28
@@ -63,10 +80,8 @@
 - Matched every VC-JWT attachment to its logical credential by the shared
   `credentialId` instead of relying on attachment order.
 - Updated to `gdc-common-utils-ts@^2.3.8`.
-- Recorded the countersigned Fundación UNID contract hashes, historical
-  `onehealth-research` credential ids/timestamps and the verified boundary
-  between the current Firestore/GCS-only ICA deployments and the Accuro/UNID
-  Fabric peers.
+- Recorded a tenant-specific countersigned contract and Fabric inspection in
+  tenant-owned operational evidence rather than the generic ICA repository.
 
 ## 1.1.7 - 2026-07-28
 
@@ -98,10 +113,9 @@
 - Fixed production image packaging by tracking every runtime module under
   `src/api/tools/**`; the generic local `tools/` ignore rule had excluded four
   modules imported by the API server and produced a non-starting image.
-- Documented the authoritative split-project staging topology: GKE, Ingress and
-  `34.175.75.120` remain in `globaldatacare-test`, while the ICA image,
-  Firestore, GCS and runtime identities remain in `globaldatacare-ica-dev`;
-  this is not a pending persistence migration.
+- Documented the supported split-project staging topology while keeping
+  environment-specific project, address and identity values in the private
+  operations repository.
 
 ## 1.1.4 - 2026-07-28
 
@@ -145,8 +159,8 @@
 - Organization credentials now publish the canonical schema.org
   `PropertyValue` registration identifier. Explicit `identifierType/value`
   wins; otherwise ICA derives VAT/TAX from the signed tax field.
-- Added the reproducible GKE HTTPS profile for `ica.globaldatacare.es`:
-  - the active `34.175.75.120` address remains the public endpoint
+- Added a reproducible GKE HTTPS profile:
+  - a reserved deployment address remains the public endpoint
   - `ingress-nginx` terminates TLS and proxies to the internal ICA service
   - `cert-manager` obtains and renews the Let's Encrypt certificate
   - the canonical DID authority and OpenAPI origin are configured separately
@@ -276,7 +290,7 @@
 # 0.8.7 - 2026-03-30
 
 - Fixed `_verify` submit-time 502 behind ingress by deferring heavy visible text/OCR extraction to async job execution (post-`202`) when `ICA_VERIFY_DEFER_VISIBLE_EXTRACTION=true`.
-- Added `ICA_VERIFY_DEFER_VISIBLE_EXTRACTION=true` to ProcureData deploy/local env files so fallback extraction still runs, but no longer blocks `_verify` request response.
+- Added `ICA_VERIFY_DEFER_VISIBLE_EXTRACTION=true` to deployment-specific env files so fallback extraction still runs, but no longer blocks `_verify` request response.
 
 # 0.8.6 - 2026-03-30
 
@@ -360,7 +374,7 @@
 
 - Fixed organization tax ID normalization in VC generation to emit VAT format (`VATES-<id>` for ES) instead of `ES-<id>` fallbacks when identity comes from annex/PDF fields.
 - Fixed discovery export VAT folder normalization to avoid `VATES-ES-...` directory names and keep canonical `VATES-...`.
-- Updated tests for ProcureData/natural-person certificate flows to assert canonical VAT output.
+- Updated procurement/natural-person certificate flow tests to assert canonical VAT output.
 
 # 0.7.1 – 2026-03-26
 

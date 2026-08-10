@@ -35,7 +35,7 @@ Generate deterministic ICA VC-signing key material and ICA DID artifacts:
 node ./bin/ica-cli.js ica:bootstrap \
   --domain ica.example.com \
   --jurisdiction ES \
-  --scope onehealth:ica \
+  --scope dataspace:ica \
   --alg ES384 \
   --scrypt 17:8:1:48 \
   --salt ica-signing-salt-v1 \

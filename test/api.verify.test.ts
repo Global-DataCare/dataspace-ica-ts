@@ -1376,12 +1376,27 @@ test('VerifyRequestManager captures controller binding from verify body and keep
         {
           resource: {
             controller: {
+              did: 'did:web:people.example:controllers:controller-alpha',
+              sameAs: 'controller.alpha@example.org',
               publicKeyJwk: {
                 kty: 'EC',
                 crv: 'P-384',
                 x: 'controller-x',
                 y: 'controller-y',
                 kid: 'controller-es384-001',
+              },
+              jwks: {
+                keys: [
+                  {
+                    kty: 'EC', crv: 'secp256k1', x: 'pontus-x', y: 'pontus-y',
+                    alg: 'ES256K', use: 'sig', kid: 'controller-pontus-x-legacy',
+                    purposes: ['pontus-x-publication'],
+                  },
+                  {
+                    kty: 'AKP', alg: 'ML-DSA-65', pub: 'controller-pqc-public',
+                    use: 'sig', kid: 'controller-mldsa65', purposes: ['controller-admin'],
+                  },
+                ],
               },
             },
           },
@@ -1425,6 +1440,12 @@ test('VerifyRequestManager captures controller binding from verify body and keep
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(capturedSubmission?.controllerPublicKeyJwk?.kid, 'controller-es384-001');
   assert.equal(capturedSubmission?.controllerPublicKeyJwk?.x, 'controller-x');
+  assert.equal(capturedSubmission?.controllerDid, 'did:web:people.example:controllers:controller-alpha');
+  assert.equal(capturedSubmission?.controllerSameAs, normalizeSameAsHash('controller.alpha@example.org'));
+  assert.deepEqual(capturedSubmission?.controllerJwks?.keys.map((key) => key.kid), [
+    'controller-pontus-x-legacy',
+    'controller-mldsa65',
+  ]);
   assert.equal(capturedSubmission?.organizationPublicKeyJwk?.alg, 'ES384');
   assert.equal(capturedSubmission?.organizationPublicKeyJwk?.x, 'org-x');
 });
@@ -2034,7 +2055,7 @@ test('buildVerificationVcBundle (promoter-only signature): emits Person VC when 
   }
 });
 
-test('buildVerificationVcBundle (promoter-only signature): maps ProcureData-style person fields from annex form', () => {
+test('buildVerificationVcBundle (promoter-only signature): maps procurement-style person fields from annex form', () => {
   const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
   process.env.DID_WEB_DOMAIN = 'did:web:localhost';
   try {
@@ -2044,7 +2065,7 @@ test('buildVerificationVcBundle (promoter-only signature): maps ProcureData-styl
     if (!parsed.ok) return;
 
     const result: VerifyResult = {
-      ...buildTestVerifyResult('promoter-only-procuredata-fields'),
+      ...buildTestVerifyResult('promoter-only-procurement-fields'),
       signerSubject: 'CN=Verifier Signer,O=Verifier Org,OID.2.5.4.97=VATES-TSTVERIFIERA1,C=ES',
       verifierVatId: 'VATES-TSTVERIFIERA1',
       annexFormFields: {
@@ -2069,7 +2090,7 @@ test('buildVerificationVcBundle (promoter-only signature): maps ProcureData-styl
   }
 });
 
-test('buildVerificationVcBundle (natural-person certificate): generates both credentials using ProcureData form for organization', () => {
+test('buildVerificationVcBundle (natural-person certificate): generates both credentials using procurement form for organization', () => {
   const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
   process.env.DID_WEB_DOMAIN = 'did:web:localhost';
   try {
@@ -2079,7 +2100,7 @@ test('buildVerificationVcBundle (natural-person certificate): generates both cre
     if (!parsed.ok) return;
 
     const result: VerifyResult = {
-      ...buildTestVerifyResult('natural-person-cert-procuredata'),
+      ...buildTestVerifyResult('natural-person-cert-procurement'),
       signerSubject: 'CN=Natural Person Signer,SN=DOE,GN=JANE,serialNumber=IDCES-12345678Z,C=ES',
       verifierVatId: 'VATES-TSTVERIFIERA1',
       annexFormFields: {

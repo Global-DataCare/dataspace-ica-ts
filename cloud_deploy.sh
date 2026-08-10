@@ -34,18 +34,6 @@ process.stdout.write(String(parsed.project_id || '').trim());
 EOF
 }
 
-normalize_env_name() {
-  local raw_name="$1"
-  case "$raw_name" in
-    st-v2|stv2|staging-v2)
-      printf '%s\n' "st-v2"
-      ;;
-    *)
-      printf '%s\n' "$raw_name"
-      ;;
-  esac
-}
-
 render_manifest() {
   local manifest_path="$1"
   sed \
@@ -122,12 +110,16 @@ EOF
 
 if [[ -z "${1:-}" ]]; then
   echo "ERROR: Missing environment name."
-  echo "Usage: ./cloud_deploy.sh <demo|dev|staging|st-v2|prod> [--yes] [--allow-staging]"
+  echo "Usage: ./cloud_deploy.sh <environment> [--yes] [--allow-staging]"
   exit 1
 fi
 
 RAW_ENV_NAME="$1"
-ENV_NAME="$(normalize_env_name "$RAW_ENV_NAME")"
+if [[ ! "$RAW_ENV_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "ERROR: Invalid environment name: $RAW_ENV_NAME"
+  exit 1
+fi
+ENV_NAME="$RAW_ENV_NAME"
 CONFIRM="true"
 ALLOW_STAGING="false"
 shift
@@ -141,7 +133,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "ERROR: Unknown argument: $arg"
-      echo "Usage: ./cloud_deploy.sh <demo|dev|staging|st-v2|prod> [--yes] [--allow-staging]"
+      echo "Usage: ./cloud_deploy.sh <environment> [--yes] [--allow-staging]"
       exit 1
       ;;
   esac
@@ -155,7 +147,7 @@ fi
 
 if [[ "$ENV_NAME" == "staging" && "$ALLOW_STAGING" != "true" ]]; then
   echo "ERROR: staging deploy is protected."
-  echo "Use st-v2 for the new line, or re-run with --allow-staging if you really want staging."
+  echo "Use another configured environment, or re-run with --allow-staging if you really want staging."
   exit 1
 fi
 

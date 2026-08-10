@@ -199,6 +199,9 @@ export class VerifyRequestManager {
             ...enrichedResult,
             notes: mergedNotes,
             ...(submission.controllerPublicKeyJwk ? { controllerPublicKeyJwk: submission.controllerPublicKeyJwk } : {}),
+            ...(submission.controllerDid ? { controllerDid: submission.controllerDid } : {}),
+            ...(submission.controllerSameAs ? { controllerSameAs: submission.controllerSameAs } : {}),
+            ...(submission.controllerJwks ? { controllerJwks: submission.controllerJwks } : {}),
             ...(submission.organizationPublicKeyJwk
               ? {
                   organizationPublicKeyJwk: submission.organizationPublicKeyJwk,

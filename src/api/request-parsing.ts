@@ -368,18 +368,6 @@ function resolveControllerPublicKeyFromMeta(parsed: ParsedObject): Record<string
   );
 }
 
-function resolveControllerPublicKeyFromVerifyBody(parsedBody: ParsedObject): Record<string, unknown> | undefined {
-  const dataArray = Array.isArray(parsedBody.data) ? parsedBody.data : [];
-  const firstResource = dataArray.length > 0
-    ? asObject((dataArray[0] as Record<string, unknown>)?.resource)
-    : undefined;
-  const controller = firstResource ? asObject(firstResource.controller) : undefined;
-  return normalizeControllerPublicKeyJwk(
-    controller?.publicKeyJwk,
-    asNonEmptyString(controller?.alg) || undefined,
-  );
-}
-
 function resolveOrganizationPublicKeyFromDidcommAttachments(
   attachments: DidcommAttachment[],
 ): Record<string, unknown> | undefined {
@@ -517,12 +505,15 @@ export async function parseVerifySubmission(
       annex.warnings.push(...visibleIdentity.warnings);
     }
   }
-  const controllerPublicKeyJwk = resolveControllerPublicKeyFromVerifyBody(parsedBody)
-    || resolveControllerPublicKeyFromMeta(parsed);
-  const organizationPublicKeyJwk = resolveOrganizationPublicKeyFromDidcommAttachments(attachments);
-  
   const dataArray = Array.isArray(parsedBody.data) ? parsedBody.data : [];
   const firstResource = dataArray.length > 0 ? asObject((dataArray[0] as Record<string, unknown>)?.resource) : undefined;
+  const controllerBinding = parseCreateDidDocumentController(
+    firstResource ? firstResource.controller : undefined,
+    'body.data[0].resource',
+  );
+  const controllerPublicKeyJwk = controllerBinding.publicKeyJwk
+    || resolveControllerPublicKeyFromMeta(parsed);
+  const organizationPublicKeyJwk = resolveOrganizationPublicKeyFromDidcommAttachments(attachments);
   const organizationPayload = firstResource ? asObject(firstResource.organization) : undefined;
   const legalRepresentativePayload = firstResource ? asObject(firstResource.legalRepresentative) : undefined;
 
@@ -531,6 +522,9 @@ export async function parseVerifySubmission(
     pdfBytes,
     contentType,
     ...(controllerPublicKeyJwk ? { controllerPublicKeyJwk } : {}),
+    ...(controllerBinding.did ? { controllerDid: controllerBinding.did } : {}),
+    ...(controllerBinding.sameAs ? { controllerSameAs: controllerBinding.sameAs } : {}),
+    ...(controllerBinding.jwks ? { controllerJwks: controllerBinding.jwks } : {}),
     ...(organizationPublicKeyJwk ? { organizationPublicKeyJwk } : {}),
     ...(organizationPayload ? { organizationPayload } : {}),
     ...(legalRepresentativePayload ? { legalRepresentativePayload } : {}),
@@ -812,11 +806,13 @@ function parseCreateDidDocumentController(
   indexLabel: string,
 ): CreateDidDocumentInput['controller'] {
   const controller = asObject(rawValue) || {};
+  const did = asNonEmptyString(controller.did) || undefined;
   const publicKeyJwk = asObject(controller.publicKeyJwk);
   const alg = asNonEmptyString(controller.alg) || asNonEmptyString(publicKeyJwk?.alg) || undefined;
   const sameAs = normalizeSameAsHash(asNonEmptyString(controller.sameAs)) || undefined;
   const jwks = parseOptionalDidDocumentJwks(controller.jwks, `${indexLabel}.controller.jwks`);
   return {
+    ...(did ? { did } : {}),
     ...(sameAs ? { sameAs } : {}),
     ...(alg ? { alg: alg as SupportedSigningAlgorithm } : {}),
     ...(publicKeyJwk ? { publicKeyJwk: { ...publicKeyJwk } } : {}),

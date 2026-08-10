@@ -1867,10 +1867,6 @@ function resolveOpenApiSectorExample(
   const fromEnv = (process.env.ICA_OPENAPI_SECTOR_EXAMPLE || '').trim().toLowerCase();
   if (fromEnv) return fromEnv;
 
-  const dataspaceTitle = (process.env.DATASPACE_TITLE || '').trim().toLowerCase();
-  if (dataspaceTitle === 'procuredata') return 'retail';
-  if (dataspaceTitle === 'global-datacare') return 'health-care';
-
   if (!wildcardEnabled) {
     return supportedSectorIds[0] || 'health-care';
   }

@@ -77,8 +77,8 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
 
 ## Root CA and ICA signing trust
 
-- The Root CA is an offline authority whose public static surface is
-  `did:web:ca.unid.online`, its JWKS/X.509 chain and trust metadata. It is not
+- The Root CA is an offline authority whose public static surface is a
+  deployment-configured `did:web`, its JWKS/X.509 chain and trust metadata. It is not
   an online issuance service and its private key never enters ICA or
   Kubernetes.
 - ICA receives its own private key plus an offline-signed leaf-to-Root chain.
@@ -96,7 +96,7 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE`. This seed is not a Root/issuer/Fabric
   key. Generate its public CSR in `dataspace-ca-ts` with the explicit
   `ica-vc-runtime-v1` derivation profile so the CSR `kid` matches the deployed
-  ICA key; never transfer the generated private PEM to the UNID Root operator.
+  ICA key; never transfer the generated private PEM to the offline Root operator.
   An explicit `ICA_VC_SIGNING_PRIVATE_KEY_PEM` takes precedence over the seed.
 - ICA publishes its exact active chain at `/.well-known/x509.pem` and includes
   the same `x5c`/`x5u` in DID/JWKS signing methods. Do not generate a fallback

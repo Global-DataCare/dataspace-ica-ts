@@ -837,14 +837,14 @@ test('buildVerificationVcBundle does not duplicate the country prefix when PDF t
       signerSubject: 'CN=Jane Doe,SERIALNUMBER=12345678Z,C=ES',
       annexFormFields: {
         'organization.taxId': 'ES-B12345678',
-        'organization.legalName': 'ProcureData S.L.',
+        'organization.legalName': 'Example Procurement S.L.',
       },
     }));
 
     const organizationResource = bundle.data[0].resource as Record<string, any>;
     const organizationSubject = organizationResource.credentialSubject as Record<string, any>;
     assert.equal(organizationSubject.taxID, 'VATES-B12345678');
-    assert.equal(organizationSubject.legalName, 'PROCUREDATA S.L.');
+    assert.equal(organizationSubject.legalName, 'EXAMPLE PROCUREMENT S.L.');
   } finally {
     if (previousJurisdictions === undefined) {
       delete process.env.ICA_SUPPORTED_JURISDICTIONS;
