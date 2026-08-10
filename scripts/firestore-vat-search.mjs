@@ -4,8 +4,8 @@
  *
  * Usage:
  *   node scripts/firestore-vat-search.mjs --vat VATES-B00112233
- *   node scripts/firestore-vat-search.mjs --vat VATES-B00112233 --prefix st-v2
- *   node scripts/firestore-vat-search.mjs --vat VATES-B00112233 --project globaldatacare-ica-dev --json
+ *   node scripts/firestore-vat-search.mjs --vat VATES-B00112233 --prefix parallel-staging
+ *   node scripts/firestore-vat-search.mjs --vat VATES-B00112233 --project runtime-project --json
  */
 
 import { createRequire } from 'node:module';
@@ -14,7 +14,7 @@ function parseArgs(argv) {
   const args = {
     vat: '',
     prefix: 'dev',
-    project: 'globaldatacare-ica-dev',
+    project: process.env.FIRESTORE_PROJECT_ID || '',
     json: false,
   };
 
@@ -32,7 +32,7 @@ function parseArgs(argv) {
         'Options:',
         '  --vat <value>      VAT to search (required)',
         '  --prefix <value>   Collection prefix (default: dev)',
-        '  --project <id>     Firestore project ID (default: globaldatacare-ica-dev)',
+        '  --project <id>     Firestore project ID (or FIRESTORE_PROJECT_ID)',
         '  --json             Print raw JSON output',
       ].join('\n'));
       process.exit(0);
@@ -74,6 +74,10 @@ function buildSummary(doc) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (!args.project) {
+    console.error('ERROR: --project or FIRESTORE_PROJECT_ID is required.');
+    process.exit(1);
+  }
   if (!args.vat) {
     console.error('ERROR: --vat is required. Example: --vat VATES-B00112233');
     process.exit(1);

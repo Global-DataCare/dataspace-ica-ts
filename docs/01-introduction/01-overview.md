@@ -64,4 +64,4 @@ Current documentation boundary:
 
 - ICA docs may describe the initial animal domain as `animal-pet-global`.
 - ICA docs should not define the future veterinary taxonomy beyond that first domain.
-- Detailed veterinary segmentation belongs in `uhc-sdk-core-ts`, not in this repo.
+- Detailed veterinary segmentation belongs in a domain-extension SDK, not in this repo.

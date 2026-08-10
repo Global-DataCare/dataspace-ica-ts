@@ -119,6 +119,14 @@ function stripPrivateJwkParameters(publicKeyJwk: JsonObject): JsonObject {
   return clone;
 }
 
+function assertPublicJwk(publicKeyJwk: JsonObject, label: string): void {
+  const privateMembers = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
+  const exposed = privateMembers.find((member) => member in publicKeyJwk);
+  if (exposed) {
+    throw new Error(`${label} must not contain private JWK member "${exposed}".`);
+  }
+}
+
 function normalizeDidDocumentMethodJwk(publicKeyJwk: JsonObject, fallbackUse?: 'sig' | 'enc'): JsonObject {
   const sanitizedPublicJwk = stripPrivateJwkParameters(publicKeyJwk);
   const kid = asNonEmptyString(sanitizedPublicJwk.kid)
@@ -314,6 +322,7 @@ export function buildOrganizationDidDocument(input: {
   if (!controllerPublicKeyJwk) {
     throw new Error('controller.publicKeyJwk is required.');
   }
+  assertPublicJwk(controllerPublicKeyJwk, 'controller.publicKeyJwk');
   const organizationThumbprint = computeRfc7638JwkThumbprint(normalizeJwkForThumbprint(enrichedOrganizationPublicKeyJwk));
   const controllerThumbprint = computeRfc7638JwkThumbprint(normalizeJwkForThumbprint(controllerPublicKeyJwk));
   if (organizationThumbprint === controllerThumbprint) {
@@ -323,7 +332,28 @@ export function buildOrganizationDidDocument(input: {
   const controllerKid =
     asNonEmptyString(controllerPublicKeyJwk.kid)
     || controllerThumbprint;
-  const controllerDidKey = deriveDidKeyFromPublicJwk(controllerPublicKeyJwk);
+  const explicitControllerDid = asNonEmptyString(input.controller.did);
+  if (explicitControllerDid && !explicitControllerDid.startsWith('did:')) {
+    throw new Error('controller.did must be a DID identifier.');
+  }
+  const controllerKeys = Array.isArray(input.controller.jwks?.keys) ? input.controller.jwks.keys : [];
+  if (controllerKeys.length && !explicitControllerDid) {
+    throw new Error('controller.did is required when controller.jwks contains additional keys.');
+  }
+  const seenControllerThumbprints = new Set<string>([controllerThumbprint]);
+  for (const [index, candidate] of controllerKeys.entries()) {
+    const controllerJwk = asObject(candidate);
+    if (!controllerJwk) {
+      throw new Error(`controller.jwks.keys[${index}] must be an object.`);
+    }
+    assertPublicJwk(controllerJwk, `controller.jwks.keys[${index}]`);
+    const thumbprint = computeRfc7638JwkThumbprint(normalizeJwkForThumbprint(controllerJwk));
+    if (seenControllerThumbprints.has(thumbprint)) {
+      throw new Error(`controller.jwks.keys[${index}] duplicates another controller key.`);
+    }
+    seenControllerThumbprints.add(thumbprint);
+  }
+  const controllerDid = explicitControllerDid || deriveDidKeyFromPublicJwk(controllerPublicKeyJwk);
   const verificationMethodKid =
     asNonEmptyString(enrichedOrganizationPublicKeyJwk.kid)
     || organizationThumbprint;
@@ -382,7 +412,7 @@ export function buildOrganizationDidDocument(input: {
   const didDocument: JsonObject = {
     '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
     id: did,
-    controller: controllerDidKey,
+    controller: controllerDid,
     verificationMethod,
     assertionMethod: Array.from(assertionMethod),
     authentication: Array.from(authentication),

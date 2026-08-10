@@ -20,7 +20,7 @@ const required = [
   'credential-sc',
   'ICA_VC_SIGNING_TRUST_REQUIRED',
   'ICA_ROOT_CA_DID',
-  'did:web:ca.member.example',
+  'deployment-configured `did:web`',
   'CA:FALSE',
   'CA:TRUE',
   'HostingServiceCredential',

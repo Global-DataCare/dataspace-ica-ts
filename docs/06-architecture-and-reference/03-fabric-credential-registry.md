@@ -83,7 +83,8 @@ requires a cascade.
 From `dataspace-ica-ts`:
 
 ```bash
-npm --prefix ../gdc-unid-node-ts run local:fabric:stack -- --prepare-only
+GATEWAY_REPOSITORY=../path-to-gateway-repository
+npm --prefix "$GATEWAY_REPOSITORY" run local:fabric:stack -- --prepare-only
 npm run test:fabric:credential
 npm run fabric:credential:smoke:local
 npm run api:local:fabric
@@ -91,7 +92,7 @@ npm run api:local:fabric
 
 The sibling bootstrap creates `identity-local` and deploys `credential-sc`.
 The ICA command loads its normal local configuration plus the Fabric client
-identity generated in `../gdc-unid-node-ts/.env.local-fabric`.
+identity generated in `$GATEWAY_REPOSITORY/.env.local-fabric`.
 It replaces the container-only peer name with `localhost:7051` and keeps
 `peer0-org1` as the TLS certificate server-name override.
 The smoke writes and revokes one fixed synthetic credential, so repeated runs

@@ -106,14 +106,13 @@ test('extractTermsAnnexFormFieldsFromPdf preserves non-canonical visible organiz
   assert.equal(extracted.fields['Organization.legalName'], 'Acme Health SL');
 });
 
-const VITEMARKETING_FIXTURE_PATH =
-  path.join(os.homedir(), 'GITS', 'gdc-workspace', 'examples', 'prueba-Contrato de Adhesión PROCUREDATA_VITEMARKETING.pdf');
+const REAL_TERMS_PDF_FIXTURE_PATH = process.env.ICA_REAL_TERMS_PDF_FIXTURE || '';
 
 test(
-  'extractTermsAnnexFormFieldsFromPdf extracts visible organization identity from VITEMARKETING real fixture',
-  { skip: !existsSync(VITEMARKETING_FIXTURE_PATH) },
+  'extractTermsAnnexFormFieldsFromPdf extracts visible organization identity from an optional real fixture',
+  { skip: !REAL_TERMS_PDF_FIXTURE_PATH || !existsSync(REAL_TERMS_PDF_FIXTURE_PATH) },
   async () => {
-    const pdfBytes = await readFile(VITEMARKETING_FIXTURE_PATH);
+    const pdfBytes = await readFile(REAL_TERMS_PDF_FIXTURE_PATH);
     const extracted = await extractTermsAnnexFormFieldsFromPdf(pdfBytes);
 
     const visibleTaxIdCandidates = [

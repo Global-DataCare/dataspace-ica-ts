@@ -54,12 +54,12 @@ test('ICA well-known endpoints can be served directly from generated public arti
   try {
     const did = {
       '@context': 'https://www.w3.org/ns/did/v1',
-      id: 'did:web:test-eur-ica.member.example',
+      id: 'did:web:ica.test.example.org',
       verificationMethod: [
         {
-          id: 'did:web:test-eur-ica.member.example#sig-1',
+          id: 'did:web:ica.test.example.org#sig-1',
           type: 'JsonWebKey2020',
-          controller: 'did:web:test-eur-ica.member.example',
+          controller: 'did:web:ica.test.example.org',
           publicKeyJwk: {
             kty: 'EC',
             crv: 'P-384',
@@ -74,9 +74,9 @@ test('ICA well-known endpoints can be served directly from generated public arti
       ],
       service: [
         {
-          id: 'did:web:test-eur-ica.member.example#jwks',
+          id: 'did:web:ica.test.example.org#jwks',
           type: 'JsonWebKeyService2020',
-          serviceEndpoint: 'https://test-eur-ica.member.example/.well-known/jwks.json',
+          serviceEndpoint: 'https://ica.test.example.org/.well-known/jwks.json',
         },
       ],
     };
@@ -97,8 +97,8 @@ test('ICA well-known endpoints can be served directly from generated public arti
     const x509 = Buffer.from('0123456789abcdef', 'hex');
     const x509Pem = '-----BEGIN CERTIFICATE-----\nSYNTHETIC\n-----END CERTIFICATE-----';
 
-    writeFileSync(path.join(tempDir, 'did-test-eur-ica.member.example.json'), JSON.stringify(did, null, 2));
-    writeFileSync(path.join(tempDir, 'jwks-test-eur-ica.member.example.json'), JSON.stringify(jwks, null, 2));
+    writeFileSync(path.join(tempDir, 'did-ica.test.example.org.json'), JSON.stringify(did, null, 2));
+    writeFileSync(path.join(tempDir, 'jwks-ica.test.example.org.json'), JSON.stringify(jwks, null, 2));
     writeFileSync(path.join(tempDir, 'x509.der'), x509);
     writeFileSync(path.join(tempDir, 'x509.pem'), x509Pem);
 
@@ -114,7 +114,7 @@ test('ICA well-known endpoints can be served directly from generated public arti
     await handler(didReq, didRes.res);
     assert.equal(didRes.res.statusCode, 200);
     const didPayload = JSON.parse(didRes.getBodyText()) as Record<string, unknown>;
-    assert.equal(didPayload.id, 'did:web:test-eur-ica.member.example');
+    assert.equal(didPayload.id, 'did:web:ica.test.example.org');
 
     const jwksReq = buildMockRequest('/.well-known/jwks.json');
     const jwksRes = buildMockResponse();
@@ -135,7 +135,7 @@ test('ICA well-known endpoints can be served directly from generated public arti
     assert.equal(x509PemRes.getBodyText(), x509Pem);
 
     const builtDid = buildIcaDidDocument();
-    assert.equal(builtDid.id, 'did:web:test-eur-ica.member.example');
+    assert.equal(builtDid.id, 'did:web:ica.test.example.org');
     assert.equal(
       Array.isArray(builtDid.verificationMethod)
         && (builtDid.verificationMethod as Array<Record<string, unknown>>)[0]?.publicKeyJwk
