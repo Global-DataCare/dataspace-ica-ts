@@ -10,9 +10,8 @@ This section indexes older detailed documents that are still useful.
 
 ## Security and deployment
 
-- [`../security-gke.md`](../security-gke.md)
-- [`../troubleshooting-gke-ip-staging.md`](../troubleshooting-gke-ip-staging.md)
-- [`../troubleshoot.md`](../troubleshoot.md)
+Environment-specific security, deployment and troubleshooting material belongs
+in the operations documentation outside this source repository.
 
 ## Discovery and interoperability
 

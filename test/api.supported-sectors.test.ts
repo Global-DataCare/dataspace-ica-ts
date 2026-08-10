@@ -216,7 +216,7 @@ test('buildIcaVerifyOpenApiSpec documents ICA configuration discovery', async ()
 
 test('buildIcaVerifyOpenApiSpec leaves sector as free-form string when ICA_SUPPORTED_SECTORS is wildcard', async () => {
   await withSupportedSectorsEnv('*', async () => {
-    await withDataspaceTitleEnv('PROCUREDATA', async () => {
+    await withDataspaceTitleEnv('EXAMPLE DATASPACE', async () => {
       const openApi = buildIcaVerifyOpenApiSpec();
     const verifySectorParam = openApi.paths['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify']
       ?.post
@@ -226,7 +226,7 @@ test('buildIcaVerifyOpenApiSpec leaves sector as free-form string when ICA_SUPPO
     assert.equal(verifySectorParam?.schema?.type, 'string');
     assert.equal(verifySectorParam?.schema?.enum, undefined);
     assert.equal(verifySectorParam?.schema?.example, 'retail');
-      assert.equal(openApi.info.title, 'PROCUREDATA ICA Verification API');
+      assert.equal(openApi.info.title, 'EXAMPLE DATASPACE ICA Verification API');
 
     const serializedOpenApi = JSON.stringify(openApi);
     assert.equal(serializedOpenApi.includes('https://globaldatacare.es/didcomm/'), false);

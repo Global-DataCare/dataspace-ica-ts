@@ -116,6 +116,52 @@ const TEST_PROVIDER_ORGANIZATION_DID = buildOrganizationDidFromTaxId(
   'globaldatacare.es',
 );
 
+test('buildOrganizationDidDocument references a stable multi-key controller DID', () => {
+  const controllerDid = 'did:web:host.example.org:controllers:controller-alpha';
+  const result = buildOrganizationDidDocument({
+    did: TEST_PROVIDER_ORGANIZATION_DID,
+    organization: {
+      identifier: TEST_PROVIDER_ORGANIZATION_DID,
+      publicKeyJwk: {
+        kty: 'EC', crv: 'P-384', x: 'organization-x', y: 'organization-y', alg: 'ES384', use: 'sig',
+      },
+    },
+    controller: {
+      did: controllerDid,
+      sameAs: 'urn:multibase:zControllerHash',
+      publicKeyJwk: {
+        kty: 'EC', crv: 'P-384', x: 'controller-x', y: 'controller-y', alg: 'ES384', use: 'sig',
+      },
+      jwks: {
+        keys: [
+          { kty: 'EC', crv: 'secp256k1', x: 'pontus-x', y: 'pontus-y', alg: 'ES256K', use: 'sig' },
+          { kty: 'AKP', alg: 'ML-DSA-65', pub: 'pqc-public-key', use: 'sig' },
+        ],
+      },
+    },
+  });
+
+  assert.equal(result.didDocument.controller, controllerDid);
+  const methods = result.didDocument.verificationMethod as Array<Record<string, unknown>>;
+  assert.equal(methods.length, 1, 'controller keys belong in the referenced controller DID document');
+  assert.equal((methods[0]?.publicKeyJwk as Record<string, unknown>)?.x, 'organization-x');
+});
+
+test('buildOrganizationDidDocument requires a controller DID for additional controller keys', () => {
+  assert.throws(() => buildOrganizationDidDocument({
+    did: TEST_PROVIDER_ORGANIZATION_DID,
+    organization: {
+      identifier: TEST_PROVIDER_ORGANIZATION_DID,
+      publicKeyJwk: { kty: 'EC', crv: 'P-384', x: 'organization-x', y: 'organization-y' },
+    },
+    controller: {
+      sameAs: 'urn:multibase:zControllerHash',
+      publicKeyJwk: { kty: 'EC', crv: 'P-384', x: 'controller-x', y: 'controller-y' },
+      jwks: { keys: [{ kty: 'EC', crv: 'secp256k1', x: 'pontus-x', y: 'pontus-y' }] },
+    },
+  }), /controller\.did is required/);
+});
+
 test('parseCreateDidDocumentRoute accepts create and polling routes', () => {
   const create = parseCreateDidDocumentRoute('/ica/cds-ES/v1/animal-care/entity/did/document/_create');
   assert.ok(create);

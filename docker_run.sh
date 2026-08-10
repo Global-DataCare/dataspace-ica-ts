@@ -17,18 +17,12 @@ CONTAINER_NAME="${CONTAINER_NAME:-dataspace-ica-api}"
 
 resolve_env_file() {
   local selector="$1"
-  case "$selector" in
-    st-v2|stv2|staging-v2)
-      selector="st-v2"
-      ;;
-  esac
-
   if [[ -z "$selector" || "$selector" == "local" ]]; then
     echo "$SCRIPT_DIR/.env.local"
     return 0
   fi
 
-  if [[ "$selector" =~ ^(demo|dev|staging|st-v2|prod)$ ]]; then
+  if [[ "$selector" =~ ^[A-Za-z0-9._-]+$ && -f "$SCRIPT_DIR/.env.deploy.$selector" ]]; then
     echo "$SCRIPT_DIR/.env.deploy.$selector"
     return 0
   fi
@@ -63,7 +57,7 @@ extract_env_value() {
 ENV_SELECTOR="${1:-local}"
 if ! ENV_FILE="$(resolve_env_file "$ENV_SELECTOR")"; then
   echo "ERROR: Unable to resolve env file for '$ENV_SELECTOR'."
-  echo "Usage: ./docker_run.sh [local|demo|dev|staging|st-v2|prod|/path/to/env]"
+  echo "Usage: ./docker_run.sh [local|<environment>|/path/to/env]"
   exit 1
 fi
 

@@ -9,8 +9,8 @@ Usage:
   ./scripts/iam_grant_developers.sh \
     --members "dev1@example.com,devops@example.com" \
     --member-type user \
-    --projects "globaldatacare-ica-dev,globaldatacare-test" \
-    --billing-account "014A34-6E960C-35E085" \
+    --projects "runtime-project,cluster-project" \
+    --billing-account "000000-000000-000000" \
     --org-id "123456789012" \
     [--dry-run]
 

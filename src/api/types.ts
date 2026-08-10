@@ -334,6 +334,12 @@ export interface VerifySubmission {
    *   `credentialSubject.hasCredential.material`
    */
   controllerPublicKeyJwk?: Record<string, unknown>;
+  /** Stable controller DID that owns the complete controller keyring. */
+  controllerDid?: string;
+  /** Public controller alias retained independently from the legal representative. */
+  controllerSameAs?: string;
+  /** Additional controller-owned keys, including legacy federation and PQC keys. */
+  controllerJwks?: CreateDidDocumentJwkSet;
   organizationPublicKeyJwk?: Record<string, unknown>;
   /**
    * Optional compatibility payload used only for identity fields that are not
@@ -417,6 +423,8 @@ export interface CreateDidDocumentJwkSet {
 }
 
 export interface CreateDidDocumentControllerInput {
+  /** Stable DID for the controller actor; required for a multi-key controller. */
+  did?: string;
   sameAs?: string;
   alg?: SupportedSigningAlgorithm;
   publicKeyJwk?: Record<string, unknown>;
@@ -589,6 +597,9 @@ export interface VerifyResult {
   revocationDebug?: RevocationDebugInfo;
   auditDocument?: AuditDocumentReference;
   controllerPublicKeyJwk?: Record<string, unknown>;
+  controllerDid?: string;
+  controllerSameAs?: string;
+  controllerJwks?: CreateDidDocumentJwkSet;
   organizationPublicKeyJwk?: Record<string, unknown>;
   organizationPrivateKeyJwk?: Record<string, unknown>;
   organizationKeySource?: 'attachment' | 'generated';
@@ -894,7 +905,10 @@ export interface OperationOutcomeResource {
 export interface VerifyBundleDataEntry {
   type: string;
   resource: unknown;
+  did?: string;
+  sameAs?: string;
   publicKeyJwk?: Record<string, unknown>;
+  jwks?: CreateDidDocumentJwkSet;
   privateKeyJwk?: Record<string, unknown>;
   keySource?: 'attachment' | 'generated';
   response: {

@@ -8,14 +8,14 @@
  *
  * Usage:
  *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233
- *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233 --prefix st-v2
+ *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233 --prefix parallel-staging
  *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233 --delete
- *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233 --prefix st-v2 --project globaldatacare-ica-dev --delete
+ *   node scripts/firestore-vat-manager.mjs --vat VATES-B00112233 --prefix staging --project runtime-project --delete
  *
  * Options:
  *   --vat       VAT number to search (required). Case-insensitive.
  *   --prefix    Firestore collection prefix (default: dev)
- *   --project   GCP project ID         (default: globaldatacare-ica-dev)
+ *   --project   GCP project ID (or FIRESTORE_PROJECT_ID)
  *   --delete    Execute deletion after interactive confirmation
  *   --yes       Skip confirmation prompt (only valid with --delete)
  *   --json      Output raw JSON instead of formatted table
@@ -28,7 +28,7 @@ import { createRequire } from 'node:module';
 // Arg parsing
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const args = { vat: '', prefix: 'dev', project: 'globaldatacare-ica-dev', delete: false, yes: false, json: false };
+  const args = { vat: '', prefix: 'dev', project: process.env.FIRESTORE_PROJECT_ID || '', delete: false, yes: false, json: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--vat')        { args.vat     = argv[++i] ?? ''; continue; }
@@ -45,6 +45,10 @@ const args = parseArgs(process.argv.slice(2));
 
 if (!args.vat) {
   console.error('ERROR: --vat is required. Example: --vat VATES-B00112233');
+  process.exit(1);
+}
+if (!args.project) {
+  console.error('ERROR: --project or FIRESTORE_PROJECT_ID is required.');
   process.exit(1);
 }
 

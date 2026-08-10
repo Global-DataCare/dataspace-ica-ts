@@ -22,14 +22,14 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
 function parseArgs(argv) {
   const parsed = {
-    base: 'http://34.175.75.120',
+    base: process.env.ICA_BASE_URL || 'http://localhost:3310',
     tenant: 'ica',
     jur: 'ES',
     sector: 'health-care',
     resource: 'contract',
     pdf: '',
     vat: '',
-    project: 'globaldatacare-ica-dev',
+    project: process.env.FIRESTORE_PROJECT_ID || '',
     prefix: 'dev',
     cleanupBefore: false,
     cleanupAfter: false,
@@ -173,6 +173,9 @@ async function runVatCleanup(vat, phase) {
   const normalizedVat = String(vat || '').trim().toUpperCase();
   if (!normalizedVat) {
     return { phase, skipped: true, reason: 'VAT not available' };
+  }
+  if (!args.project) {
+    throw new Error('--project or FIRESTORE_PROJECT_ID is required for Firestore cleanup');
   }
   console.log(`\n[cleanup:${phase}] deleting Firestore documents for ${normalizedVat}`);
   const cleanupScript = path.join(scriptDir, 'firestore-vat-manager.mjs');

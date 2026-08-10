@@ -5,10 +5,10 @@
  *
  * Fuente:
  * - analiza ficheros JSON bajo:
- *   discovery/globaldatacare/ica/organization/**.json
- *   discovery/globaldatacare/ica/organization-representative/**.json
- *   discovery/globaldatacare/ica/vN/organization/**.json
- *   discovery/globaldatacare/ica/vN/organization-representative/**.json
+ *   discovery/<namespace>/ica/organization/**.json
+ *   discovery/<namespace>/ica/organization-representative/**.json
+ *   discovery/<namespace>/ica/vN/organization/**.json
+ *   discovery/<namespace>/ica/vN/organization-representative/**.json
  * - extrae evidence[type=document].attachments.url
  *
  * Salida:
@@ -153,13 +153,10 @@ function extractIpfsCid(url) {
   return '';
 }
 
-function resolveDiscoveryNamespace(project, explicitNamespace) {
+function resolveDiscoveryNamespace(_project, explicitNamespace) {
   const normalizedExplicit = asString(explicitNamespace).toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
   if (normalizedExplicit) return normalizedExplicit;
-  const p = asString(project).toLowerCase();
-  if (p.includes('procuredata')) return 'procuredata';
-  if (p.includes('globaldatacare')) return 'globaldatacare';
-  return 'globaldatacare';
+  return 'dataspace';
 }
 
 function listCredentialRoots(vcRoot) {

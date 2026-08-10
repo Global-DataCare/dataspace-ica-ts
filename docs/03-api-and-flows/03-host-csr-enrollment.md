@@ -50,7 +50,7 @@ Current documentation scope for animal onboarding:
 
 - in ICA docs, keep the animal domain described here limited to `animal-pet-global`
 - do not expand this document into future veterinary segmentation or future regional channel naming
-- those decisions belong outside ICA, primarily in `uhc-sdk-core-ts` and workspace-level architecture notes
+- those decisions belong outside ICA, primarily in domain-extension SDKs and architecture notes
 
 ## Related references
 

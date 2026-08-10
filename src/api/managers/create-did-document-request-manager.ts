@@ -45,6 +45,13 @@ function controllerPublicKeysEqual(left: JsonObject, right: JsonObject): boolean
   return stableStringifyJson(left as JsonLike) === stableStringifyJson(right as JsonLike);
 }
 
+function controllerJwkSetsEqual(
+  left: { keys: JsonObject[] },
+  right: { keys: JsonObject[] },
+): boolean {
+  return stableStringifyJson(left as unknown as JsonLike) === stableStringifyJson(right as unknown as JsonLike);
+}
+
 function equalsIgnoreCase(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
@@ -323,6 +330,26 @@ export class CreateDidDocumentRequestManager {
                 `No controller publicKeyJwk found for organization.taxID "${lookupTaxId}". Send controller.publicKeyJwk or complete _verify v2 with controller binding first.`,
               );
             }
+            const requestedControllerDid = asNonEmptyString(item.controller.did);
+            const storedControllerDid = asNonEmptyString(latestDidBinding?.controllerDid);
+            if (requestedControllerDid && storedControllerDid && requestedControllerDid !== storedControllerDid) {
+              throw new Error(
+                `controller.did must match the controller DID stored during _verify for organization.taxID "${lookupTaxId}".`,
+              );
+            }
+            const controllerDid = requestedControllerDid || storedControllerDid || undefined;
+            const requestedControllerJwks = item.controller.jwks as { keys: JsonObject[] } | undefined;
+            const storedControllerJwks = latestDidBinding?.controllerJwks;
+            if (
+              requestedControllerJwks
+              && storedControllerJwks
+              && !controllerJwkSetsEqual(requestedControllerJwks, storedControllerJwks)
+            ) {
+              throw new Error(
+                `controller.jwks must match the controller key set stored during _verify for organization.taxID "${lookupTaxId}".`,
+              );
+            }
+            const controllerJwks = requestedControllerJwks || storedControllerJwks;
             const storedOrganizationKey = resolveStoredOrganizationPublicKeyJwk(didBindingRecords, route, lookupTaxId);
             const requestedOrganizationPublicKeyJwk = item.organization.publicKeyJwk;
             const organizationPublicKeyJwk = requestedOrganizationPublicKeyJwk
@@ -339,7 +366,9 @@ export class CreateDidDocumentRequestManager {
               did,
               controller: {
                 ...item.controller,
+                ...(controllerDid ? { did: controllerDid } : {}),
                 publicKeyJwk: controllerPublicKeyJwk,
+                ...(controllerJwks ? { jwks: controllerJwks } : {}),
               },
               organization: {
                 ...item.organization,
@@ -360,8 +389,10 @@ export class CreateDidDocumentRequestManager {
               thid: submission.thid,
               taxId: lookupTaxId,
               did,
+              ...(controllerDid ? { controllerDid } : {}),
               ...(item.controller.sameAs ? { controllerSameAs: item.controller.sameAs } : {}),
               controllerPublicKeyJwk,
+              ...(controllerJwks ? { controllerJwks } : {}),
               organizationPublicKeyJwk,
               ...(selectedOrganizationKeySource ? { organizationKeySource: selectedOrganizationKeySource } : {}),
               status: 'confirmed',
@@ -378,8 +409,10 @@ export class CreateDidDocumentRequestManager {
               thid: submission.thid,
               did,
               ...(lookupTaxId ? { taxId: lookupTaxId } : {}),
+              ...(controllerDid ? { controllerDid } : {}),
               ...(item.controller.sameAs ? { controllerSameAs: item.controller.sameAs } : {}),
               controllerPublicKeyJwk,
+              ...(controllerJwks ? { controllerJwks } : {}),
               organizationPublicKeyJwk,
               didDocument: built.didDocument,
               status: 'confirmed',

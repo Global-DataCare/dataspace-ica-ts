@@ -61,5 +61,5 @@ Relevant variables:
 ## Additional references
 
 - GKE/security: [`../05-operations-and-deployment/01-gke-and-security.md`](../05-operations-and-deployment/01-gke-and-security.md)
-- Existing security deep dive: [`../security-gke.md`](../security-gke.md)
-- Existing staging troubleshooting: [`../troubleshooting-gke-ip-staging.md`](../troubleshooting-gke-ip-staging.md)
+- Environment-specific security and staging troubleshooting are maintained in
+  the operations documentation outside this source repository.
