@@ -235,13 +235,10 @@ function buildOutPath(outRoot, namespace, kind, vat, ts, collision) {
   return path.join(outRoot, namespace, 'ica', kind, vatDir, fileName);
 }
 
-function resolveDiscoveryNamespace(project, explicitNamespace) {
+function resolveDiscoveryNamespace(_project, explicitNamespace) {
   const normalizedExplicit = asString(explicitNamespace).toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
   if (normalizedExplicit) return normalizedExplicit;
-  const p = asString(project).toLowerCase();
-  if (p.includes('procuredata')) return 'procuredata';
-  if (p.includes('globaldatacare')) return 'globaldatacare';
-  return 'globaldatacare';
+  return 'dataspace';
 }
 
 function pickCredentialByType(data, typeName) {

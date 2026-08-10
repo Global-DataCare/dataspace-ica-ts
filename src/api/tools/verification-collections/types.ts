@@ -54,8 +54,10 @@ export type DidBindingRecord = {
   thid: string;
   taxId: string;
   did?: string;
+  controllerDid?: string;
   controllerSameAs?: string;
   controllerPublicKeyJwk?: JsonObject;
+  controllerJwks?: { keys: JsonObject[] };
   organizationPublicKeyJwk?: JsonObject;
   organizationKeySource?: 'attachment' | 'generated';
   status: DidBindingStatus;
@@ -75,8 +77,10 @@ export type DidDocumentRecord = {
   thid: string;
   did: string;
   taxId?: string;
+  controllerDid?: string;
   controllerSameAs?: string;
   controllerPublicKeyJwk?: JsonObject;
+  controllerJwks?: { keys: JsonObject[] };
   organizationPublicKeyJwk?: JsonObject;
   didDocument: JsonObject;
   status: DidDocumentStatus;

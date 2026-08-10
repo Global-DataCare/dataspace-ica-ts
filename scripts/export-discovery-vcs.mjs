@@ -4,13 +4,13 @@
  * a estructura discovery/ para repositorio publico.
  *
  * Estructura de salida:
- * discovery/globaldatacare/ica/organization/VATES-<VAT>/vc-contract-organization-<timestamp>.json
- * discovery/globaldatacare/ica/organization-representative/VATES-<VAT>/vc-contract-representative-<timestamp>.json
+ * discovery/<namespace>/ica/organization/VATES-<VAT>/vc-contract-organization-<timestamp>.json
+ * discovery/<namespace>/ica/organization-representative/VATES-<VAT>/vc-contract-representative-<timestamp>.json
  * discovery/logs/*.txt
  *
  * Uso:
- *   node scripts/export-discovery-vcs.mjs --project globaldatacare-ica-dev --prefix dev
- *   node scripts/export-discovery-vcs.mjs --project <project> --prefix st-v2 --outdir discovery --tenant ica
+ *   node scripts/export-discovery-vcs.mjs --project <project> --prefix dev --namespace <namespace>
+ *   node scripts/export-discovery-vcs.mjs --project <project> --prefix parallel-staging --outdir discovery --tenant ica
  */
 
 import fs from 'node:fs';
@@ -19,7 +19,7 @@ import { createRequire } from 'node:module';
 
 function parseArgs(argv) {
   const args = {
-    project: 'globaldatacare-ica-dev',
+    project: process.env.FIRESTORE_PROJECT_ID || '',
     prefix: 'dev',
     outdir: 'discovery',
     namespace: '',
@@ -53,7 +53,7 @@ function printHelp() {
       '  node scripts/export-discovery-vcs.mjs --project <gcp-project> --prefix <collection-prefix> [options]',
       '',
       'Options:',
-      '  --project <id>       Firestore project ID (default: globaldatacare-ica-dev)',
+      '  --project <id>       Firestore project ID (or FIRESTORE_PROJECT_ID)',
       '  --prefix <value>     Collection prefix (default: dev)',
       '  --outdir <path>      Output root (default: discovery)',
       '  --namespace <name>   Discovery namespace (default: inferred from project)',
@@ -208,17 +208,17 @@ function buildOutputPath(outRoot, namespace, kind, vat, timestamp, counter) {
   );
 }
 
-function resolveDiscoveryNamespace(project, explicitNamespace) {
+function resolveDiscoveryNamespace(_project, explicitNamespace) {
   const normalizedExplicit = asString(explicitNamespace).toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
   if (normalizedExplicit) return normalizedExplicit;
-  const p = asString(project).toLowerCase();
-  if (p.includes('procuredata')) return 'procuredata';
-  if (p.includes('globaldatacare')) return 'globaldatacare';
-  return 'globaldatacare';
+  return 'dataspace';
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (!args.project) {
+    throw new Error('--project or FIRESTORE_PROJECT_ID is required');
+  }
   const issuedCollection = colName(args.prefix, 'issued_credentials');
   const discoveryNamespace = resolveDiscoveryNamespace(args.project, args.namespace);
 

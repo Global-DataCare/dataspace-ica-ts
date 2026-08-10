@@ -160,6 +160,15 @@ function attachBootstrapKeysToVerificationEntries(
   if (personEntry && result.controllerPublicKeyJwk) {
     personEntry.publicKeyJwk = { ...result.controllerPublicKeyJwk };
   }
+  if (personEntry && result.controllerDid) {
+    personEntry.did = result.controllerDid;
+  }
+  if (personEntry && result.controllerSameAs) {
+    personEntry.sameAs = result.controllerSameAs;
+  }
+  if (personEntry && result.controllerJwks) {
+    personEntry.jwks = JSON.parse(JSON.stringify(result.controllerJwks));
+  }
 }
 
 async function enrichVerificationBundleWithStoredVersionState(

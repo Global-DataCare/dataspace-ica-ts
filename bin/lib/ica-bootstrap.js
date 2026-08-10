@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { normalizeDataspaceMembershipScope } from 'gdc-common-utils-ts/utils/dataspace-membership-scope';
 import {
   buildDidWebFromDomain,
   computeJwkKid,
@@ -8,15 +9,8 @@ import {
   resolvePassphrase,
 } from './bootstrap-common.js';
 
-function normalizeScope(rawScope, supportedScopes) {
-  const fallback = 'onehealth:ica';
-  const value = (rawScope || fallback).trim().toLowerCase();
-  if (!value) return fallback;
-  if (!Array.isArray(supportedScopes) || !supportedScopes.length) return value;
-  if (!supportedScopes.includes(value)) {
-    throw new Error(`Unsupported scope "${value}". Allowed: ${supportedScopes.join(', ')}`);
-  }
-  return value;
+function normalizeScope(rawScope) {
+  return normalizeDataspaceMembershipScope(rawScope || 'dataspace:ica');
 }
 
 function safeReadJson(filePath) {
@@ -129,7 +123,6 @@ export function cmdIcaBootstrap(args, deps) {
     requireArg,
     runOpenSsl,
     writeJson,
-    supportedScopes,
   } = deps;
   const writeTextFile = (filePath, content) => {
     ensureDir(path.dirname(filePath));
@@ -139,7 +132,7 @@ export function cmdIcaBootstrap(args, deps) {
   const domain = normalizeDomain(requireArg(args, 'domain'));
   const passphrase = resolvePassphrase(args, requireArg);
   const jurisdiction = requireArg(args, 'jurisdiction').toUpperCase();
-  const scope = normalizeScope(args.scope || args.sector, supportedScopes);
+  const scope = normalizeScope(args.scope || args.sector);
   const alg = (args.alg || 'ES384').trim().toUpperCase();
   if (alg !== 'ES384' && alg !== 'ES256K') {
     throw new Error('--alg must be ES384 or ES256K for deterministic seed bootstrap.');

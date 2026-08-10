@@ -175,11 +175,11 @@ Swagger UI tip:
 
 Deployment tip:
 
-- new line / second IP: `./cloud_deploy.sh st-v2 --yes`
+- deploy a named environment: `./cloud_deploy.sh <environment> --yes`
 - full dataspace bootstrap + deploy (private script): `./scripts/bootstrap-<dataspace>.private.sh`
 - generic public template: `./scripts/bootstrap-dataspace.template.sh`
 - protected legacy staging: `./cloud_deploy.sh staging --yes --allow-staging`
-- `staging` is blocked by default to reduce accidental deploys while `st-v2` is active
+- `staging` is blocked by default to reduce accidental deploys
 
 ### 1) Submit verification job (`_verify`)
 
@@ -889,7 +889,7 @@ Security notes:
 - This restriction applies only to `body.data[]` entries in `spaces`; it does
   not change `body.type` in the DIDComm/FHIR Bundle envelope.
 - For GKE runtime notes (ADC, Firestore/GCS IAM, static IP), see
-  [`docs/security-gke.md`](./docs/security-gke.md).
+  [`docs/05-operations-and-deployment/01-gke-and-security.md`](./docs/05-operations-and-deployment/01-gke-and-security.md).
 
 ## Polling Behavior
 
@@ -1143,28 +1143,29 @@ Important:
 Step-by-step guide:
 
 - [`deploy/k8s/README.md`](./deploy/k8s/README.md)
-- [`docs/security-gke.md`](./docs/security-gke.md) for runtime identity, Firestore/GCS IAM, and Workload Identity enablement
+- private operations documentation for environment-specific runtime identity,
+  Firestore/GCS IAM and Workload Identity enablement
 
 ### Service Account JSON via CLI
 
 For local Firestore/GCS testing, create a service-account key in the runtime data project, not the cluster project.
 
-Typical split in this repo:
+Typical split:
 
-- GKE cluster project: `globaldatacare-test`
-- Runtime data/artifacts project: `globaldatacare-ica-dev`
+- GKE cluster project: `<cluster-project>`
+- Runtime data/artifacts project: `<runtime-project>`
 
 List existing service accounts in the runtime project:
 
 ```bash
-gcloud iam service-accounts list --project globaldatacare-ica-dev
+gcloud iam service-accounts list --project <runtime-project>
 ```
 
 Create a dedicated service account if needed:
 
 ```bash
 gcloud iam service-accounts create dataspace-ica-local \
-  --project globaldatacare-ica-dev \
+  --project <runtime-project> \
   --display-name="dataspace-ica local runtime"
 ```
 
@@ -1172,8 +1173,8 @@ Create the JSON key file:
 
 ```bash
 gcloud iam service-accounts keys create gcp-service-account.json \
-  --project globaldatacare-ica-dev \
-  --iam-account=dataspace-ica-local@globaldatacare-ica-dev.iam.gserviceaccount.com
+  --project <runtime-project> \
+  --iam-account=dataspace-ica-local@<runtime-project>.iam.gserviceaccount.com
 ```
 
 Check that the JSON belongs to the expected runtime project:
@@ -1185,7 +1186,7 @@ node --input-type=module -e "import { readFileSync } from 'node:fs'; const j=JSO
 Expected output for this setup:
 
 ```text
-globaldatacare-ica-dev
+<runtime-project>
 ```
 
 Recommended local test flow with that file:
@@ -1275,7 +1276,7 @@ Verification behavior:
 - `ICA_VERIFY_STRICT_TEMPLATE_MATCH` (default `true`)
 - `ICA_VERIFY_TEMPLATE_MATCH_MODE` (`strict-bytes` | `logical-content`)
 - `ICA_VERIFY_DIGEST_ALGORITHM` (default `sha3-384`)
-- `VERIFIERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify verifier organizations such as Accuro/UNID)
+- `VERIFIERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify configured verifier organizations)
 - `VERIFICATION_PARTNERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify verification partners organizations)
 
 For multi-signed contract PDFs, every detected signature is still CMS/chain/revocation validated. When `VERIFIERS_VAT_LIST` is configured, `_verify` only accepts the PDF if:

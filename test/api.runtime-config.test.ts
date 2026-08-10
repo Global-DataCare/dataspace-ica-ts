@@ -64,12 +64,12 @@ test('loadAuditDocumentStorageConfigFromEnv uses STORAGE_PROVIDER and GCS_BUCKET
   withEnv(
     {
       STORAGE_PROVIDER: 'gcs',
-      GCS_BUCKET_NAME: 'globaldatacare-ica-dev',
+      GCS_BUCKET_NAME: 'example-runtime-bucket',
     },
     () => {
       const config = loadAuditDocumentStorageConfigFromEnv();
       assert.equal(config.mode, 'gcs');
-      assert.equal(config.gcsBucketName, 'globaldatacare-ica-dev');
+      assert.equal(config.gcsBucketName, 'example-runtime-bucket');
       assert.equal(config.confidentialStorageEnabled, false);
     },
   );
@@ -132,12 +132,12 @@ test('loadVerificationCollectionsConfigFromEnv uses DB_PROVIDER and FIRESTORE_PR
   withEnv(
     {
       DB_PROVIDER: 'firestore',
-      FIRESTORE_PROJECT_ID: 'globaldatacare-ica-dev',
+      FIRESTORE_PROJECT_ID: 'example-runtime-project',
     },
     () => {
       const config = loadVerificationCollectionsConfigFromEnv();
       assert.equal(config.provider, 'firestore');
-      assert.equal(config.firestoreProjectId, 'globaldatacare-ica-dev');
+      assert.equal(config.firestoreProjectId, 'example-runtime-project');
       assert.equal(resolveIssuedCredentialsCollectionName(config.firestoreCollectionPrefix), 'ica_issued_credentials');
       assert.equal(resolveEvidenceCollectionName(config.firestoreCollectionPrefix), 'ica_evidence_records');
     },

@@ -13,27 +13,11 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { parseDataspaceMembershipScopeCsv, normalizeDataspaceMembershipScope } from 'gdc-common-utils-ts/utils/dataspace-membership-scope';
 import { cmdControllerBootstrap } from './lib/controller-bootstrap.js';
 import { cmdIcaBootstrap } from './lib/ica-bootstrap.js';
 import { cmdCaPrepareSubmission } from './lib/ca-submission.js';
 import { cmdDcatAddService, cmdDcatBuildCatalog } from './lib/dcat.js';
-
-const SUPPORTED_SCOPES = [
-  'onehealth:ica',
-  'health-care:reader',
-  'health-care:provider',
-  'health-tech:provider',
-  'health-research:provider',
-  'health-research:reader',
-  'animal-care:reader',
-  'animal-care:provider',
-  'animal-research:provider',
-  'animal-research:reader',
-  'health-insurance:provider',
-  'health-insurance:reader',
-  'vet-insurance:provider',
-  'vet-insurance:reader',
-];
 
 function printHelp() {
   console.log(`
@@ -61,7 +45,7 @@ Usage:
     --root-cert <ca/root/root-cert.pem> \
     [--days 730] \
     [--ica-name onehealth-ica.accuro.es.pem] \
-    [--root-name root-unid.pem] \
+    [--root-name root-ca.pem] \
     [--requests-dir requests]
 
   ica-cli publish:client --request-id <id> --client-repo <path> [--requests-dir requests]
@@ -103,7 +87,7 @@ Usage:
   ica-cli ica:bootstrap \
     --domain <ica-domain> \
     --jurisdiction <ISO2> \
-    [--scope onehealth:ica] \
+    [--scope dataspace:ica] \
     [--passphrase <secret> | --passphrase-env <ENV_NAME>] \
     [--alg ES384] \
     [--scrypt 17:8:1:48] \
@@ -246,15 +230,8 @@ function extractDomainFromDid(didValue) {
 }
 
 function getAllowedSectors(args) {
-  const raw = typeof args['allowed-sectors'] === 'string'
-    ? args['allowed-sectors']
-    : SUPPORTED_SCOPES.join(',');
-  return new Set(
-    raw
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean)
-  );
+  if (typeof args['allowed-sectors'] !== 'string' || !args['allowed-sectors'].trim()) return null;
+  return new Set(parseDataspaceMembershipScopeCsv(args['allowed-sectors']));
 }
 
 function cmdDomainReserve(args) {
@@ -461,10 +438,10 @@ function cmdRequestValidate(args) {
   let orgSector = null;
   if (existsSync(orgProfilePath)) {
     const profile = readJson(orgProfilePath);
-    orgSector = (profile?.sector || '').toLowerCase();
+    orgSector = profile?.sector ? normalizeDataspaceMembershipScope(profile.sector) : '';
     if (!orgSector) {
       errors.push('organization-profile.json missing "sector"');
-    } else if (!allowedSectors.has(orgSector)) {
+    } else if (allowedSectors && !allowedSectors.has(orgSector)) {
       errors.push(`sector ${orgSector} not allowed`);
     }
   }
@@ -551,7 +528,7 @@ function cmdCsrSignBatch(args) {
   if (Number.isNaN(days) || days <= 0) throw new Error('--days must be a positive integer.');
 
   const icaCertName = args['ica-name'] || 'ica.pem';
-  const rootCertName = args['root-name'] || 'root-unid.pem';
+  const rootCertName = args['root-name'] || 'root-ca.pem';
   const icaX5c = readPemAsBase64Der(icaCert);
   const rootX5c = readPemAsBase64Der(rootCert);
 
@@ -754,7 +731,6 @@ async function main() {
         requireArg,
         runOpenSsl,
         writeJson,
-        supportedScopes: SUPPORTED_SCOPES,
       });
       return;
     case 'ca:prepare-submission':

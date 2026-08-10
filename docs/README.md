@@ -14,6 +14,7 @@ This directory is the curated documentation entrypoint for developers and operat
 8. [`06-architecture-and-reference/02-postgres-ipfs-gap.md`](./06-architecture-and-reference/02-postgres-ipfs-gap.md)
 9. [`06-architecture-and-reference/03-fabric-credential-registry.md`](./06-architecture-and-reference/03-fabric-credential-registry.md)
 10. [`06-architecture-and-reference/04-root-ca-and-ica-signing-trust.md`](./06-architecture-and-reference/04-root-ca-and-ica-signing-trust.md)
+11. [`06-architecture-and-reference/05-legal-organization-controller-binding-handoff.md`](./06-architecture-and-reference/05-legal-organization-controller-binding-handoff.md)
 
 ## Numbered sections
 
@@ -38,8 +39,8 @@ Some older deep-dive documents still remain at `docs/` root, for example:
 - `organization-key-binding-v2.md`
 - `organization-key-management.md`
 - `pontusx-integration.md`
-- `security-gke.md`
-- `troubleshooting-gke-ip-staging.md`
+- environment-specific security and troubleshooting runbooks are intentionally
+  maintained outside this source repository
 - `backend-auth-migration.md`
 
 Those are still valid references, but new top-level guidance should be added to the numbered sections first.
@@ -48,5 +49,5 @@ Those are still valid references, but new top-level guidance should be added to 
 
 - For animal-domain examples in ICA docs, keep the current documented scope limited to `animal-pet-global`.
 - Do not expand ICA docs here into finer veterinary segmentation such as wild/farm/terrestrial/marine/aerial.
-- That finer taxonomy belongs to `uhc-sdk-core-ts` and higher-level workspace architecture notes.
+- That finer taxonomy belongs to domain-extension SDKs and higher-level architecture notes.
 - Do not lock regional naming strategy in ICA docs yet unless it is required by an implemented contract.

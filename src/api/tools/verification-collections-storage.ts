@@ -212,7 +212,13 @@ function extractDidBindingRecords(
 
   const organizationPublicKeyJwk = asJsonObject(organizationEntry?.publicKeyJwk);
   const controllerPublicKeyJwk = asJsonObject(personEntry?.publicKeyJwk);
-  if (!organizationPublicKeyJwk && !controllerPublicKeyJwk) return [];
+  const controllerDid = asNonEmptyString(personEntry?.did);
+  const controllerSameAs = asNonEmptyString(personEntry?.sameAs) || asNonEmptyString(personSubject?.sameAs);
+  const controllerJwks = asJsonObject(personEntry?.jwks) as { keys?: unknown[] } | undefined;
+  const normalizedControllerJwks = Array.isArray(controllerJwks?.keys)
+    ? { keys: controllerJwks.keys.map(asJsonObject).filter((key): key is JsonObject => Boolean(key)) }
+    : undefined;
+  if (!organizationPublicKeyJwk && !controllerPublicKeyJwk && !normalizedControllerJwks?.keys.length) return [];
 
   return [
     {
@@ -224,8 +230,10 @@ function extractDidBindingRecords(
       thid,
       taxId: organizationTaxId,
       did: asNonEmptyString(organizationSubject?.id) || undefined,
-      controllerSameAs: asNonEmptyString(personSubject?.sameAs) || undefined,
+      ...(controllerDid ? { controllerDid } : {}),
+      ...(controllerSameAs ? { controllerSameAs } : {}),
       ...(controllerPublicKeyJwk ? { controllerPublicKeyJwk } : {}),
+      ...(normalizedControllerJwks?.keys.length ? { controllerJwks: normalizedControllerJwks } : {}),
       ...(organizationPublicKeyJwk ? { organizationPublicKeyJwk } : {}),
       ...(asNonEmptyString(organizationEntry?.keySource) ? { organizationKeySource: asNonEmptyString(organizationEntry?.keySource) as 'attachment' | 'generated' } : {}),
       status: 'draft',

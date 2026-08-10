@@ -15,17 +15,15 @@
 ## Naming rule
 
 - keep canonical staging/production resource names under `dataspace-ica-*`
-- use coexistence suffixes only for parallel lines such as `st-v2`
+- use deployment-defined coexistence suffixes only for parallel lines
 - image tag carries the release line; Kubernetes resource naming and release version are different concerns
 
-## Existing deployment references
+## Deployment references
 
 - Kubernetes assets:
   [`../../deploy/k8s`](../../deploy/k8s)
-- GKE/security deep dive:
-  [`../security-gke.md`](../security-gke.md)
-- IP-first staging troubleshooting:
-  [`../troubleshooting-gke-ip-staging.md`](../troubleshooting-gke-ip-staging.md)
+- Keep environment-specific GKE security, IP, IAM and incident runbooks in the
+  operations documentation outside this source repository.
 
 ## Operational note
 

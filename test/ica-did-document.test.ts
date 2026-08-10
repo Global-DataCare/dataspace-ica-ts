@@ -24,11 +24,11 @@ describe('ICA DID Document logic', () => {
   }
 
   it('should build ICA DID as did:web:<domain>:<tenant>', () => {
-    process.env.DID_WEB_DOMAIN = 'procuredata.org';
+    process.env.DID_WEB_DOMAIN = 'example.org';
     process.env.ICA_LOCAL_TENANT_ID = 'ica';
     const did = buildIcaDid();
     writeOutput('buildIcaDid-env', { did });
-    expect(did).toBe('did:web:procuredata.org:ica');
+    expect(did).toBe('did:web:example.org:ica');
   });
 
   it('should fallback to autodetect if DID_WEB_DOMAIN is not set', () => {
@@ -42,7 +42,7 @@ describe('ICA DID Document logic', () => {
 
   it('should add alsoKnownAs with real host if MASK_LOCAL_ICA is false', () => {
     process.env.MASK_LOCAL_ICA = 'false';
-    const doc = { id: 'did:web:procuredata.org:ica' };
+    const doc = { id: 'did:web:example.org:ica' };
     const req = { headers: { host: 'realhost.com' } };
     addAlsoKnownAsToDidDocument(doc, req);
     writeOutput('alsoKnownAs-false', doc);
@@ -51,7 +51,7 @@ describe('ICA DID Document logic', () => {
 
   it('should NOT add alsoKnownAs if MASK_LOCAL_ICA is true', () => {
     process.env.MASK_LOCAL_ICA = 'true';
-    const doc = { id: 'did:web:procuredata.org:ica' };
+    const doc = { id: 'did:web:example.org:ica' };
     const req = { headers: { host: 'realhost.com' } };
     addAlsoKnownAsToDidDocument(doc, req);
     writeOutput('alsoKnownAs-true', doc);

@@ -9,9 +9,9 @@ data:
 
   # Public Root trust identity/pin. Enable the required gate only after the
   # Secret contains the matching ICA private key and complete signed chain.
-  # ICA_ROOT_CA_DID: "did:web:ca.unid.online"
+  # ICA_ROOT_CA_DID: "did:web:ca.example.org"
   # ICA_ROOT_CA_CERT_SHA256: "${ICA_ROOT_CA_CERT_SHA256}"
-  # ICA_VC_SIGNING_X5U: "https://ica.globaldatacare.es/.well-known/x509.pem"
+  # ICA_VC_SIGNING_X5U: "https://ica.example.org/.well-known/x509.pem"
   # ICA_VC_SIGNING_TRUST_REQUIRED: "true"
 
   ICA_SUPPORTED_JURISDICTIONS: "${ICA_SUPPORTED_JURISDICTIONS}"

@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
+import { multibase58MultihashSha3_256 } from 'gdc-common-utils-ts/utils/same-as';
 import {
   buildDidWebFromDomain,
   computeJwkKid,
@@ -9,47 +9,12 @@ import {
   resolvePassphrase,
 } from './bootstrap-common.js';
 
-const CONTROLLER_EMAIL_HASH_MULTIHASH_SHA3_256_CODE = 0x16;
-const CONTROLLER_EMAIL_HASH_MULTIHASH_SIZE = 0x20;
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-
-function base58btcEncode(input) {
-  if (!input.length) return '';
-  const digits = [0];
-  for (const byte of input) {
-    let carry = byte;
-    for (let index = 0; index < digits.length; index += 1) {
-      const value = digits[index] * 256 + carry;
-      digits[index] = value % 58;
-      carry = Math.floor(value / 58);
-    }
-    while (carry > 0) {
-      digits.push(carry % 58);
-      carry = Math.floor(carry / 58);
-    }
-  }
-  let output = '';
-  for (const byte of input) {
-    if (byte === 0) output += BASE58_ALPHABET[0];
-    else break;
-  }
-  for (let index = digits.length - 1; index >= 0; index -= 1) {
-    output += BASE58_ALPHABET[digits[index]];
-  }
-  return output;
-}
-
 function buildControllerEmailHash(email) {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) {
     throw new Error('Controller email cannot be empty.');
   }
-  const digest = createHash('sha3-256').update(normalizedEmail, 'utf8').digest();
-  const multihash = Buffer.concat([
-    Buffer.from([CONTROLLER_EMAIL_HASH_MULTIHASH_SHA3_256_CODE, CONTROLLER_EMAIL_HASH_MULTIHASH_SIZE]),
-    digest,
-  ]);
-  return `z${base58btcEncode(multihash)}`;
+  return multibase58MultihashSha3_256(normalizedEmail);
 }
 
 function normalizeControllerRole(rawRole) {
