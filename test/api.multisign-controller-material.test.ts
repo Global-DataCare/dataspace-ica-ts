@@ -190,8 +190,8 @@ test(
       assert.equal(credentialSubject?.name, 'TEST LEGAL REPRESENTATIVE');
       assert.equal(credentialSubject?.nationality, 'ES');
       assert.equal(occupation?.['@type'], 'Occupation');
-      assert.equal(occupation?.name, 'LegalRepresentative');
-      assert.equal(String(occupation?.identifier || '').startsWith('urn:ilo:ilostat:isco-08:'), true);
+      assert.equal(occupation?.name, undefined);
+      assert.equal(occupation?.occupationalCategory, 'ISCO-08|1120');
       assert.equal(memberOf?.['@type'], 'Organization');
       assert.equal(memberOf?.taxID, 'VATES-B00112233');
       assert.equal(memberOf?.legalName, 'TEST HEALTHCARE SL');

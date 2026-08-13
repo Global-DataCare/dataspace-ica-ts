@@ -145,6 +145,8 @@ function attachBootstrapKeysToVerificationEntries(
   const data = Array.isArray(bundle.data) ? bundle.data : [];
   const organizationEntry = data.find((entry) => entry?.type === 'Organization-verification-v1.0');
   const personEntry = data.find((entry) => entry?.type === 'LegalRepresentative-verification-v1.0');
+  const controllerEntry = data.find((entry) => entry?.type === 'ServiceController-verification-v1.0'
+    || entry?.type === 'OrganizationController-verification-v1.0');
 
   if (organizationEntry && result.organizationPublicKeyJwk) {
     organizationEntry.publicKeyJwk = { ...result.organizationPublicKeyJwk };
@@ -169,6 +171,19 @@ function attachBootstrapKeysToVerificationEntries(
   if (personEntry && result.controllerJwks) {
     personEntry.jwks = JSON.parse(JSON.stringify(result.controllerJwks));
   }
+
+  if (controllerEntry && result.controllerPublicKeyJwk) {
+    controllerEntry.publicKeyJwk = { ...result.controllerPublicKeyJwk };
+  }
+  if (controllerEntry && result.controllerDid) {
+    controllerEntry.did = result.controllerDid;
+  }
+  if (controllerEntry && result.controllerSameAs) {
+    controllerEntry.sameAs = result.controllerSameAs;
+  }
+  if (controllerEntry && result.controllerJwks) {
+    controllerEntry.jwks = JSON.parse(JSON.stringify(result.controllerJwks));
+  }
 }
 
 async function enrichVerificationBundleWithStoredVersionState(
@@ -181,12 +196,16 @@ async function enrichVerificationBundleWithStoredVersionState(
   const data = Array.isArray(bundle.data) ? bundle.data : [];
   const organizationEntry = data.find((entry) => entry?.type === 'Organization-verification-v1.0');
   const personEntry = data.find((entry) => entry?.type === 'LegalRepresentative-verification-v1.0');
+  const controllerEntry = data.find((entry) => entry?.type === 'ServiceController-verification-v1.0'
+    || entry?.type === 'OrganizationController-verification-v1.0');
   const organizationResource = asObject(organizationEntry?.resource);
   const personResource = asObject(personEntry?.resource);
   const organizationSubject = asObject(organizationResource?.credentialSubject);
   const personSubject = asObject(personResource?.credentialSubject);
+  const controllerSubject = asObject(asObject(controllerEntry?.resource)?.credentialSubject);
+  const controllerOwner = asObject(controllerSubject?.owner);
   const organizationTaxId = asString(organizationSubject?.taxID);
-  const currentControllerSameAs = asString(personSubject?.sameAs);
+  const currentControllerSameAs = asString(controllerOwner?.sameAs) || asString(personSubject?.sameAs);
 
   const records = (await collectionsService.listIssuedCredentials()).filter((record) =>
     record.tenantId === route.tenantId
@@ -209,7 +228,22 @@ async function enrichVerificationBundleWithStoredVersionState(
   });
   const latestPersonRecord = selectLatestRecord(personRecords);
   const latestPersonSubject = asObject(asObject(latestPersonRecord?.credential)?.credentialSubject);
-  const latestControllerSameAs = asString(latestPersonSubject?.sameAs);
+  const controllerRecords = records.filter((record) => {
+    const credential = asObject(record.credential);
+    const credentialTypes = Array.isArray(credential?.type)
+      ? credential.type.map((value) => asString(value))
+      : [asString(credential?.type)];
+    const subject = asObject(credential?.credentialSubject);
+    const provider = asObject(subject?.provider);
+    return (credentialTypes.includes('ServiceControllerCredential')
+      || credentialTypes.includes('OrganizationControllerCredential'))
+      && asString(provider?.taxID) === organizationTaxId;
+  });
+  const latestControllerRecord = selectLatestRecord(controllerRecords);
+  const latestControllerSubject = asObject(asObject(latestControllerRecord?.credential)?.credentialSubject);
+  const latestControllerOwner = asObject(latestControllerSubject?.owner);
+  const latestControllerSameAs = asString(latestControllerOwner?.sameAs)
+    || asString(latestPersonSubject?.sameAs);
   const controllerChanged = !!currentControllerSameAs
     && !!latestControllerSameAs
     && !sameAsValuesEqual(currentControllerSameAs, latestControllerSameAs);

@@ -54,9 +54,9 @@ test('DelegationPolicy upsert managers accept valid ODRL policy and return polli
                       'did:web:ica.example.org:ica:cds-ES:v1:onehealth:delegate:1120:zEmailHash',
                   },
                   {
-                    'ovc:leftOperand': '$.credentialSubject.hasOccupation.identifier',
+                    'ovc:leftOperand': '$.credentialSubject.hasOccupation.occupationalCategory',
                     'odrl:operator': 'odrl:eq',
-                    'odrl:rightOperand': 'urn:ilo:ilostat:isco-08:1120',
+                    'odrl:rightOperand': 'ISCO-08|1120',
                   },
                 ],
               },
@@ -98,7 +98,7 @@ test('DelegationPolicy upsert managers accept valid ODRL policy and return polli
   assert.equal(body?.data?.[0]?.resource?.policyType, 'delegations');
   assert.equal(
     body?.data?.[0]?.resource?.content?.[0]?.roleIdentifier,
-    'urn:ilo:ilostat:isco-08:1120',
+    'ISCO-08|1120',
   );
 });
 
@@ -155,5 +155,5 @@ test('DelegationPolicy upsert managers reject policy without role constraint', a
   assert.equal(submitOutcome.type, 'error');
   if (submitOutcome.type !== 'error') return;
   assert.equal(submitOutcome.statusCode, 400);
-  assert.match(submitOutcome.message, /hasOccupation\.identifier/i);
+  assert.match(submitOutcome.message, /hasOccupation\.occupationalCategory/i);
 });

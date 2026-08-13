@@ -90,7 +90,7 @@ test('buildIcaDidDocument links controller did:web member and exposes controller
   process.env.ICA_SELF_CONTROLLER_KID = 'controller-es384-kid';
   process.env.ICA_SELF_CONTROLLER_EMAIL = 'it-director@example.org';
   process.env.ICA_SELF_CONTROLLER_MEMBER_TYPE = 'controller';
-  process.env.ICA_SELF_CONTROLLER_ROLE = '1120';
+  process.env.ICA_SELF_CONTROLLER_ROLE = 'RESPRSN';
   process.env.ICA_SELF_CONTROLLER_JURISDICTION = 'ES';
   process.env.ICA_SELF_CONTROLLER_SECTOR = 'management';
   delete process.env.ICA_SELF_CONTROLLER_DID;
@@ -110,7 +110,7 @@ test('buildIcaDidDocument links controller did:web member and exposes controller
     const controllerDid = didDocument.controller as string;
     assert.match(
       controllerDid,
-      /^did:web:ica\.example\.com:ica:cds-ES:v1:management:controller:1120:z/,
+      /^did:web:ica\.example\.com:ica:cds-ES:v1:management:controller:RESPRSN:z/,
     );
 
     const verificationMethods = Array.isArray(didDocument.verificationMethod)
@@ -122,7 +122,7 @@ test('buildIcaDidDocument links controller did:web member and exposes controller
     );
 
     const controllerPath = resolveControllerDidDocumentPath();
-    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/controller/1120/')), true);
+    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/controller/RESPRSN/')), true);
     assert.equal(controllerPath?.endsWith('/did.json'), true);
 
     const controllerDidDocument = buildControllerDidDocument();
@@ -158,14 +158,14 @@ test('controller member did defaults sector to management when ICA_SELF_CONTROLL
 
   process.env.ICA_DIDCOMM_ISSUER_DID = 'did:web:ica.example.com';
   process.env.ICA_SELF_CONTROLLER_EMAIL = 'it-director@example.org';
-  process.env.ICA_SELF_CONTROLLER_ROLE = '1120';
+  process.env.ICA_SELF_CONTROLLER_ROLE = 'RESPRSN';
   process.env.ICA_SELF_CONTROLLER_JURISDICTION = 'ES';
   delete process.env.ICA_SELF_CONTROLLER_MEMBER_TYPE;
   delete process.env.ICA_SELF_CONTROLLER_SECTOR;
 
   try {
     const controllerPath = resolveControllerDidDocumentPath();
-    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/controller/1120/')), true);
+    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/controller/RESPRSN/')), true);
   } finally {
     if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
     else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;
@@ -193,13 +193,13 @@ test('controller member did uses ICA_SELF_CONTROLLER_MEMBER_TYPE when configured
   process.env.ICA_DIDCOMM_ISSUER_DID = 'did:web:ica.example.com';
   process.env.ICA_SELF_CONTROLLER_EMAIL = 'it-director@example.org';
   process.env.ICA_SELF_CONTROLLER_MEMBER_TYPE = 'delegate';
-  process.env.ICA_SELF_CONTROLLER_ROLE = '1120';
+  process.env.ICA_SELF_CONTROLLER_ROLE = 'RESPRSN';
   process.env.ICA_SELF_CONTROLLER_JURISDICTION = 'ES';
   process.env.ICA_SELF_CONTROLLER_SECTOR = 'controller';
 
   try {
     const controllerPath = resolveControllerDidDocumentPath();
-    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/delegate/1120/')), true);
+    assert.equal(Boolean(controllerPath?.startsWith('/ica/cds-ES/v1/management/delegate/RESPRSN/')), true);
   } finally {
     if (previousIssuerDid === undefined) delete process.env.ICA_DIDCOMM_ISSUER_DID;
     else process.env.ICA_DIDCOMM_ISSUER_DID = previousIssuerDid;

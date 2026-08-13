@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import type { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
+import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import {
   EXAMPLE_DEFAULT_ICA_DID,
   EXAMPLE_PROVIDER_LEGAL_NAME,
@@ -469,6 +470,24 @@ test('CreateDidDocument managers build derived did:web document asynchronously',
           updatedAt: '2026-03-12T00:00:00.000Z',
         },
       ]);
+      await collectionsService2.storeDidDocuments([{
+        id: 'did-record-prior-controller',
+        tenantId: parsedRoute.context.tenantId,
+        jurisdiction: parsedRoute.context.jurisdiction,
+        sector: parsedRoute.context.sector,
+        resourceType: 'document',
+        thid: 'thid-prior-controller',
+        did: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678',
+        taxId: 'VATES-A12345678',
+        controllerDid: 'did:web:people.example:employee:cto:legal-representative',
+        didDocument: {
+          id: 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678',
+          controller: 'did:web:people.example:employee:cto:legal-representative',
+        },
+        status: 'confirmed',
+        createdAt: '2026-03-30T00:00:00.000Z',
+        updatedAt: '2026-03-30T00:00:00.000Z',
+      }]);
       const requestManager = new CreateDidDocumentRequestManager(store2, collectionsService2);
       const responseManager = new CreateDidDocumentResponseManager(store2);
 
@@ -559,15 +578,26 @@ test('CreateDidDocument managers build derived did:web document asynchronously',
       const resource = payload.body?.data?.[0]?.resource;
       assert.equal(typeof resource?.meta?.createdAt, 'string');
       assert.equal(resource?.meta?.status, undefined);
-      assert.match(resource?.didDocument?.controller || '', /^did:key:z/);
+      assert.equal(resource?.didDocument?.controller?.length, 2);
+      assert.equal(resource?.didDocument?.controller?.[0], 'did:web:people.example:employee:cto:legal-representative');
+      assert.match(resource?.didDocument?.controller?.[1] || '', /^did:key:z/);
+      const organizationKid = toJwkThumbprintSha256Urn({
+        kty: 'EC', crv: 'P-384', x: 'abc', y: 'def',
+      } as any);
+      const organizationSigningKid = toJwkThumbprintSha256Urn({
+        kty: 'EC', crv: 'P-384', x: 'orgsignx', y: 'orgsigny',
+      } as any);
+      const organizationEncryptionKid = toJwkThumbprintSha256Urn({
+        kty: 'EC', crv: 'P-384', x: 'orgencx', y: 'orgency',
+      } as any);
       assert.equal(
         resource?.didDocument?.verificationMethod?.[0]?.id,
-        'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#mAHM7GzWdl6cfRveUjFAnDdnhCayzRT8t1mdXxifCHY',
+        `did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#${organizationKid}`,
       );
       assert.equal(resource?.didDocument?.verificationMethod?.[0]?.publicKeyJwk?.x, 'abc');
       assert.equal(resource?.didDocument?.verificationMethod?.length, 3);
-      assert.ok(resource?.didDocument?.authentication?.includes('did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#org-didcomm-sign-001'));
-      assert.ok(resource?.didDocument?.keyAgreement?.includes('did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#org-didcomm-enc-001'));
+      assert.ok(resource?.didDocument?.authentication?.includes(`did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#${organizationSigningKid}`));
+      assert.ok(resource?.didDocument?.keyAgreement?.includes(`did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678#${organizationEncryptionKid}`));
       assert.equal(resource?.didDocument?.alsoKnownAs, undefined);
 
       const didBindings = await collectionsService2.listDidBindings();
@@ -576,9 +606,11 @@ test('CreateDidDocument managers build derived did:web document asynchronously',
       assert.equal(didBindings.length, 1);
       assert.equal(didBindings[0]?.status, 'confirmed');
       assert.equal(didBindings[0]?.taxId, 'VATES-A12345678');
-      assert.equal(didDocuments.length, 1);
-      assert.equal(didDocuments[0]?.status, 'confirmed');
-      assert.equal(didDocuments[0]?.did, 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678');
+      assert.equal(didDocuments.length, 2);
+      const latestDidDocument = didDocuments.at(-1);
+      assert.equal(latestDidDocument?.status, 'confirmed');
+      assert.equal(latestDidDocument?.did, 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678');
+      assert.deepEqual(latestDidDocument?.didDocument.controller, resource.didDocument.controller);
     } finally {
       resetVerificationCollectionsMemAdapterStateForTests();
     }
@@ -727,9 +759,11 @@ test('CreateDidDocument managers build derived did:web document asynchronously',
     if (outcome.type !== 'succeeded') return;
     const payload = outcome.payload as Record<string, any>;
     const methodJwk = payload.body?.data?.[0]?.resource?.didDocument?.verificationMethod?.[0]?.publicKeyJwk;
-    assert.equal(methodJwk?.kid, 'stored-org-es384-001');
+    assert.equal(methodJwk?.kid, toJwkThumbprintSha256Urn({
+      kty: 'EC', crv: 'P-384', x: 'stored-org-x', y: 'stored-org-y', alg: 'ES384', use: 'sig',
+    } as any));
     assert.equal(methodJwk?.x, 'stored-org-x');
-    assert.match(payload.body?.data?.[0]?.resource?.didDocument?.controller || '', /^did:key:z/);
+    assert.match(payload.body?.data?.[0]?.resource?.didDocument?.controller?.[0] || '', /^did:key:z/);
   } finally {
     resetVerificationCollectionsMemAdapterStateForTests();
   }

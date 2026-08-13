@@ -161,8 +161,7 @@ test('buildVerificationVcBundle returns two VCs each with evidence', () => {
     assert.equal(personSubject.identifier, '12345678Z');
     assert.deepEqual(personSubject.hasOccupation, {
       '@type': 'Occupation',
-      name: 'LegalRepresentative',
-      identifier: 'urn:ilo:ilostat:isco-08:1120',
+      occupationalCategory: 'ISCO-08|1120',
     });
     assert.equal(personSubject.memberOf?.['@type'], 'Organization');
     assert.equal(personSubject.memberOf?.legalName, 'ACME HEALTH SL');
@@ -438,6 +437,170 @@ test('buildVerificationVcBundle projects controller binding into person hasCrede
   assert.equal(
     hasCredential.material,
     `urn:ietf:params:oauth:jwk-thumbprint:sha-256:${controllerKey.kidRfc7638}`,
+  );
+});
+
+test('buildVerificationVcBundle emits an independently bound organization controller service credential', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const controllerKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-independent-controller', 'P-384');
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('independent-controller'),
+    annexFormFields: {
+      'person.email': 'legal.representative@example.test',
+      'organization.contactPoint.email': 'technical.controller@example.test',
+    },
+    controllerPublicKeyJwk: controllerKey.publicJwk,
+  }));
+
+  const representative = bundle.data.find((entry) => entry.type === 'LegalRepresentative-verification-v1.0');
+  const controller = bundle.data.find((entry) => entry.type === 'ServiceController-verification-v1.0');
+  assert.ok(representative);
+  assert.ok(controller);
+  assert.equal(bundle.total, 3);
+
+  const representativeSubject = (representative.resource as Record<string, any>).credentialSubject;
+  const controllerResource = controller.resource as Record<string, any>;
+  const controllerSubject = controllerResource.credentialSubject;
+  assert.equal(representativeSubject.sameAs, normalizeSameAsHash('legal.representative@example.test'));
+  assert.equal(representativeSubject.hasCredential, undefined);
+  assert.deepEqual(controllerResource.type, [
+    'VerifiableCredential',
+    'ServiceCredential',
+    'ServiceControllerCredential',
+  ]);
+  assert.equal(controllerSubject['@type'], 'Service');
+  assert.equal(controllerSubject.id, 'did:web:globaldatacare.es:animal-care:organization:taxid:VATES-A12345678');
+  assert.equal(controllerSubject.provider['@type'], 'Organization');
+  assert.equal(controllerSubject.provider.taxID, 'VATES-A12345678');
+  assert.equal(controllerSubject.owner['@type'], 'Person');
+  assert.equal(controllerSubject.owner.sameAs, normalizeSameAsHash('technical.controller@example.test'));
+  assert.equal(controllerSubject.owner.additionalType, 'RESPRSN');
+  assert.deepEqual(controllerSubject.owner.hasOccupation, {
+    '@type': 'Occupation',
+    occupationalCategory: 'ISCO-08|1330',
+  });
+  assert.equal(
+    controllerSubject.owner.hasCredential.material,
+    `urn:ietf:params:oauth:jwk-thumbprint:sha-256:${controllerKey.kidRfc7638}`,
+  );
+  assert.equal(controllerResource.credentialStatus.id, `${controllerResource.id}#status`);
+  assert.ok(controllerResource.proof);
+});
+
+test('buildVerificationVcBundle uses explicit signed PDF ISCO fields when present', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed?.ok);
+  if (!parsed?.ok) return;
+
+  const controllerKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-explicit-occupations', 'P-384');
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('explicit-occupations'),
+    annexFormFields: {
+      'person.email': 'legal.representative@example.test',
+      'person.hasOccupation.occupationalCategory': 'ISCO-08|1211',
+      'organization.contactPoint.email': 'technical.controller@example.test',
+      'organization.contactPoint.hasOccupation.occupationalCategory': 'ISCO-08|1330',
+    },
+    controllerPublicKeyJwk: controllerKey.publicJwk,
+  }));
+
+  const representative = bundle.data.find((entry) => entry.type === 'LegalRepresentative-verification-v1.0');
+  const controller = bundle.data.find((entry) => entry.type === 'ServiceController-verification-v1.0');
+  assert.equal((representative?.resource as any).credentialSubject.hasOccupation.occupationalCategory, 'ISCO-08|1211');
+  assert.equal((controller?.resource as any).credentialSubject.owner.hasOccupation.occupationalCategory, 'ISCO-08|1330');
+});
+
+test('buildVerificationVcBundle rejects a malformed signed PDF ISCO field', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed?.ok);
+  if (!parsed?.ok) return;
+
+  assert.throws(() => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('invalid-occupation'),
+    annexFormFields: { 'person.hasOccupation.identifier.value': 'chief-executive' },
+  })), /four-digit ISCO-08 code/);
+});
+
+test('buildVerificationVcBundle keeps representative and controller credentials distinct for the same actor', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const controllerKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-same-controller', 'P-384');
+  const actorEmail = 'same.actor@example.test';
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('same-representative-and-controller'),
+    annexFormFields: {
+      'person.email': actorEmail,
+      'organization.contactPoint.email': actorEmail,
+    },
+    controllerPublicKeyJwk: controllerKey.publicJwk,
+  }));
+
+  const representative = bundle.data.find((entry) => entry.type === 'LegalRepresentative-verification-v1.0');
+  const controller = bundle.data.find((entry) => entry.type === 'ServiceController-verification-v1.0');
+  assert.ok(representative);
+  assert.ok(controller);
+  assert.notEqual(
+    (representative.resource as Record<string, unknown>).id,
+    (controller.resource as Record<string, unknown>).id,
+  );
+  assert.equal(
+    (representative.resource as Record<string, any>).credentialSubject.sameAs,
+    normalizeSameAsHash(actorEmail),
+  );
+  assert.equal(
+    (controller.resource as Record<string, any>).credentialSubject.owner.sameAs,
+    normalizeSameAsHash(actorEmail),
+  );
+});
+
+test('buildVerificationVcBundle does not issue an unbound organization controller credential', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('controller-without-public-key'),
+    annexFormFields: {
+      'organization.contactPoint.email': 'technical.controller@example.test',
+    },
+  }));
+
+  assert.equal(
+    bundle.data.some((entry) => entry.type === 'ServiceController-verification-v1.0'),
+    false,
+  );
+});
+
+test('buildVerificationVcBundle does not trust an unrelated request-only controller alias', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const controllerKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-request-only-controller', 'P-384');
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('request-only-controller'),
+    controllerSameAs: normalizeSameAsHash('unrelated.controller@example.test'),
+    controllerPublicKeyJwk: controllerKey.publicJwk,
+  }));
+
+  assert.equal(
+    bundle.data.some((entry) => entry.type === 'ServiceController-verification-v1.0'),
+    false,
   );
 });
 

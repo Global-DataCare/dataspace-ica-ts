@@ -2077,7 +2077,7 @@ export function buildIcaVerifyOpenApiSpec(
                         '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
                         id: 'did:web:localhost%3A3310',
                         controller:
-                          'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:1120:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
+                          'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:RESPRSN:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
                         service: [
                           {
                             id: 'did:web:localhost%3A3310#verify-terms',
@@ -2295,7 +2295,7 @@ export function buildIcaVerifyOpenApiSpec(
               name: 'role',
               in: 'path',
               required: true,
-              schema: { type: 'string', example: '1120' },
+              schema: { type: 'string', example: 'RESPRSN' },
             },
             {
               name: 'idHash',
@@ -2317,13 +2317,13 @@ export function buildIcaVerifyOpenApiSpec(
                       summary: 'Controller DID document',
                       value: {
                         '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
-                        id: 'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:1120:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
+                        id: 'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:RESPRSN:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
                         verificationMethod: [
                           {
-                            id: 'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:1120:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g#ica-controller-es384-001',
+                            id: 'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:RESPRSN:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g#ica-controller-es384-001',
                             type: 'JsonWebKey2020',
                             controller:
-                              'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:1120:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
+                              'did:web:localhost%3A3310:ica:cds-ES:v1:management:controller:RESPRSN:zW1asF7QVMofcbd3hXTJncqMojdpQiRWBBdfkfGJQuEah9g',
                           },
                         ],
                       },
@@ -4078,9 +4078,9 @@ export function buildIcaVerifyOpenApiSpec(
                                         'did:web:ica.example.org:ica:cds-ES:v1:onehealth:delegate:1120:zEmailHash',
                                     },
                                     {
-                                      'ovc:leftOperand': '$.credentialSubject.hasOccupation.identifier',
+                                      'ovc:leftOperand': '$.credentialSubject.hasOccupation.occupationalCategory',
                                       'odrl:operator': 'odrl:eq',
-                                      'odrl:rightOperand': 'urn:ilo:ilostat:isco-08:1120',
+                                      'odrl:rightOperand': 'ISCO-08|1120',
                                     },
                                     {
                                       'ovc:leftOperand': '$.credentialSubject.identifier',
@@ -5014,6 +5014,11 @@ export function buildIcaVerifyOpenApiSpec(
             + '**V2 bootstrap**\n'
             + '- DIDComm communication key may travel in `meta.jws.protected.jwk`\n'
             + '- preferred controller binding key travels in `body.data[].resource.controller.publicKeyJwk`\n'
+            + '- optional flattened GW claims travel in `body.data[].resource.meta.claims`; entry-level `meta.claims` is legacy only\n'
+            + '- when the signed PDF identifies the controller and that JWK is present, ICA issues a third `ServiceControllerCredential`\n'
+            + '- `LegalRepresentativeCredential.hasOccupation` defaults to structured `ISCO-08|1120` and does not itself grant tenant control\n'
+            + '- `ServiceControllerCredential.owner.additionalType` contains bare `RESPRSN`; `owner.hasOccupation.occupationalCategory` contains `ISCO-08|1330`; `owner.hasCredential.material` binds the actor JWK\n'
+            + '- optional signed AcroForm occupation fields are `person.hasOccupation.occupationalCategory` and `organization.contactPoint.hasOccupation.occupationalCategory`\n'
             + '- organization credential-signing public key travels as a separate `application/jwk+json` attachment\n'
             + '- if the organization JWK attachment is omitted, ICA autogenerates an ES384 organization credential-signing keypair\n'
             + '- the generated `publicKeyJwk` and `privateKeyJwk` are returned in `_verify-response` outside `body.data[].resource`\n\n'
@@ -6382,8 +6387,13 @@ export function buildIcaVerifyOpenApiSpec(
             + '- `privateKeyJwk` is present only when ICA generated the organization keypair during `_verify`\n'
             + '- by default `privateKeyJwk` is returned when available; set `ICA_VERIFY_RESPONSE_INCLUDE_PRIVATE_KEY_JWK=false` to hide it\n\n'
             + '- OrganizationCredential sector authorization is projected in `credentialSubject.makesOffer.category`; in demo mode ICA may fallback this value from the `{sector}` route when the signed PDF does not expose it yet\n\n'
-            + '**Legal-representative / controller entry**\n'
-            + '- may include only `publicKeyJwk` for the controller binding key\n'
+            + '**Credential result**\n'
+            + '- canonical result has three independent entries: OrganizationCredential, LegalRepresentativeCredential and ServiceControllerCredential\n'
+            + '- LegalRepresentativeCredential proves legal capacity and carries ISCO-08 occupation (default `1120`)\n'
+            + '- ServiceControllerCredential proves tenant authority with `owner.additionalType = RESPRSN`, controller `hasOccupation.occupationalCategory` (default `ISCO-08|1330`) and `owner.hasCredential.material`\n'
+            + '- a legacy two-entry result has no independently issued controller VC; GW compatibility may use the old representative VC only when that VC itself contains both `RESPRSN` and `hasCredential` material\n'
+            + '- modern `ISCO-08|1120` alone must not be interpreted as controller authority\n'
+            + '- controller-related entries may include `publicKeyJwk` for the binding key outside `resource`\n'
             + '- successful `_verify-response` persists draft DID binding (controller+organization keys) used by `entity/did/document/_create`\n\n'
             + '**SDK v2**\n'
             + '- `pollVerifyTermsResponse()` polls this endpoint\n'
@@ -6454,7 +6464,7 @@ export function buildIcaVerifyOpenApiSpec(
                   schema: DIDCOMM_VERIFY_RESPONSE_SCHEMA,
                   examples: {
                     verificationSucceededWithEvidence: {
-                      summary: 'Verification succeeded with two VCs and evidence',
+                      summary: 'Verification succeeded with organization, representative and controller VCs',
                       value: VERIFY_RESPONSE_SUCCESS_EXAMPLE,
                     },
                     verificationFailed: {
