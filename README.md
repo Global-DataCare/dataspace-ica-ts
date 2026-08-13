@@ -378,6 +378,27 @@ Successful terminal response example (`POST /ica/cds-{jurisdiction}/v1/{sector}/
 
 For verification polling, consume `body.data[].resource` (including `resource.evidence`) as authoritative business output.
 
+When the verified request supplies both a controller actor identity and its
+public actor JWK, the bundle also contains one
+`OrganizationController-verification-v1.0` entry. Its signed resource has
+types `VerifiableCredential`, `ServiceCredential` and
+`ServiceControllerCredential`; the tenant Service is the subject, while
+`credentialSubject.owner.sameAs` identifies that controller and
+`owner.hasCredential.material` carries the RFC 9278 JWK-thumbprint URN. This
+entry is separate from `LegalRepresentativeCredential`, including when both
+roles belong to the same person.
+
+The representative and controller occupations remain separate from controller
+authority. Unless the signed PDF exposes explicit four-digit ISCO-08 fields,
+ICA emits `ISCO-08|1120` for the legal representative and `ISCO-08|1330` for
+the technical controller. The controller VC additionally carries the bare
+HL7-derived authority code `RESPRSN` in `credentialSubject.owner.additionalType`.
+The optional AcroForm field names are
+`person.hasOccupation.occupationalCategory` and
+`organization.contactPoint.hasOccupation.occupationalCategory`; each accepts one
+four-digit ISCO-08 code. They can be omitted from the current test form to use
+the defaults above.
+
 ### 3) Activate credential signing keys (`_activate`)
 
 `_activate` requires controller authorization signature in `body.signature` by default (`DISABLE_CONTROLLER_DIDCOMM_PROOF=false`):
@@ -597,11 +618,12 @@ Canonical mode is `body.data[]` and each `data[i].resource` is an ODRL policy ob
 
 Minimum constraints expected in policy resource:
 - one constraint for `$.credentialSubject.id` (delegate DID)
-- one constraint for `$.credentialSubject.hasOccupation.identifier` (role, e.g. `urn:ilo:ilostat:isco-08:1120`)
+- one constraint for `$.credentialSubject.hasOccupation.occupationalCategory`
+  (occupation, e.g. `ISCO-08|1120`)
 
 Practical pattern:
 - delegate DID is in `credentialSubject.id`
-- role is in `credentialSubject.hasOccupation.identifier`
+- occupation is in `credentialSubject.hasOccupation.occupationalCategory`
 - email hash can be in `credentialSubject.identifier` (instead of plain `schema:email`)
 - if policy scope is `onehealth`, authorization applies to any API path sector starting with `animal` or `health`
 
@@ -641,9 +663,9 @@ curl -i -X POST \
                     "odrl:rightOperand":"did:web:ica.example.org:ica:cds-ES:v1:onehealth:delegate:1120:zEmailHash"
                   },
                   {
-                    "ovc:leftOperand":"$.credentialSubject.hasOccupation.identifier",
+                    "ovc:leftOperand":"$.credentialSubject.hasOccupation.occupationalCategory",
                     "odrl:operator":"odrl:eq",
-                    "odrl:rightOperand":"urn:ilo:ilostat:isco-08:1120"
+                    "odrl:rightOperand":"ISCO-08|1120"
                   },
                   {
                     "ovc:leftOperand":"$.credentialSubject.identifier",
@@ -1217,7 +1239,7 @@ Server and DID:
 - `ICA_SELF_CONTROLLER_KID` (bootstrap controller `kid` when CA credentials are not yet available)
 - `ICA_SELF_CONTROLLER_EMAIL` (bootstrap controller email for T&C metadata fallback)
 - `ICA_SELF_CONTROLLER_MEMBER_TYPE` (default `controller`; e.g. `organization`, `controller`, `delegate`)
-- `ICA_SELF_CONTROLLER_ROLE` (default `1120`; used in controller/member DID path)
+- `ICA_SELF_CONTROLLER_ROLE` (default `RESPRSN`; bare HL7 v3 RoleCode used in the controller/member DID path)
 - `ICA_SELF_CONTROLLER_JURISDICTION` (required for derived controller/member DID)
 - `ICA_SELF_CONTROLLER_SECTOR` (optional; defaults to `management` for derived controller/member DID; legacy `controller`/`administration` values are normalized to `management`)
 - `ICA_SELF_CONTROLLER_EMAIL_HASH` (optional precomputed member email hash; format `multibase58(multihash(SHA3-256(id)))`; if omitted derives from email)

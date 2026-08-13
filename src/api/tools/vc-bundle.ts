@@ -144,7 +144,12 @@ const ANNEX_ORGANIZATION_ALTERNATE_NAME = 'organization.alternateName';
 const ANNEX_ORGANIZATION_IDENTIFIER_TYPE = 'organization.identifierType';
 const ANNEX_ORGANIZATION_IDENTIFIER_VALUE = 'organization.identifierValue';
 const ANNEX_ORGANIZATION_REGISTRATION_NUMBER = 'organization.registrationNumber';
+const ANNEX_ORGANIZATION_CONTROLLER_EMAIL = 'organization.contactPoint.email';
+const ANNEX_ORGANIZATION_CONTROLLER_OCCUPATION = 'organization.contactPoint.hasOccupation.occupationalCategory';
+const ANNEX_ORGANIZATION_CONTROLLER_OCCUPATION_LEGACY = 'organization.contactPoint.hasOccupation.identifier.value';
 const ANNEX_PERSON_EMAIL = 'person.email';
+const ANNEX_PERSON_OCCUPATION = 'person.hasOccupation.occupationalCategory';
+const ANNEX_PERSON_OCCUPATION_LEGACY = 'person.hasOccupation.identifier.value';
 const ANNEX_PERSON_ALTERNATE_NAME = 'person.alternateName';
 const ANNEX_PERSON_ADDITIONAL_TYPE = 'person.additionalType';
 const ANNEX_ORGANIZATION_VISIBLE_TAX_ID_FIELDS = [
@@ -224,6 +229,22 @@ function getAnnexField(result: VerifyResult, name: string): string | undefined {
     : Object.entries(result.annexFormFields || {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || undefined;
+}
+
+function resolveIscoOccupationCode(
+  result: VerifyResult,
+  fieldName: string,
+  fallback: string,
+  legacyFieldName?: string,
+): string {
+  const raw = getAnnexField(result, fieldName)
+    || (legacyFieldName ? getAnnexField(result, legacyFieldName) : '')
+    || fallback;
+  const code = raw.includes('|') ? raw.slice(raw.lastIndexOf('|') + 1).trim() : raw.trim();
+  if (!/^\d{4}$/.test(code)) {
+    throw new Error(`Signed PDF field "${fieldName}" must contain one four-digit ISCO-08 code.`);
+  }
+  return code;
 }
 
 function getAnnexOrganizationDid(result: VerifyResult): string | undefined {
@@ -1090,10 +1111,33 @@ export function buildVerificationVcBundle(
     ? firstDefined(personIdentifierFromForm, allowPayloadIdentityFallback ? payloadRepresentativeIdentifier : undefined)
     : firstDefined(personIdentifierFromCertificate, personIdentifierFromForm);
   const personSameAs = resolveRepresentativeSameAs(result, subjectDn);
-  const personCredentialMaterial = resolveRepresentativeCredentialMaterial(result.controllerPublicKeyJwk);
+  const signedControllerSameAs = normalizeSameAsHash(
+    getAnnexField(result, ANNEX_ORGANIZATION_CONTROLLER_EMAIL) || '',
+  ) || undefined;
+  const requestedControllerSameAs = normalizeSameAsHash(result.controllerSameAs || '') || undefined;
+  const controllerSameAs = signedControllerSameAs
+    || (requestedControllerSameAs && requestedControllerSameAs === personSameAs
+      ? requestedControllerSameAs
+      : personSameAs);
+  const controllerCredentialMaterial = resolveRepresentativeCredentialMaterial(result.controllerPublicKeyJwk);
+  const personCredentialMaterial = !controllerSameAs || (personSameAs && controllerSameAs === personSameAs)
+    ? controllerCredentialMaterial
+    : undefined;
   const personAlternateName = getAnnexField(result, ANNEX_PERSON_ALTERNATE_NAME);
   const personAdditionalType = getAnnexField(result, ANNEX_PERSON_ADDITIONAL_TYPE);
   const country = subjectDn.C || subjectDn.COUNTRYNAME || undefined;
+  const representativeOccupationCode = resolveIscoOccupationCode(
+    result,
+    ANNEX_PERSON_OCCUPATION,
+    '1120',
+    ANNEX_PERSON_OCCUPATION_LEGACY,
+  );
+  const controllerOccupationCode = resolveIscoOccupationCode(
+    result,
+    ANNEX_ORGANIZATION_CONTROLLER_OCCUPATION,
+    '1330',
+    ANNEX_ORGANIZATION_CONTROLLER_OCCUPATION_LEGACY,
+  );
   const serialNumber =
     result.signerCertificateSerialNumber
     || personIdentifier
@@ -1245,8 +1289,7 @@ export function buildVerificationVcBundle(
     ...(representativeName ? { name: representativeName } : {}),
     hasOccupation: {
       '@type': 'Occupation',
-      name: 'LegalRepresentative',
-      identifier: 'urn:ilo:ilostat:isco-08:1120',
+      occupationalCategory: `ISCO-08|${representativeOccupationCode}`,
     },
     ...(certificateOrganizationTaxId ? { memberOf: organizationRef } : {}),
   };
@@ -1305,6 +1348,46 @@ export function buildVerificationVcBundle(
     };
   }
 
+  let unsignedOrganizationControllerVc: VerifiableCredentialV2 | undefined;
+  if (controllerSameAs && controllerCredentialMaterial) {
+    const controllerIdentityDigest = createHash('sha256')
+      .update(controllerSameAs, 'utf8')
+      .digest('hex');
+    const controllerSubject: Record<string, unknown> = {
+      id: organizationIdentifiers.id,
+      '@type': 'Service',
+      serviceType: 'OrganizationControllerService',
+      provider: organizationRef,
+      owner: {
+        '@type': 'Person',
+        additionalType: 'RESPRSN',
+        sameAs: controllerSameAs,
+        hasOccupation: {
+          '@type': 'Occupation',
+          occupationalCategory: `ISCO-08|${controllerOccupationCode}`,
+        },
+        hasCredential: {
+          material: controllerCredentialMaterial,
+        },
+      },
+    };
+    unsignedOrganizationControllerVc = {
+      id: deterministicVcByContract
+        ? `urn:${dataspaceUrnNamespace}:${urnSector}:organization-controller:vc:${documentContentCid}:${controllerIdentityDigest}`
+        : `urn:uuid:${randomUUID()}`,
+      '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
+      type: ['VerifiableCredential', 'ServiceCredential', 'ServiceControllerCredential'],
+      issuer: issuerDid,
+      validFrom: verifierEvidenceTimestamp,
+      credentialSubject: controllerSubject,
+      evidence: organizationEvidence,
+    };
+    (unsignedOrganizationControllerVc as unknown as Record<string, unknown>).credentialStatus = {
+      id: `${unsignedOrganizationControllerVc.id}#status`,
+      type: 'SimpleCredentialStatus2026',
+    };
+  }
+
   const proofCreatedAtOverride = deterministicVcByContract ? verifierEvidenceTimestamp : undefined;
   const organizationVc = attachProofToCredential(
     unsignedOrganizationVc,
@@ -1315,6 +1398,14 @@ export function buildVerificationVcBundle(
   const personVc = unsignedPersonVc
     ? attachProofToCredential(
       unsignedPersonVc,
+      route,
+      issuerDid,
+      proofCreatedAtOverride,
+    )
+    : undefined;
+  const organizationControllerVc = unsignedOrganizationControllerVc
+    ? attachProofToCredential(
+      unsignedOrganizationControllerVc,
       route,
       issuerDid,
       proofCreatedAtOverride,
@@ -1436,6 +1527,23 @@ export function buildVerificationVcBundle(
         ),
       },
       resource: personVc,
+    });
+  }
+
+  if (organizationControllerVc) {
+    data.push({
+      type: 'ServiceController-verification-v1.0',
+      response: {
+        status: '200',
+        outcome: buildOperationOutcome(
+          result.ok ? 'information' : 'warning',
+          result.ok ? 'informational' : 'processing',
+          result.ok
+            ? 'Organization controller credential extracted from verified authorization evidence.'
+            : 'Organization controller credential extracted with verification warnings.',
+        ),
+      },
+      resource: organizationControllerVc,
     });
   }
 

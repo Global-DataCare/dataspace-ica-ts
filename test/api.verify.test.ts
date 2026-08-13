@@ -1509,6 +1509,14 @@ test('VerifyResponseManager returns generated organization public key and contro
     assert.equal(payload.body?.data?.[0]?.privateKeyJwk?.kid, 'org-es384-001');
     assert.equal(payload.body?.data?.[0]?.keySource, 'generated');
     assert.equal(payload.body?.data?.[1]?.publicKeyJwk?.kid, 'controller-es384-001');
+    const controllerEntry = payload.body?.data?.find(
+      (entry: Record<string, unknown>) => entry.type === 'ServiceController-verification-v1.0',
+    );
+    assert.equal(controllerEntry?.publicKeyJwk?.kid, 'controller-es384-001');
+    assert.equal(
+      controllerEntry?.resource?.credentialSubject?.owner?.sameAs,
+      normalizeSameAsHash('controller@example.org'),
+    );
     const personSubject = payload.body?.data?.[1]?.resource?.credentialSubject as Record<string, unknown> | undefined;
     const hasCredential = personSubject?.hasCredential as Record<string, unknown> | undefined;
     assert.equal(personSubject?.sameAs, normalizeSameAsHash('controller@example.org'));
@@ -1520,6 +1528,10 @@ test('VerifyResponseManager returns generated organization public key and contro
         x: 'controller-x',
         y: 'controller-y',
       }),
+    );
+    assert.equal(
+      controllerEntry?.resource?.credentialSubject?.owner?.hasCredential?.material,
+      hasCredential?.material,
     );
 
     const didBindings = await collectionsService.listDidBindings();
@@ -2298,4 +2310,20 @@ test('buildVerificationVcBundle (promoter-only signature): accepts SDK unsecureF
     if (previousDisableStrictIdentity === undefined) delete process.env.DISABLE_STRICT_IDENTITY_SOURCE;
     else process.env.DISABLE_STRICT_IDENTITY_SOURCE = previousDisableStrictIdentity;
   }
+});
+
+test('ICA Swagger presents the canonical three-VC controller contract', () => {
+  const openApi = buildIcaVerifyOpenApiSpec();
+  const operation = openApi.paths?.['/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify-response']?.post;
+  const example = operation?.responses?.['200']?.content?.['application/didcomm-plain+json']
+    ?.examples?.verificationSucceededWithEvidence?.value;
+
+  assert.equal(example?.body?.total, 3);
+  assert.deepEqual(
+    example?.body?.data?.map((entry: Record<string, any>) => entry.resource?.type?.at(-1)),
+    ['OrganizationCredential', 'LegalRepresentativeCredential', 'ServiceControllerCredential'],
+  );
+  assert.match(String(operation?.description || ''), /ISCO-08\|1120/);
+  assert.match(String(operation?.description || ''), /RESPRSN/);
+  assert.match(String(operation?.description || ''), /legacy two-entry result/);
 });

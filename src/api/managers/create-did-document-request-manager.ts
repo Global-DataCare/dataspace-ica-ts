@@ -252,6 +252,7 @@ export class CreateDidDocumentRequestManager {
         try {
           const issuedRecords = await this.collectionsService.listIssuedCredentials();
           const didBindingRecords = await this.collectionsService.listDidBindings();
+          const didDocumentRecords = await this.collectionsService.listDidDocuments();
           const createdAt = new Date().toISOString();
           const confirmedDidBindings: DidBindingRecord[] = [];
           const confirmedDidDocuments: DidDocumentRecord[] = [];
@@ -375,6 +376,25 @@ export class CreateDidDocumentRequestManager {
                 publicKeyJwk: organizationPublicKeyJwk,
               },
             });
+            const previousDidDocument = didDocumentRecords
+              .filter((record) => record.status === 'confirmed' && record.did === did)
+              .sort((left, right) => String(left.updatedAt).localeCompare(String(right.updatedAt)))
+              .at(-1)?.didDocument;
+            const previousControllers = Array.isArray(previousDidDocument?.controller)
+              ? previousDidDocument.controller
+              : typeof previousDidDocument?.controller === 'string'
+                ? [previousDidDocument.controller]
+                : [];
+            const currentControllers = Array.isArray(built.didDocument.controller)
+              ? built.didDocument.controller
+              : typeof built.didDocument.controller === 'string'
+                ? [built.didDocument.controller]
+                : [];
+            built.didDocument.controller = Array.from(new Set(
+              [...previousControllers, ...currentControllers]
+                .map((value) => typeof value === 'string' ? value.trim() : '')
+                .filter(Boolean),
+            ));
             confirmedDidBindings.push({
               id: [
                 route.tenantId.trim().toLowerCase(),

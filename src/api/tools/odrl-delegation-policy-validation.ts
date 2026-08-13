@@ -78,6 +78,13 @@ function isDidWeb(value: string): boolean {
   return value.toLowerCase().startsWith('did:web:');
 }
 
+const OCCUPATION_LEFT_OPERAND = '$.credentialSubject.hasOccupation.occupationalCategory';
+const LEGACY_OCCUPATION_LEFT_OPERAND = '$.credentialSubject.hasOccupation.identifier';
+
+function isOccupationLeftOperand(value: string): boolean {
+  return value === OCCUPATION_LEFT_OPERAND || value === LEGACY_OCCUPATION_LEFT_OPERAND;
+}
+
 export function summarizeDelegationPolicyResource(resource: JsonObject): {
   policyId: string;
   assigneeDid: string;
@@ -98,7 +105,7 @@ export function summarizeDelegationPolicyResource(resource: JsonObject): {
     const constraints = collectConstraints(permission);
     for (const constraint of constraints) {
       const leftOperand = normalizeLeftOperand(readConstraintLeftOperand(constraint));
-      if (!roleIdentifier && leftOperand === '$.credentialSubject.hasOccupation.identifier') {
+      if (!roleIdentifier && isOccupationLeftOperand(leftOperand)) {
         roleIdentifier = readConstraintRightOperand(constraint);
       }
     }
@@ -149,7 +156,7 @@ export function validateDelegationPolicyResource(
       const normalized = normalizeLeftOperand(readConstraintLeftOperand(constraint));
       if (!normalized) continue;
       normalizedLeftOperands.add(normalized);
-      if (normalized === '$.credentialSubject.hasOccupation.identifier') {
+      if (isOccupationLeftOperand(normalized)) {
         const rightOperand = readConstraintRightOperand(constraint);
         hasRoleRightOperand = Boolean(rightOperand);
       }
@@ -174,15 +181,16 @@ export function validateDelegationPolicyResource(
     );
   }
 
-  if (!normalizedLeftOperands.has('$.credentialSubject.hasOccupation.identifier')) {
+  if (!normalizedLeftOperands.has(OCCUPATION_LEFT_OPERAND)
+    && !normalizedLeftOperands.has(LEGACY_OCCUPATION_LEFT_OPERAND)) {
     pushError(
       errors,
-      `${path} must constrain $.credentialSubject.hasOccupation.identifier (ISCO-08 role).`,
+      `${path} must constrain ${OCCUPATION_LEFT_OPERAND} (ISCO-08 occupation).`,
     );
   } else if (!hasRoleRightOperand) {
     pushError(
       errors,
-      `${path} must provide rightOperand for $.credentialSubject.hasOccupation.identifier (e.g. urn:ilo:ilostat:isco-08:1120).`,
+      `${path} must provide an ISCO-08 rightOperand for ${OCCUPATION_LEFT_OPERAND} (e.g. ISCO-08|1120).`,
     );
   }
 

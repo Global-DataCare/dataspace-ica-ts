@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 1.2.4 - 2026-08-13
+
+- Make `ServiceControllerCredential` the canonical controller VC. Its owner
+  carries bare `RESPRSN` in schema.org `additionalType` and its ISCO token in
+  `hasOccupation.occupationalCategory`; no invented role property or display
+  label is signed.
+- Present the three independent ICA verification credentials in Swagger and
+  distinguish representative ISCO `1120` from controller `RESPRSN`, ISCO
+  `1330` and actor-JWK binding.
+- Keep legal-representative occupation (`ISCO-08|1120` by default) separate
+  from controller authority. Controller VCs now carry both bare `RESPRSN` and
+  the technical occupation (`ISCO-08|1330` by default), with validated signed
+  PDF occupation fields overriding either default when present.
+
+- Emit one signed `ServiceControllerCredential` service VC when verified
+  controller identity evidence and a public actor JWK are both present. Keep
+  legal-representative and technical-controller bindings separate when their
+  emails differ, while preserving distinct VCs when they are the same actor.
+- Persist and return controller bootstrap metadata on the new controller entry
+  while retaining the legal-representative projection for older clients.
+
+- Emit the organization controller/legal-representative role as the bare HL7
+  v3 code `RESPRSN` and keep `credentialSubject.sameAs` as the independent
+  simple contact-hash URN; ISCO-08 `1120` is no longer used as controller
+  authorization.
+
+- Preserve existing legal-organization controller DIDs when DID `_create`
+  adds another independently verified representative; organization DID
+  documents now publish an additive controller array.
+- Recompute every published JWK `kid` from public material as an RFC 9278
+  SHA-256 thumbprint URN instead of trusting caller-controlled aliases.
+
 ## 1.2.3 - 2026-08-09
 
 - Move environment-specific maintenance, GKE, IAM, discovery and incident

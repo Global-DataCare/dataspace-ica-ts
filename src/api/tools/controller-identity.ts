@@ -15,7 +15,7 @@ const DID_WEB_PREFIX = 'did:web:';
 
 function normalizeRole(raw: string | undefined): string {
   const value = (raw || '').trim();
-  if (!value) return '1120';
+  if (!value) return 'RESPRSN';
   return value.replace(/[^A-Za-z0-9._-]/g, '');
 }
 

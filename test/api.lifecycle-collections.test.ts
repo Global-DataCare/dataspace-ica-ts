@@ -647,12 +647,13 @@ test('buildIcaVerifyOpenApiSpec exposes verify and polling paths', () => {
     verifyPollingExamples?.verificationSucceededWithEvidence?.value?.attachments;
   const verifySuccessData = verifyPollingExamples?.verificationSucceededWithEvidence?.value?.body?.data;
   assert.ok(Array.isArray(verifySuccessAttachments));
-  assert.equal(verifySuccessAttachments?.length, 2);
+  assert.equal(verifySuccessAttachments?.length, 3);
   assert.equal(verifySuccessAttachments?.[0]?.media_type, 'application/vc+jwt');
   assert.ok(Array.isArray(verifySuccessData));
-  assert.equal(verifySuccessData?.length, 2);
+  assert.equal(verifySuccessData?.length, 3);
   assert.ok(Array.isArray(verifySuccessData?.[0]?.resource?.evidence));
   assert.ok(Array.isArray(verifySuccessData?.[1]?.resource?.evidence));
+  assert.ok(Array.isArray(verifySuccessData?.[2]?.resource?.evidence));
   assert.ok(verifyPollingExamples?.verificationFailed);
 
   const activatePollingExamples =

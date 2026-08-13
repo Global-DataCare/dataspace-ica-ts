@@ -3,7 +3,7 @@ import type {
   CreateDidDocumentInput,
   SupportedSigningAlgorithm,
 } from '../types.ts';
-import { computeRfc7638JwkThumbprint } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
+import { computeRfc7638JwkThumbprint, toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import { base58btcEncode } from './multihash.ts';
 import { maybeAttachOrganizationX5c } from './organization-self-ca.ts';
 
@@ -129,8 +129,7 @@ function assertPublicJwk(publicKeyJwk: JsonObject, label: string): void {
 
 function normalizeDidDocumentMethodJwk(publicKeyJwk: JsonObject, fallbackUse?: 'sig' | 'enc'): JsonObject {
   const sanitizedPublicJwk = stripPrivateJwkParameters(publicKeyJwk);
-  const kid = asNonEmptyString(sanitizedPublicJwk.kid)
-    || computeRfc7638JwkThumbprint(normalizeJwkForThumbprint(sanitizedPublicJwk));
+  const kid = toJwkThumbprintSha256Urn(normalizeJwkForThumbprint(sanitizedPublicJwk) as any);
   const alg = inferAlgFromJwk(sanitizedPublicJwk);
   return {
     ...sanitizedPublicJwk,
@@ -329,9 +328,7 @@ export function buildOrganizationDidDocument(input: {
     throw new Error('organization.publicKeyJwk and controller.publicKeyJwk must be different keys.');
   }
 
-  const controllerKid =
-    asNonEmptyString(controllerPublicKeyJwk.kid)
-    || controllerThumbprint;
+  const controllerKid = toJwkThumbprintSha256Urn(normalizeJwkForThumbprint(controllerPublicKeyJwk) as any);
   const explicitControllerDid = asNonEmptyString(input.controller.did);
   if (explicitControllerDid && !explicitControllerDid.startsWith('did:')) {
     throw new Error('controller.did must be a DID identifier.');
@@ -354,9 +351,7 @@ export function buildOrganizationDidDocument(input: {
     seenControllerThumbprints.add(thumbprint);
   }
   const controllerDid = explicitControllerDid || deriveDidKeyFromPublicJwk(controllerPublicKeyJwk);
-  const verificationMethodKid =
-    asNonEmptyString(enrichedOrganizationPublicKeyJwk.kid)
-    || organizationThumbprint;
+  const verificationMethodKid = toJwkThumbprintSha256Urn(normalizeJwkForThumbprint(enrichedOrganizationPublicKeyJwk) as any);
   const verificationMethodId = `${did}#${verificationMethodKid}`;
   const normalizedOrganizationJwk = normalizeDidDocumentMethodJwk(
     {

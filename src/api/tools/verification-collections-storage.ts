@@ -202,19 +202,27 @@ function extractDidBindingRecords(
   const data = Array.isArray(bundle.data) ? bundle.data : [];
   const organizationEntry = data.find((entry) => entry?.type === 'Organization-verification-v1.0');
   const personEntry = data.find((entry) => entry?.type === 'LegalRepresentative-verification-v1.0');
+  const controllerEntry = data.find((entry) => entry?.type === 'OrganizationController-verification-v1.0');
   const organizationResource = asJsonObject(organizationEntry?.resource);
   const personResource = asJsonObject(personEntry?.resource);
   const organizationSubject = asJsonObject(organizationResource?.credentialSubject);
   const personSubject = asJsonObject(personResource?.credentialSubject);
+  const controllerSubject = asJsonObject(asJsonObject(controllerEntry?.resource)?.credentialSubject);
+  const controllerOwner = asJsonObject(controllerSubject?.owner);
   const memberOf = asJsonObject(personSubject?.memberOf);
   const organizationTaxId = asNonEmptyString(organizationSubject?.taxID || organizationSubject?.taxId || memberOf?.taxID || memberOf?.taxId);
   if (!organizationTaxId) return [];
 
   const organizationPublicKeyJwk = asJsonObject(organizationEntry?.publicKeyJwk);
-  const controllerPublicKeyJwk = asJsonObject(personEntry?.publicKeyJwk);
-  const controllerDid = asNonEmptyString(personEntry?.did);
-  const controllerSameAs = asNonEmptyString(personEntry?.sameAs) || asNonEmptyString(personSubject?.sameAs);
-  const controllerJwks = asJsonObject(personEntry?.jwks) as { keys?: unknown[] } | undefined;
+  const controllerPublicKeyJwk = asJsonObject(controllerEntry?.publicKeyJwk)
+    || asJsonObject(personEntry?.publicKeyJwk);
+  const controllerDid = asNonEmptyString(controllerEntry?.did) || asNonEmptyString(personEntry?.did);
+  const controllerSameAs = asNonEmptyString(controllerEntry?.sameAs)
+    || asNonEmptyString(controllerOwner?.sameAs)
+    || asNonEmptyString(personEntry?.sameAs)
+    || asNonEmptyString(personSubject?.sameAs);
+  const controllerJwks = (asJsonObject(controllerEntry?.jwks)
+    || asJsonObject(personEntry?.jwks)) as { keys?: unknown[] } | undefined;
   const normalizedControllerJwks = Array.isArray(controllerJwks?.keys)
     ? { keys: controllerJwks.keys.map(asJsonObject).filter((key): key is JsonObject => Boolean(key)) }
     : undefined;
