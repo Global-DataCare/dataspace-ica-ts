@@ -56,6 +56,8 @@ export type DidBindingRecord = {
   did?: string;
   controllerDid?: string;
   controllerSameAs?: string;
+  /** Signed controller designation awaiting that actor's own JWK binding/DCR. */
+  designatedControllerSameAs?: string;
   controllerPublicKeyJwk?: JsonObject;
   controllerJwks?: { keys: JsonObject[] };
   organizationPublicKeyJwk?: JsonObject;

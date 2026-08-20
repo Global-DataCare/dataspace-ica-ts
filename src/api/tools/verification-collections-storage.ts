@@ -202,10 +202,12 @@ function extractDidBindingRecords(
   const data = Array.isArray(bundle.data) ? bundle.data : [];
   const organizationEntry = data.find((entry) => entry?.type === 'Organization-verification-v1.0');
   const personEntry = data.find((entry) => entry?.type === 'LegalRepresentative-verification-v1.0');
-  const controllerEntry = data.find((entry) => entry?.type === 'OrganizationController-verification-v1.0');
+  const controllerEntry = data.find((entry) => entry?.type === 'ServiceController-verification-v1.0'
+    || entry?.type === 'OrganizationController-verification-v1.0');
   const organizationResource = asJsonObject(organizationEntry?.resource);
   const personResource = asJsonObject(personEntry?.resource);
   const organizationSubject = asJsonObject(organizationResource?.credentialSubject);
+  const organizationMeta = asJsonObject(organizationResource?.meta);
   const personSubject = asJsonObject(personResource?.credentialSubject);
   const controllerSubject = asJsonObject(asJsonObject(controllerEntry?.resource)?.credentialSubject);
   const controllerOwner = asJsonObject(controllerSubject?.owner);
@@ -221,6 +223,7 @@ function extractDidBindingRecords(
     || asNonEmptyString(controllerOwner?.sameAs)
     || asNonEmptyString(personEntry?.sameAs)
     || asNonEmptyString(personSubject?.sameAs);
+  const designatedControllerSameAs = asNonEmptyString(organizationMeta?.designatedControllerSameAs);
   const controllerJwks = (asJsonObject(controllerEntry?.jwks)
     || asJsonObject(personEntry?.jwks)) as { keys?: unknown[] } | undefined;
   const normalizedControllerJwks = Array.isArray(controllerJwks?.keys)
@@ -240,6 +243,7 @@ function extractDidBindingRecords(
       did: asNonEmptyString(organizationSubject?.id) || undefined,
       ...(controllerDid ? { controllerDid } : {}),
       ...(controllerSameAs ? { controllerSameAs } : {}),
+      ...(designatedControllerSameAs ? { designatedControllerSameAs } : {}),
       ...(controllerPublicKeyJwk ? { controllerPublicKeyJwk } : {}),
       ...(normalizedControllerJwks?.keys.length ? { controllerJwks: normalizedControllerJwks } : {}),
       ...(organizationPublicKeyJwk ? { organizationPublicKeyJwk } : {}),

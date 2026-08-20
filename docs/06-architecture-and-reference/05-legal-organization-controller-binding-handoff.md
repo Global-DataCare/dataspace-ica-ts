@@ -17,6 +17,23 @@ in tenant-owned operational documentation, not in this architecture note.
 Registering a legal organization does not create a controller infrastructure
 identity in the Root CA, the host, or Fabric.
 
+### Representative binding versus pending controller designation
+
+The public JWK sent by a legacy legal-registration portal belongs to the legal
+representative who performs that registration. A different technical-controller
+email present in the signed PDF is authorization evidence for a future actor,
+not proof that the representative's JWK belongs to that actor. ICA stores only
+the normalized hash as `designatedControllerSameAs` and does not issue a
+`ServiceControllerCredential` for it until a request explicitly binds a
+matching `controllerSameAs` to that controller's own JWK.
+
+The technical controller completes `_issue`, key binding and DCR independently
+from its sector portal. The representative can remain a legacy GW controller
+through the legal-representative compatibility path without collapsing these
+two identities. If an older re-registration omits the technical-controller
+field, ICA preserves the previous signed designation instead of replacing it
+with the representative or copying the representative JWK.
+
 - Root CA, ICA, and host MSP identities are infrastructure/operator identities
   used to administer and endorse the blockchain network.
 - A legal organization's controller is business identity material: its DID,
