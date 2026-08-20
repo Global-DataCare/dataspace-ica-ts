@@ -448,12 +448,14 @@ test('buildVerificationVcBundle emits an independently bound organization contro
   if (!parsed.ok) return;
 
   const controllerKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-independent-controller', 'P-384');
+  const controllerSameAs = normalizeSameAsHash('technical.controller@example.test');
   const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
     ...buildTestVerifyResult('independent-controller'),
     annexFormFields: {
       'person.email': 'legal.representative@example.test',
       'organization.contactPoint.email': 'technical.controller@example.test',
     },
+    controllerSameAs,
     controllerPublicKeyJwk: controllerKey.publicJwk,
   }));
 
@@ -492,6 +494,41 @@ test('buildVerificationVcBundle emits an independently bound organization contro
   assert.ok(controllerResource.proof);
 });
 
+/**
+ * Legacy portal contract: the legal representative signs the registration and
+ * owns the submitted JWK. A different controller email in the PDF is a pending
+ * designation only; issuing its ServiceControllerCredential here would bind
+ * another person's key to it.
+ */
+test('buildVerificationVcBundle keeps a distinct signed controller pending when the submitted JWK belongs to the representative', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed?.ok);
+  if (!parsed?.ok) return;
+
+  const representativeKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-representative-only-binding', 'P-384');
+  const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+    ...buildTestVerifyResult('distinct-controller-without-controller-binding'),
+    annexFormFields: {
+      'person.email': 'legal.representative@example.test',
+      'organization.contactPoint.email': 'technical.controller@example.test',
+    },
+    controllerPublicKeyJwk: representativeKey.publicJwk,
+  }));
+
+  const representative = bundle.data.find((entry) => entry.type === 'LegalRepresentative-verification-v1.0');
+  const controller = bundle.data.find((entry) => entry.type === 'ServiceController-verification-v1.0');
+  const representativeSubject = (representative?.resource as Record<string, any>).credentialSubject;
+
+  assert.equal(bundle.total, 2);
+  assert.equal(controller, undefined);
+  assert.equal(representativeSubject.sameAs, normalizeSameAsHash('legal.representative@example.test'));
+  assert.equal(
+    representativeSubject.hasCredential.material,
+    `urn:ietf:params:oauth:jwk-thumbprint:sha-256:${representativeKey.kidRfc7638}`,
+  );
+});
+
 test('buildVerificationVcBundle uses explicit signed PDF ISCO fields when present', () => {
   installActiveSigningKeyForTests();
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
@@ -499,6 +536,7 @@ test('buildVerificationVcBundle uses explicit signed PDF ISCO fields when presen
   if (!parsed?.ok) return;
 
   const controllerKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-explicit-occupations', 'P-384');
+  const controllerSameAs = normalizeSameAsHash('technical.controller@example.test');
   const bundle = withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
     ...buildTestVerifyResult('explicit-occupations'),
     annexFormFields: {
@@ -507,6 +545,7 @@ test('buildVerificationVcBundle uses explicit signed PDF ISCO fields when presen
       'organization.contactPoint.email': 'technical.controller@example.test',
       'organization.contactPoint.hasOccupation.occupationalCategory': 'ISCO-08|1330',
     },
+    controllerSameAs,
     controllerPublicKeyJwk: controllerKey.publicJwk,
   }));
 

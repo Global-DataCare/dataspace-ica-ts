@@ -327,7 +327,12 @@ export interface VerifySubmission {
    * - legacy fallback: `meta.jws.protected.jwk`
    *
    * Separation of concerns:
-   * - this key represents the real controller/business actor
+   * - this key belongs to the actor that performs `_verify`; in legacy legal
+   *   onboarding that actor is the legal representative
+   * - a different technical-controller email extracted from the PDF is only a
+   *   pending designation and does not acquire this JWK
+   * - a distinct technical controller must later bind its own JWK by sending a
+   *   matching `controllerSameAs` through its sector-specific `_issue`/DCR flow
    * - DIDComm communication keys in `meta.jws` / `meta.jwe` protect transport
    *   and may belong to a device profile, confidential app, or BFF
    * - only this controller binding key should feed
@@ -336,7 +341,7 @@ export interface VerifySubmission {
   controllerPublicKeyJwk?: Record<string, unknown>;
   /** Stable controller DID that owns the complete controller keyring. */
   controllerDid?: string;
-  /** Public controller alias retained independently from the legal representative. */
+  /** Alias of the actor that owns `controllerPublicKeyJwk`, not merely a PDF designation. */
   controllerSameAs?: string;
   /** Additional controller-owned keys, including legacy federation and PQC keys. */
   controllerJwks?: CreateDidDocumentJwkSet;

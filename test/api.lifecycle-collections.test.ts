@@ -1092,6 +1092,116 @@ test('VerifyResponseManager versions repeated organization PDFs and warns when c
   }
 });
 
+/**
+ * Re-registering through an older portal payload must not erase a technical
+ * controller previously named by signed evidence or attach the representative
+ * JWK to it. The sector portal completes that controller's own binding later.
+ */
+test('VerifyResponseManager preserves an unbound signed controller designation across legacy re-verification', async () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  process.env.DID_WEB_DOMAIN = 'localhost';
+  try {
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify');
+    assert.ok(parsed?.ok);
+    if (!parsed?.ok) return;
+
+    resetVerificationCollectionsMemStateForTests();
+    const collectionsService = new VerificationCollectionsService({
+      provider: 'mem',
+      required: true,
+      firestoreCollectionPrefix: 'ica',
+    });
+    const representativeKey = deriveDeterministicEcPrivateKeyPem(
+      'pending-controller-representative-binding',
+      'P-384',
+    ).publicJwk;
+    const representativeEmail = 'legal.representative@example.test';
+    const designatedControllerEmail = 'technical.controller@example.test';
+    const baseResult: VerifyResult = {
+      ok: true,
+      verifiedAt: '2026-03-05T00:00:00.000Z',
+      templateUrl: '',
+      templateMatch: true,
+      signatureValid: true,
+      chainValid: true,
+      revocationStatus: 'good',
+      digest: {
+        alg: 'sha3-384',
+        signedPdfHex: TEST_SHA3_384_HEX,
+        unsignedPdfHex: TEST_SHA3_384_HEX,
+        templateHex: TEST_SHA3_384_HEX,
+      },
+      signerCertificateSerialNumber: '00AA11',
+      signerSubject: 'CN=Jane Doe,O=Acme Health SL,OID.2.5.4.97=VATES-A12345678,SERIALNUMBER=12345678Z,C=ES',
+      signerIssuer: 'CN=FNMT Intermediate',
+      hashes: {
+        signedPdfSha256Hex: 'deadbeef',
+        unsignedPdfSha256Hex: 'beadfeed',
+        templateSha256Hex: 'cafebabe',
+      },
+      notes: [],
+      controllerPublicKeyJwk: representativeKey,
+      annexFormFields: {
+        'Person.email': representativeEmail,
+        'organization.contactPoint.email': designatedControllerEmail,
+      },
+    };
+    const legacyResult: VerifyResult = {
+      ...baseResult,
+      verifiedAt: '2026-03-06T00:00:00.000Z',
+      digest: {
+        alg: 'sha3-384',
+        signedPdfHex: TEST_SHA3_384_HEX_ALT,
+        unsignedPdfHex: TEST_SHA3_384_HEX_ALT,
+        templateHex: TEST_SHA3_384_HEX,
+      },
+      annexFormFields: {
+        'Person.email': representativeEmail,
+      },
+    };
+
+    const store = new InMemoryVerificationJobStore(60);
+    store.enqueue('thid-pending-controller-v1', parsed.context);
+    store.markSucceeded('thid-pending-controller-v1', baseResult);
+    store.enqueue('thid-pending-controller-v2', parsed.context);
+    store.markSucceeded('thid-pending-controller-v2', legacyResult);
+    const manager = new VerifyResponseManager(store, collectionsService);
+    const req = { method: 'POST', headers: { host: 'localhost:3310' } } as unknown as IncomingMessage;
+
+    for (const thid of ['thid-pending-controller-v1', 'thid-pending-controller-v2']) {
+      const outcome = await manager.poll(
+        parsed.context,
+        req,
+        new URL(`http://localhost/acme/cds-ES/v1/animal-care/terms/pdf/contract/_verify-response?thid=${thid}`),
+      );
+      assert.equal(outcome.type, 'succeeded');
+    }
+
+    const latestIssued = (await collectionsService.listIssuedCredentials())
+      .filter((record) => record.thid === 'thid-pending-controller-v2');
+    assert.equal(latestIssued.length, 2);
+    assert.equal(
+      latestIssued.some((record) => record.credentialType.includes('ServiceControllerCredential')),
+      false,
+    );
+    const organization = latestIssued.find((record) => {
+      const subject = record.credential.credentialSubject as Record<string, unknown>;
+      return subject?.['@type'] === 'Organization';
+    });
+    assert.equal(
+      (organization?.credential.meta as Record<string, unknown>)?.designatedControllerSameAs,
+      normalizeSameAsHash(designatedControllerEmail),
+    );
+    const [binding] = await collectionsService.listDidBindings();
+    assert.equal(binding?.controllerSameAs, normalizeSameAsHash(representativeEmail));
+    assert.equal(binding?.designatedControllerSameAs, normalizeSameAsHash(designatedControllerEmail));
+    assert.equal(binding?.controllerPublicKeyJwk?.x, representativeKey.x);
+  } finally {
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
 test('AddEvidence managers persist evidence records using mem collections adapter', async () => {
   const parsed = parseAddEvidenceRoute('/acme/cds-ES/v1/animal-care/network/evidence/official-registry/_add');
   assert.ok(parsed);

@@ -75,7 +75,8 @@ When a signed PDF contains these form fields, the API extracts them and carries 
   - `organization.registrationNumber` -> `credentialSubject.registrationNumber`.
   - `person.email` -> person VC `credentialSubject.sameAs` (preferred over certificate email).
     If it arrives as plain email, backend hashes it automatically to `urn:multibase:z...` so the plain value is not persisted.
-  - controller binding JWK captured during `_verify` -> person VC
+  - actor binding JWK captured during `_verify` -> the VC of the actor that
+    submitted it (the legal representative in the legacy portal flow)
     `credentialSubject.hasCredential.material`.
     ICA prefers an RFC 9278 JWK-thumbprint URN
     `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<base64url>` when the public
@@ -98,5 +99,11 @@ Recommended step by step:
 1. Put representative email in `person.email` inside the signed annex whenever possible.
 2. `_verify` derives representative `credentialSubject.sameAs` from that signed email evidence or, secondarily, from the signer certificate email.
 3. `_verify` derives representative `credentialSubject.hasCredential.material` from the captured controller binding JWK.
+   A distinct `organization.contactPoint.email` is only a hashed pending
+   controller designation unless the request explicitly supplies a matching
+   `controllerSameAs` with that controller's own JWK.
 4. Only in `demo/local`, if signed sources do not expose the email, `legalRepresentativePayload.email` or `.sameAs` may bootstrap the representative alias.
 5. Downstream GW activation should ideally receive a representative VC that already carries both dimensions.
+6. A separately designated technical controller completes its own `_issue`,
+   key binding and DCR later from the sector portal; ICA must never copy the
+   representative's JWK to that actor.

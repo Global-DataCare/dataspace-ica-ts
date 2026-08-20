@@ -26,6 +26,7 @@ import {
   multibase58CidV1RawSha3_256Hex,
   multibase58CidV1RawSha3_384Hex,
   normalizeSameAsHash,
+  sameAsValuesEqual,
 } from './multihash.ts';
 import { loadIcaSecurityConfigFromEnv } from '../security-mode.ts';
 import {
@@ -1115,13 +1116,42 @@ export function buildVerificationVcBundle(
     getAnnexField(result, ANNEX_ORGANIZATION_CONTROLLER_EMAIL) || '',
   ) || undefined;
   const requestedControllerSameAs = normalizeSameAsHash(result.controllerSameAs || '') || undefined;
+  const signedControllerIsRepresentative = Boolean(
+    signedControllerSameAs
+    && personSameAs
+    && sameAsValuesEqual(signedControllerSameAs, personSameAs),
+  );
+  const requestedBindingMatchesSignedController = Boolean(
+    requestedControllerSameAs
+    && signedControllerSameAs
+    && sameAsValuesEqual(requestedControllerSameAs, signedControllerSameAs),
+  );
+  const requestedBindingMatchesRepresentative = Boolean(
+    requestedControllerSameAs
+    && personSameAs
+    && sameAsValuesEqual(requestedControllerSameAs, personSameAs),
+  );
+  // A controller email in the signed PDF is only a designation. When it names
+  // somebody other than the legal representative, the representative's JWK
+  // must not be attributed to that future controller. The technical controller
+  // becomes bound only when its own channel explicitly submits matching sameAs
+  // and key material.
   const controllerSameAs = signedControllerSameAs
-    || (requestedControllerSameAs && requestedControllerSameAs === personSameAs
-      ? requestedControllerSameAs
-      : personSameAs);
-  const controllerCredentialMaterial = resolveRepresentativeCredentialMaterial(result.controllerPublicKeyJwk);
-  const personCredentialMaterial = !controllerSameAs || (personSameAs && controllerSameAs === personSameAs)
-    ? controllerCredentialMaterial
+    ? (signedControllerIsRepresentative || requestedBindingMatchesSignedController
+      ? signedControllerSameAs
+      : undefined)
+    : (requestedBindingMatchesRepresentative ? requestedControllerSameAs : personSameAs);
+  const submittedCredentialMaterial = resolveRepresentativeCredentialMaterial(result.controllerPublicKeyJwk);
+  const personCredentialMaterial = !requestedControllerSameAs || requestedBindingMatchesRepresentative
+    ? submittedCredentialMaterial
+    : undefined;
+  const controllerCredentialMaterial = controllerSameAs && (
+    requestedBindingMatchesSignedController
+    || (signedControllerIsRepresentative && personCredentialMaterial)
+    || (!signedControllerSameAs && personSameAs && sameAsValuesEqual(controllerSameAs, personSameAs)
+      && personCredentialMaterial)
+  )
+    ? submittedCredentialMaterial
     : undefined;
   const personAlternateName = getAnnexField(result, ANNEX_PERSON_ALTERNATE_NAME);
   const personAdditionalType = getAnnexField(result, ANNEX_PERSON_ADDITIONAL_TYPE);
