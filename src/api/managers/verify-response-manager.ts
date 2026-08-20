@@ -22,7 +22,11 @@ import {
 import { buildDidcommMessage, DIDCOMM_BUNDLE_TYPE } from '../tools/didcomm-message.ts';
 import { VerificationCollectionsService } from '../tools/verification-collections-storage.ts';
 import { resolveVcIssuerDid } from '../tools/ica-identity.ts';
-import { multibase58MultihashSha3_384Hex, sameAsValuesEqual } from '../tools/multihash.ts';
+import {
+  multibase58MultihashSha3_384Hex,
+  normalizeSameAsHash,
+  sameAsValuesEqual,
+} from '../tools/multihash.ts';
 
 export type VerifyPollOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -159,31 +163,55 @@ function attachBootstrapKeysToVerificationEntries(
     }
   }
 
-  if (personEntry && result.controllerPublicKeyJwk) {
+  const personSameAs = asString(asObject(asObject(personEntry?.resource)?.credentialSubject)?.sameAs);
+  const controllerSameAs = asString(
+    asObject(asObject(asObject(controllerEntry?.resource)?.credentialSubject)?.owner)?.sameAs,
+  );
+  const requestedSameAs = result.controllerSameAs || '';
+  const keyBelongsToPerson = Boolean(
+    personEntry && (!requestedSameAs || (personSameAs && sameAsValuesEqual(requestedSameAs, personSameAs))),
+  );
+  const keyBelongsToController = Boolean(
+    controllerEntry
+    && controllerSameAs
+    && (
+      (requestedSameAs && sameAsValuesEqual(requestedSameAs, controllerSameAs))
+      || (keyBelongsToPerson && personSameAs && sameAsValuesEqual(personSameAs, controllerSameAs))
+    ),
+  );
+
+  if (personEntry && result.controllerPublicKeyJwk && keyBelongsToPerson) {
     personEntry.publicKeyJwk = { ...result.controllerPublicKeyJwk };
   }
-  if (personEntry && result.controllerDid) {
+  if (personEntry && result.controllerDid && keyBelongsToPerson) {
     personEntry.did = result.controllerDid;
   }
-  if (personEntry && result.controllerSameAs) {
+  if (personEntry && result.controllerSameAs && keyBelongsToPerson) {
     personEntry.sameAs = result.controllerSameAs;
   }
-  if (personEntry && result.controllerJwks) {
+  if (personEntry && result.controllerJwks && keyBelongsToPerson) {
     personEntry.jwks = JSON.parse(JSON.stringify(result.controllerJwks));
   }
 
-  if (controllerEntry && result.controllerPublicKeyJwk) {
+  if (controllerEntry && result.controllerPublicKeyJwk && keyBelongsToController) {
     controllerEntry.publicKeyJwk = { ...result.controllerPublicKeyJwk };
   }
-  if (controllerEntry && result.controllerDid) {
+  if (controllerEntry && result.controllerDid && keyBelongsToController) {
     controllerEntry.did = result.controllerDid;
   }
-  if (controllerEntry && result.controllerSameAs) {
+  if (controllerEntry && result.controllerSameAs && keyBelongsToController) {
     controllerEntry.sameAs = result.controllerSameAs;
   }
-  if (controllerEntry && result.controllerJwks) {
+  if (controllerEntry && result.controllerJwks && keyBelongsToController) {
     controllerEntry.jwks = JSON.parse(JSON.stringify(result.controllerJwks));
   }
+}
+
+function resolveSignedControllerDesignation(result: VerifyResult): string | undefined {
+  const entry = Object.entries(result.annexFormFields || {}).find(
+    ([name]) => name.trim().toLowerCase() === 'organization.contactpoint.email',
+  );
+  return entry ? normalizeSameAsHash(String(entry[1] || '')) || undefined : undefined;
 }
 
 async function enrichVerificationBundleWithStoredVersionState(
@@ -220,6 +248,19 @@ async function enrichVerificationBundleWithStoredVersionState(
   const latestOrganizationRecord = selectLatestRecord(organizationRecords);
   const latestOrganizationMeta = asObject(asObject(latestOrganizationRecord?.credential)?.meta);
   const previousVersionId = asString(latestOrganizationMeta?.versionId);
+  const previousControllerDesignation = asString(latestOrganizationMeta?.designatedControllerSameAs);
+  const signedControllerDesignation = resolveSignedControllerDesignation(result);
+  const designatedControllerSameAs = signedControllerDesignation
+    || previousControllerDesignation
+    || undefined;
+  if (!signedControllerDesignation && previousControllerDesignation && controllerEntry) {
+    // A legacy re-verification may omit the technical controller field. Keep
+    // the earlier signed designation pending instead of silently issuing a
+    // ServiceControllerCredential to the representative's JWK.
+    const controllerIndex = data.indexOf(controllerEntry);
+    if (controllerIndex >= 0) data.splice(controllerIndex, 1);
+    bundle.total = data.length;
+  }
 
   const personRecords = records.filter((record) => {
     const subject = asObject(record.credential?.credentialSubject);
@@ -256,6 +297,9 @@ async function enrichVerificationBundleWithStoredVersionState(
   }
   if (controllerChanged) {
     meta.controllerChanged = true;
+  }
+  if (designatedControllerSameAs) {
+    meta.designatedControllerSameAs = designatedControllerSameAs;
   }
 
   for (const entry of data) {

@@ -388,6 +388,16 @@ types `VerifiableCredential`, `ServiceCredential` and
 entry is separate from `LegalRepresentativeCredential`, including when both
 roles belong to the same person.
 
+The JWK always belongs to the actor that submitted it. In the legacy legal
+registration flow this is normally the legal representative. If the signed PDF
+names a different technical controller but the request does not provide a
+matching `controllerSameAs` for that actor, ICA emits only the organization and
+legal-representative credentials. It retains the controller email only as a
+hashed pending designation. The technical controller later obtains its own
+`ServiceControllerCredential` by binding its own JWK through the sector portal
+and completing DCR. Re-verifying with an older payload that omits the controller
+field preserves the earlier signed pending designation.
+
 The representative and controller occupations remain separate from controller
 authority. Unless the signed PDF exposes explicit four-digit ISCO-08 fields,
 ICA emits `ISCO-08|1120` for the legal representative and `ISCO-08|1330` for
