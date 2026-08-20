@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.5 - 2026-08-20
+
 - Keep the JWK submitted by legacy legal-organization registration bound to
   the legal representative. A different controller email in signed PDF
   evidence remains a hashed pending designation until that actor supplies a
