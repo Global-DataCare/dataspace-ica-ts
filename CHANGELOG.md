@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Keep the JWK submitted by legacy legal-organization registration bound to
+  the legal representative. A different controller email in signed PDF
+  evidence remains a hashed pending designation until that actor supplies a
+  matching identity and its own JWK through the sector controller flow.
+- Preserve that pending controller designation when an older re-verification
+  omits the controller field, and do not synthesize a controller credential
+  that attributes the representative's key to the designated actor.
+
 ## 1.2.4 - 2026-08-13
 
 - Make `ServiceControllerCredential` the canonical controller VC. Its owner
