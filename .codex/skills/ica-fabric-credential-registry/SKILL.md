@@ -1,6 +1,6 @@
 ---
 name: ica-fabric-credential-registry
-description: Use for ICA credential identity, Fabric anchoring, evidence hashes, revocation, and migration between test, local-network, and test-network.
+description: Use for ICA credential identity, Fabric anchoring, evidence hashes, revocation, governed host preauthorization without PDF, and migration between test, local-network, and test-network.
 ---
 
 # ICA Fabric credential registry
@@ -67,6 +67,17 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   visibility; ACL, endorsement and chaincode rules independently gate writes.
 - `network` is the production Fabric context and uses the same fail-closed
   server-controlled channel routing rules.
+- A governed host may omit the PDF only when its domain is in
+  `ICA_PREAUTHORIZED_HOST_DOMAINS` and the route kind is in
+  `ICA_PREAUTHORIZED_HOST_NETWORK_KINDS`. Require matching host DID, Service
+  URL and issuer plus an ES384 compact JWS over the route scope and exact
+  forwarded resource;
+  resolve the key from the host's `did:web` document. Never treat the discovery
+  allowlist or a client route value as issuance authorization.
+- For reproducible `local-network`, configure
+  `globaldatacare.es,member.example`. Preserve the normal PDF path for every
+  unlisted organization/host and record the governed request digest without
+  manufacturing PDF evidence.
 - `NETWORK_MODE=test` remains the legacy deployment default and compatibility
   input, but it must not override an explicit canonical route `networkKind`.
   The request can select whether anchoring applies; it can never name a Fabric
@@ -118,7 +129,8 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
 2. Prepare/deploy the local identity channel from the sibling GW/Fabric stack.
 3. Run `npm run fabric:credential:smoke:local`, then start ICA with
    `npm run api:local:fabric`.
-4. Issue through the normal PDF `_verify` / `_verify-response` flow.
+4. Issue through the normal PDF `_verify` / `_verify-response` flow, or through
+   the signed governed-host branch when reproducing a preauthorized host.
 5. Extract `body.data[].resource.id`; verify each using
    `npm run fabric:credential:read:local -- --credential-id '<vc.id>'`.
 6. Confirm two assets for a two-credential response and that every attachment

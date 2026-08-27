@@ -49,6 +49,8 @@ import {
   normalizeOrganizationPublicKeyJwk,
 } from './tools/bootstrap-organization-key.ts';
 import { loadIcaSecurityConfigFromEnv } from './security-mode.ts';
+import { verifyPreauthorizedHostEvidence } from './preauthorized-host-verifier.ts';
+import type { VerifyRouteContext } from './types.ts';
 
 type ParsedThreadPayload = {
   thid?: string;
@@ -401,7 +403,7 @@ function resolveOrganizationPublicKeyFromDidcommAttachments(
 
 export async function parseVerifySubmission(
   req: IncomingMessage,
-  options?: { jurisdiction?: string },
+  options?: { jurisdiction?: string; route?: VerifyRouteContext },
 ): Promise<VerifySubmission> {
   const contentTypeHeader = normalizeHeader(req.headers['content-type']);
   const contentType = normalizeContentType(contentTypeHeader);
@@ -447,7 +449,44 @@ export async function parseVerifySubmission(
   const pdfBytes = await resolvePdfFromDidcommAttachments(attachments);
 
   if (!pdfBytes.length) {
-    throw new Error('DIDComm payload must include attachments[].data.base64 or attachments[].data.links.');
+    if (!options?.route) {
+      throw new Error('DIDComm payload must include attachments[].data.base64 or attachments[].data.links.');
+    }
+    const dataArray = Array.isArray(parsedBody.data) ? parsedBody.data : [];
+    const firstResource = dataArray.length > 0 ? asObject((dataArray[0] as Record<string, unknown>)?.resource) : undefined;
+    if (!firstResource) throw new Error('PDF-free host verification requires body.data[0].resource.');
+    const evidence = await verifyPreauthorizedHostEvidence({
+      route: options.route,
+      envelope: parsed,
+      resource: firstResource,
+    });
+    const resourceMeta = asObject(firstResource.meta);
+    const claims = asObject(resourceMeta?.claims) || {};
+    const claim = (name: string): string => asNonEmptyString(claims[name]);
+    const organizationPayload = asObject(firstResource.organization);
+    const legalRepresentativePayload = asObject(firstResource.legalRepresentative);
+    return {
+      thid: extractThid({
+        thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+        id: asNonEmptyString(parsed.id || parsedBody.id),
+        jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+      }),
+      pdfBytes,
+      contentType,
+      evidenceKind: 'preauthorized-host',
+      preauthorizedHost: evidence,
+      annexFormFields: {
+        'organization.taxID': claim('org.schema.Organization.taxID'),
+        'organization.legalName': claim('org.schema.Organization.legalName'),
+        'organization.url': claim('org.schema.Service.url'),
+        'organization.sameAs': asNonEmptyString(organizationPayload?.did),
+      },
+      ...(organizationPayload ? { organizationPayload } : {}),
+      ...(legalRepresentativePayload ? { legalRepresentativePayload } : {}),
+      ...(normalizeOrganizationPublicKeyJwk(organizationPayload?.publicKeyJwk)
+        ? { organizationPublicKeyJwk: normalizeOrganizationPublicKeyJwk(organizationPayload?.publicKeyJwk) }
+        : {}),
+    };
   }
 
   const thid = extractThid({
@@ -521,6 +560,7 @@ export async function parseVerifySubmission(
     thid,
     pdfBytes,
     contentType,
+    evidenceKind: 'pdf',
     ...(controllerPublicKeyJwk ? { controllerPublicKeyJwk } : {}),
     ...(controllerBinding.did ? { controllerDid: controllerBinding.did } : {}),
     ...(controllerBinding.sameAs ? { controllerSameAs: controllerBinding.sameAs } : {}),

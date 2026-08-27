@@ -317,6 +317,10 @@ export interface VerifySubmission {
   thid: string;
   pdfBytes: Buffer<ArrayBufferLike>;
   contentType: string;
+  /** Evidence path selected by ICA; the default/legacy path is a signed PDF. */
+  evidenceKind?: 'pdf' | 'preauthorized-host';
+  /** Verified host/governance binding present only for the PDF-free path. */
+  preauthorizedHost?: import('./preauthorized-host-verifier.ts').PreauthorizedHostEvidence;
   annexFormFields?: Record<string, string>;
   annexExtractionWarnings?: string[];
   /**
@@ -581,6 +585,8 @@ export interface AuditDocumentReference {
 
 export interface VerifyResult {
   ok: boolean;
+  /** Prevents governed host evidence from being persisted or described as a PDF. */
+  evidenceKind?: 'pdf' | 'preauthorized-host';
   verifiedAt: string;
   templateUrl: string;
   templateMatch: boolean;
