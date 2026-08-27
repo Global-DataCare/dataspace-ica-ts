@@ -38,6 +38,24 @@ echo 'ICA_SELF_SIGN_TEST_VALID_PROOF=true' >> .env.deploy.dev
 npm run dev
 ```
 
+## Reproduce governed host onboarding on local-network
+
+Configure the same governed hosts used by the reproducible data-space demo:
+
+```bash
+echo 'ICA_PREAUTHORIZED_HOST_DOMAINS=globaldatacare.es,member.example' >> .env.deploy.dev
+echo 'ICA_PREAUTHORIZED_HOST_NETWORK_KINDS=local-network' >> .env.deploy.dev
+```
+
+The calling GW must use its own `did:web` as `iss`, publish its ES384
+communication verification key in `did.json`, and send a compact JWS over the
+route scope plus exact `body.data[0].resource` in
+`body.hostAuthorizationProof.jws`. The GW CORE
+`Organization/_transaction` adapter creates this proof automatically whenever
+the request contains no PDF attachment. ICA records the governed request
+digest and returns the normal `_verify-response`; it does not create fake PDF
+evidence.
+
 ## First checks
 
 ```bash

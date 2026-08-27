@@ -34,6 +34,30 @@ For production-style operation:
 - use CA-issued material
 - keep secrets outside plain env where possible
 
+## Governed hosts without PDF
+
+The data-space governance decision can preauthorize host operators so the ICA
+does not require an adhesion PDF from those hosts:
+
+```dotenv
+ICA_PREAUTHORIZED_HOST_DOMAINS=globaldatacare.es,member.example
+ICA_PREAUTHORIZED_HOST_NETWORK_KINDS=local-network
+```
+
+This is a server policy, not a client-selected shortcut. A PDF-free `_verify`
+request is accepted only when:
+
+- its route `networkKind` is configured;
+- DIDComm `iss`, `body.data[0].resource.organization.did` and the hostname in
+  `org.schema.Service.url` identify the same configured host domain;
+- `body.hostAuthorizationProof.jws` signs the exact route scope plus resource
+  with ES384; and
+- the JWS key is published by that host's resolved `did:web` document.
+
+The ordinary signed-PDF path remains unchanged for organizations and hosts not
+preauthorized by governance. `ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS` remains a
+different outbound-discovery/SSRF boundary and never grants issuance rights.
+
 ## Secret resolution order
 
 Private key seed/passphrase configuration resolves in this order:

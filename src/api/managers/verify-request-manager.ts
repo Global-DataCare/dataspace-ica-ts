@@ -11,6 +11,7 @@ import type {
 } from '../types.ts';
 import { AuditDocumentStorageService } from '../tools/audit-document-storage.ts';
 import { generateOrganizationCredentialKeyPair } from '../tools/bootstrap-organization-key.ts';
+import { PreauthorizedHostVerificationService } from '../preauthorized-host-verifier.ts';
 
 export type VerifySubmitOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -163,31 +164,39 @@ export class VerifyRequestManager {
   private readonly jobStore: InMemoryVerificationJobStore;
   private readonly verifier: PdfVerificationService;
   private readonly auditStorage: AuditDocumentStorageService;
+  private readonly preauthorizedHostVerifier: PreauthorizedHostVerificationService;
 
   constructor(
     jobStore: InMemoryVerificationJobStore,
     verifier: PdfVerificationService,
     auditStorage: AuditDocumentStorageService = new AuditDocumentStorageService(),
+    preauthorizedHostVerifier: PreauthorizedHostVerificationService = new PreauthorizedHostVerificationService(),
   ) {
     this.jobStore = jobStore;
     this.verifier = verifier;
     this.auditStorage = auditStorage;
+    this.preauthorizedHostVerifier = preauthorizedHostVerifier;
   }
 
   async submit(route: VerifyRouteContext, req: IncomingMessage): Promise<VerifySubmitOutcome> {
     try {
-      const submission = await parseVerifySubmission(req, { jurisdiction: route.jurisdiction });
+      const submission = await parseVerifySubmission(req, { jurisdiction: route.jurisdiction, route });
       this.jobStore.enqueue(submission.thid, route);
 
       setImmediate(async () => {
         this.jobStore.markRunning(submission.thid);
         try {
-          const deferVisibleExtraction = parseBooleanEnv(process.env.ICA_VERIFY_DEFER_VISIBLE_EXTRACTION, false);
+          const deferVisibleExtraction = submission.evidenceKind !== 'preauthorized-host'
+            && parseBooleanEnv(process.env.ICA_VERIFY_DEFER_VISIBLE_EXTRACTION, false);
           const effectiveSubmission = deferVisibleExtraction
             ? await enrichSubmissionWithDeferredVisibleIdentity(submission, route.jurisdiction)
             : submission;
-          const verificationResult = await this.verifier.verify(route, effectiveSubmission);
-          const enrichedResult = await this.auditStorage.persistVerifiedPdf(route, effectiveSubmission, verificationResult);
+          const verificationResult = submission.evidenceKind === 'preauthorized-host'
+            ? await this.preauthorizedHostVerifier.verify(route, effectiveSubmission)
+            : await this.verifier.verify(route, effectiveSubmission);
+          const enrichedResult = submission.evidenceKind === 'preauthorized-host'
+            ? verificationResult
+            : await this.auditStorage.persistVerifiedPdf(route, effectiveSubmission, verificationResult);
           const generatedOrganizationKeyPair = submission.organizationPublicKeyJwk
             ? undefined
             : generateOrganizationCredentialKeyPair();

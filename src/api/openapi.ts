@@ -5001,11 +5001,13 @@ export function buildIcaVerifyOpenApiSpec(
       '/ica/cds-{jurisdiction}/v1/{sector}/{networkKind}/pdf/{resourceType}/_verify': {
         post: {
           tags: ['02 networkKind/pdf'],
-          summary: 'Submit PDF verification job',
+          summary: 'Submit organization verification job',
           description:
-            'Starts an async PDF verification job and returns polling location in headers.\n\n'
+            'Starts an async organization verification job and returns polling location in headers.\n\n'
             + '**Required input**\n'
-            + '- DIDComm plaintext request must carry the signed PDF in `attachments[]`\n\n'
+            + '- ordinary onboarding carries the signed PDF in `attachments[]`\n'
+            + '- a governed PDF-free host sends `body.hostAuthorizationProof.jws` over the exact route scope plus `body.data[0].resource`; ICA requires matching configured host/network policy and resolves the ES384 key from the issuer did:web document\n'
+            + '- the PDF-free branch records governance/request evidence and never labels or persists it as a PDF\n\n'
             + '**Sector authorization contract**\n'
             + '- the authoritative onboarding sector is the `{sector}` path segment\n'
             + '- `_verify` does not require a duplicate sector field inside `organizationPayload`\n'

@@ -25,6 +25,8 @@ legacy `terms` segment remains accepted as an alias of `test`.
 Purpose:
 
 - receive signed PDF evidence
+- alternatively receive a request signed by a server-preauthorized governed
+  host when `ICA_PREAUTHORIZED_HOST_DOMAINS` authorizes it
 - validate signature/evidence/business metadata
 - return async job status and final bundle output
 

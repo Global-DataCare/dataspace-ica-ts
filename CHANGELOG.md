@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add a governed PDF-free host verification path for reproducible
+  `local-network` onboarding. ICA accepts only server-preauthorized host
+  domains, requires matching `iss`, organization `did:web` and Service URL,
+  verifies an ES384 request JWS against the host DID document, and records the
+  governance/request digest without persisting it as a PDF.
+
 ## 1.2.5 - 2026-08-20
 
 - Keep the JWK submitted by legacy legal-organization registration bound to
