@@ -25,6 +25,9 @@ const required = [
   'CA:TRUE',
   'HostingServiceCredential',
   'MSP',
+  '{service}-st-signing-seed',
+  '{service}-prod-signing-seed',
+  'exact Secret Manager versions',
 ];
 const missing = required.filter((token) => !skill.includes(token));
 if (missing.length) {

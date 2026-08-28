@@ -11,6 +11,14 @@ signs the corresponding CSR and returns the leaf, issuing CA and Root
 certificates. The complete public chain is loaded beside the ICA private key
 during activation.
 
+Every product must make the environment boundary visible in custody resource
+names: `{service}-st-signing-seed` and `{service}-st-signing-chain` for
+staging; `{service}-prod-signing-seed` and
+`{service}-prod-signing-chain` for production. An unscoped name is invalid.
+Renaming a deployed staging resource preserves its exact bytes and identity;
+production creates independent signing material. Audited deployment inputs
+pin exact secret versions and never `latest`.
+
 In staging, `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE` regenerates that ICA-owned
 ES384 leaf key with scrypt salt `gdc:ica:vc:seed:v1` and domain separation
 `gdc:v1:ica:vc:es384`. It never derives or loads a `dataspace-ca-ts` Root or

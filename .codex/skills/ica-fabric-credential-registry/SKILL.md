@@ -1,6 +1,6 @@
 ---
 name: ica-fabric-credential-registry
-description: Use for ICA credential identity, Fabric anchoring, evidence hashes, revocation, governed host preauthorization without PDF, and migration between test, local-network, and test-network.
+description: Use for ICA credential identity, Fabric anchoring, evidence hashes, revocation, governed host preauthorization without PDF, environment-scoped signing-secret custody, and migration between test, local-network, test-network, staging, and production.
 ---
 
 # ICA Fabric credential registry
@@ -113,6 +113,19 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
 - Chaincode is `credential-sc` unless explicitly overridden.
 
 ## Root CA and ICA signing trust
+
+- Name every deployed signing secret with an explicit environment token. Use
+  `{service}-st-signing-seed` for staging and
+  `{service}-prod-signing-seed` for production; use the same `st`/`prod`
+  boundary for separately stored signing chains. Reject unscoped names such as
+  `{service}-signing-seed` in every product overlay.
+- Pin exact Secret Manager versions in audited bootstrap inputs. Do not use
+  `latest` as reproducible deployment evidence.
+- A staging rename is not a key rotation: copy the exact bytes to the scoped
+  resource, verify unchanged public key, certificate and `kid`, roll out, and
+  retain the old resource temporarily for rollback. Production must generate
+  a separate seed, key, CSR, certificate and `kid`; never copy staging signing
+  material into production.
 
 - The Root CA is an offline authority whose public static surface is a
   deployment-configured `did:web`, its JWKS/X.509 chain and trust metadata. It is not

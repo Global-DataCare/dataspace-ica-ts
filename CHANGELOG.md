@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Define a product-neutral signing-custody rule: every deployment wrapper must
+  use environment-scoped `-st-` or `-prod-` secret resources, pin immutable
+  Secret Manager versions, preserve identity during naming migrations and
+  generate independent production signing material.
+
 - Mark every `HostingServiceCredential` issued through the authoritative
   `test-network` route with `TestNetworkCredential` in its signed `type[]`.
   Keep schema.org `Service` subjects free of the non-standard

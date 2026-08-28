@@ -96,6 +96,13 @@ Relevant variables:
 - `ICA_GCP_PROJECT_ID`
 - `ICA_VC_PRIVATE_KEY_SEED_PASSPHRASE_GCP_SECRET`
 
+Deployment wrappers must scope the external secret resource name by
+environment for every product: `{service}-st-signing-seed` in staging and
+`{service}-prod-signing-seed` in production. Never rely only on project or
+namespace separation, and never use an unscoped `{service}-signing-seed`.
+Audited bootstrap configuration pins an exact Secret Manager version rather
+than `latest`.
+
 ## Production notes
 
 - Do not rely on self-sign fallback in production.
