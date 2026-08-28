@@ -7,6 +7,11 @@
   domains, requires matching `iss`, organization `did:web` and Service URL,
   verifies an ES384 request JWS against the host DID document, and records the
   governance/request digest without persisting it as a PDF.
+- Emit the resulting `HostingServiceCredential` both as JSON VC and compact
+  VC-JWT. Its evidence identifies the verified governed-host JWS and never
+  invents PDF, PAdES, terms-and-conditions or IPFS document evidence.
+- Add `npm run test:host-preauthorization` as the focused, reproducible
+  contract gate consumed by the open-source local-network evidence runner.
 
 ## 1.2.5 - 2026-08-20
 

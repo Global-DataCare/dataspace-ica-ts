@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, createVerify } from 'node:crypto';
+import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type { VerifyResult, VerifyRouteContext, VerifySubmission } from './types.ts';
 
 type JsonObject = Record<string, unknown>;
@@ -7,6 +8,7 @@ export type PreauthorizedHostEvidence = {
   domain: string;
   did: string;
   verificationMethod: string;
+  ownerCredentialMaterial: string;
   governanceReference: string;
   requestSha384Hex: string;
 };
@@ -139,6 +141,7 @@ export async function verifyPreauthorizedHostEvidence(input: {
     domain: issuerDomain,
     did: issuerDid,
     verificationMethod: kid,
+    ownerCredentialMaterial: toJwkThumbprintSha256Urn(publicKeyJwk),
     governanceReference: `env:ICA_PREAUTHORIZED_HOST_DOMAINS#${issuerDomain}`,
     requestSha384Hex: createHash('sha384').update(payloadEncoded).digest('hex'),
   };

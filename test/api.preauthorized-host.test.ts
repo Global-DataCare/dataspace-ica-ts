@@ -19,6 +19,7 @@ import { PreauthorizedHostVerificationService } from '../src/api/preauthorized-h
 import { InMemoryVerificationJobStore } from '../src/api/job-store.ts';
 import { VerifyRequestManager } from '../src/api/managers/verify-request-manager.ts';
 import { buildVerificationVcBundle } from '../src/api/tools/vc-bundle.ts';
+import { buildVcJwtAttachments } from '../src/api/tools/vc-jwt.ts';
 import { activateSigningKey, resetActiveSigningKeysStateForTests } from '../src/api/tools/active-signing-keys.ts';
 import { PRIVATE_KEY_PEM } from './test-signing-key.fixture.ts';
 
@@ -49,6 +50,7 @@ function requestForHost(hostDomain: string, networkKind = 'local-network'): {
     'org.schema.Organization.taxID': hostDomain === 'globaldatacare.es' ? 'VATES-B42215152' : 'VATES-B00000001',
     'org.schema.Service.url': `https://${hostDomain}/host/cds-ES/v1/health-care`,
     'org.schema.Service.category': 'health-care',
+    'org.schema.Service.owner.email': `controller@${hostDomain}`,
   };
   const resource = {
     meta: { claims },
@@ -131,6 +133,26 @@ test('preauthorized local-network host is accepted without a PDF and produces go
       return Array.isArray(candidate.type) && candidate.type.includes('OrganizationCredential');
     });
   assert.ok(organizationCredential, 'governed evidence must still issue the normal OrganizationCredential');
+  const hostCredential = bundle.data
+    .map((entry) => entry.resource as Record<string, unknown>)
+    .find((resource) => Array.isArray(resource.type)
+      && resource.type.includes('HostingServiceCredential'));
+  assert.ok(hostCredential, 'preauthorized host evidence must issue HostingServiceCredential');
+  assert.equal((hostCredential.credentialSubject as Record<string, unknown>).id,
+    'https://globaldatacare.es');
+  assert.doesNotMatch(JSON.stringify(hostCredential.evidence), /pades|terms-and-conditions|ipfs:\/\//i);
+  assert.match(JSON.stringify(hostCredential.evidence), /governed-host-authorization/i);
+
+  const attachments = buildVcJwtAttachments(route, bundle, 'did:web:ica.local');
+  const hostJwt = attachments
+    .map((attachment) => attachment.data?.json as Record<string, unknown> | undefined)
+    .find((entry) => entry?.credentialId === hostCredential.id)?.jwt;
+  assert.equal(typeof hostJwt, 'string');
+  const jwtPayload = JSON.parse(Buffer.from(String(hostJwt).split('.')[1] || '', 'base64url').toString('utf8'));
+  assert.equal(jwtPayload.jti, hostCredential.id);
+  assert.equal(jwtPayload.sub, (hostCredential.credentialSubject as Record<string, unknown>).id);
+  assert.deepEqual(jwtPayload.vc.type,
+    ['VerifiableCredential', 'ServiceCredential', 'HostingServiceCredential']);
 });
 
 test('unlisted host cannot use the PDF-free verification path', async () => {

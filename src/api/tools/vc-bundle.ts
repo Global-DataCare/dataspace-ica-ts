@@ -879,6 +879,45 @@ function buildOidc4IdaEvidence(
   return evidences;
 }
 
+/**
+ * Projects the verified host JWS as authorization evidence without inventing
+ * a PDF, PAdES signature, IPFS document, or terms-and-conditions record.
+ */
+function buildGovernedHostAuthorizationEvidence(
+  route: VerifyRouteContext,
+  result: VerifyResult,
+  verifierOrganizationDid: string,
+  evidenceTimestamp: string,
+): EvidenceObjectDLT[] {
+  const digestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
+  const digestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
+  return [{
+    type: 'document',
+    method: 'jws',
+    time: evidenceTimestamp,
+    verifier: { organization: verifierOrganizationDid },
+    check_details: [{
+      check_method: 'vcrypt',
+      organization: verifierOrganizationDid,
+      txn: `urn:sha384:${digestHex}`,
+      time: evidenceTimestamp,
+    }],
+    attachments: {
+      digest: { alg: digestAlg, value: hexToBase64(digestHex) },
+    },
+    document_details: {
+      type: 'governed-host-authorization',
+      document_number: route.resourceType,
+      issuer: {
+        id: result.signerSubject || verifierOrganizationDid,
+        type: 'DataSpaceHost',
+        country_code: route.jurisdiction.toUpperCase(),
+        jurisdiction: route.jurisdiction.toUpperCase(),
+      },
+    },
+  } as unknown as EvidenceObjectDLT];
+}
+
 function extractAdditionalOrganizationDataFromPdf(result: VerifyResult): Record<string, unknown> {
   // TODO: Extract additional schema.org fields (like address, telephone) directly from the PDF fields
   if (isStrictIdentitySourcesEnabled()) {
@@ -1198,30 +1237,40 @@ export function buildVerificationVcBundle(
   const evidenceDigestAlg = normalizeDigestAlgorithmForEvidence(result.digest?.alg);
   const evidenceDigestHex = result.digest?.signedPdfHex || result.hashes.signedPdfSha256Hex;
   const documentContentCid = deriveDocumentContentCidV1Raw(evidenceDigestAlg, evidenceDigestHex);
-  const organizationEvidence = buildOidc4IdaEvidence(
-    route,
-    result,
-    serialNumber,
-    verifierOrganizationDid,
-    certificateOrganizationTaxId,
-    documentContentCid,
-    deterministicVcByContract,
-    organizationEvidenceTimestamp,
-    verifierEvidenceTimestamp,
-    includeElectronicSignatureEvidence,
-  );
-  const personEvidence = buildOidc4IdaEvidence(
-    route,
-    result,
-    serialNumber,
-    verifierOrganizationDid,
-    certificateOrganizationTaxId,
-    documentContentCid,
-    deterministicVcByContract,
-    personEvidenceTimestamp,
-    verifierEvidenceTimestamp,
-    includeElectronicSignatureEvidence,
-  );
+  const preauthorizedHostEvidence = result.evidenceKind === 'preauthorized-host';
+  const organizationEvidence = preauthorizedHostEvidence
+    ? buildGovernedHostAuthorizationEvidence(
+      route,
+      result,
+      verifierOrganizationDid,
+      verifierEvidenceTimestamp,
+    )
+    : buildOidc4IdaEvidence(
+      route,
+      result,
+      serialNumber,
+      verifierOrganizationDid,
+      certificateOrganizationTaxId,
+      documentContentCid,
+      deterministicVcByContract,
+      organizationEvidenceTimestamp,
+      verifierEvidenceTimestamp,
+      includeElectronicSignatureEvidence,
+    );
+  const personEvidence = preauthorizedHostEvidence
+    ? organizationEvidence
+    : buildOidc4IdaEvidence(
+      route,
+      result,
+      serialNumber,
+      verifierOrganizationDid,
+      certificateOrganizationTaxId,
+      documentContentCid,
+      deterministicVcByContract,
+      personEvidenceTimestamp,
+      verifierEvidenceTimestamp,
+      includeElectronicSignatureEvidence,
+    );
   const organizationIdentifiers = resolveOrganizationSubjectIdentifiers(route, organizationTaxId, annexOrganizationDid);
   const organizationPropertyValueIdentifier = resolveOrganizationPropertyValueIdentifier(
     result,
@@ -1535,7 +1584,9 @@ export function buildVerificationVcBundle(
           result.ok ? 'information' : 'warning',
           result.ok ? 'informational' : 'processing',
           result.ok
-            ? 'Organization credential extracted from verified document.'
+            ? preauthorizedHostEvidence
+              ? 'Organization credential issued from verified governed-host authorization.'
+              : 'Organization credential extracted from verified document.'
             : 'Organization credential extracted with verification warnings.',
         ),
       },
@@ -1585,7 +1636,9 @@ export function buildVerificationVcBundle(
         outcome: buildOperationOutcome(
           'information',
           'informational',
-          'Hosting service credential extracted from the verified host authorization document.',
+          preauthorizedHostEvidence
+            ? 'Hosting service credential issued from verified governed-host authorization.'
+            : 'Hosting service credential extracted from the verified host authorization document.',
         ),
       },
       resource: hostingServiceVc,

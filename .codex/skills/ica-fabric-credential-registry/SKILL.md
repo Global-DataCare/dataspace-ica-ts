@@ -78,6 +78,11 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   `globaldatacare.es,member.example`. Preserve the normal PDF path for every
   unlisted organization/host and record the governed request digest without
   manufacturing PDF evidence.
+- The accepted no-PDF branch must still emit the host's logical
+  `HostingServiceCredential` as JSON VC and compact VC-JWT. Its evidence names
+  the governed-host JWS authorization and must not synthesize PDF, PAdES,
+  terms-and-conditions or IPFS evidence. Prove this with
+  `npm run test:host-preauthorization`.
 - `NETWORK_MODE=test` remains the legacy deployment default and compatibility
   input, but it must not override an explicit canonical route `networkKind`.
   The request can select whether anchoring applies; it can never name a Fabric

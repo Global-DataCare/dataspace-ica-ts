@@ -54,6 +54,13 @@ request is accepted only when:
   with ES384; and
 - the JWS key is published by that host's resolved `did:web` document.
 
+The successful result includes one `HostingServiceCredential` represented as
+both JSON VC and VC-JWT. Its evidence binds the verified JWS digest and is not
+labelled as PDF/PAdES/IPFS evidence. The Fabric onboarding authority consumes
+that authorization before registering the peer identity with the ICA de
+Fabric; the host subsequently generates its MSP and TLS private keys locally
+during enrollment.
+
 The ordinary signed-PDF path remains unchanged for organizations and hosts not
 preauthorized by governance. `ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS` remains a
 different outbound-discovery/SSRF boundary and never grants issuance rights.
