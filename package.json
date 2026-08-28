@@ -29,6 +29,7 @@
     "api:example:activate": "node ./src/api/scripts/print-activate-example.ts",
     "create:terms:pdf": "node ./src/api/scripts/generate-terms-annex-pdf.ts",
     "api:test": "node --test ./test/api*.test.ts",
+    "test:host-preauthorization": "node --test ./test/api.preauthorized-host.test.ts",
     "test:fabric:credential": "node --test ./test/api.credential-ledger.test.ts",
     "fabric:credential:read": "node ./scripts/read-fabric-credential.mjs",
     "fabric:credential:read:local": "NETWORK_MODE=local-network ICA_CREDENTIAL_LEDGER_ENABLED=true ICA_CREDENTIAL_LEDGER_REQUIRED=true HLF_CONNECTION_PEER=localhost:7051 ICA_FABRIC_TLS_SERVER_NAME=peer0-org1 node --env-file-if-exists=.env.local --env-file-if-exists=.env.local-fabric ./scripts/read-fabric-credential.mjs",

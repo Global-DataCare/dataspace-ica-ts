@@ -192,3 +192,9 @@ decision. It then generates the MSP and TLS private keys and CSRs locally and
 enrolls against Fabric CA; no tenant receives a Fabric private key merely by
 being registered in ICA. Multiple governed dataspace ICAs are supported, and
 each tenant certificate retains the chain of the ICA that issued it.
+
+For a server-preauthorized `local-network` host, the dataspace ICA emits that
+`HostingServiceCredential` as JSON VC plus VC-JWT from the verified host JWS.
+The credential evidence contains the authorization digest only: it must not
+claim that a PDF, PAdES signature, terms document or IPFS object existed. Run
+`npm run test:host-preauthorization` to reproduce this issuance contract.

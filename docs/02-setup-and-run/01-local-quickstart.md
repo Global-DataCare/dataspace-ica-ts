@@ -54,7 +54,16 @@ route scope plus exact `body.data[0].resource` in
 `Organization/_transaction` adapter creates this proof automatically whenever
 the request contains no PDF attachment. ICA records the governed request
 digest and returns the normal `_verify-response`; it does not create fake PDF
-evidence.
+evidence. A successful response contains the host's
+`HostingServiceCredential` as a JSON VC and as its compact VC-JWT attachment.
+This credential authorizes the later Fabric-ICA registration step; it is not
+itself an MSP or TLS certificate.
+
+Run the focused executable contract without starting external services:
+
+```bash
+npm run test:host-preauthorization
+```
 
 ## First checks
 

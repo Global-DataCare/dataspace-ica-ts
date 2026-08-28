@@ -50,6 +50,10 @@ import {
 } from './tools/bootstrap-organization-key.ts';
 import { loadIcaSecurityConfigFromEnv } from './security-mode.ts';
 import { verifyPreauthorizedHostEvidence } from './preauthorized-host-verifier.ts';
+import {
+  HOST_SERVICE_FORM_VERSION,
+  HostServiceFormPdfFieldName,
+} from './models/host-service-form-pdf-fields.ts';
 import type { VerifyRouteContext } from './types.ts';
 
 type ParsedThreadPayload = {
@@ -480,6 +484,19 @@ export async function parseVerifySubmission(
         'organization.legalName': claim('org.schema.Organization.legalName'),
         'organization.url': claim('org.schema.Service.url'),
         'organization.sameAs': asNonEmptyString(organizationPayload?.did),
+        [HostServiceFormPdfFieldName.formVersion]: HOST_SERVICE_FORM_VERSION,
+        [HostServiceFormPdfFieldName.url]: new URL(claim('org.schema.Service.url')).origin,
+        [HostServiceFormPdfFieldName.providerLegalName]: claim('org.schema.Organization.legalName'),
+        [HostServiceFormPdfFieldName.providerAddressCountry]:
+          claim('org.schema.Organization.address.addressCountry')
+          || claim('org.schema.Organization.addressCountry')
+          || options.route.jurisdiction.toUpperCase(),
+        [HostServiceFormPdfFieldName.providerTaxID]: claim('org.schema.Organization.taxID'),
+        [HostServiceFormPdfFieldName.ownerEmail]:
+          claim('org.schema.Service.owner.email')
+          || claim('org.schema.Organization.owner.email')
+          || claim('org.schema.Person.email'),
+        [HostServiceFormPdfFieldName.ownerHasCredentialMaterial]: evidence.ownerCredentialMaterial,
       },
       ...(organizationPayload ? { organizationPayload } : {}),
       ...(legalRepresentativePayload ? { legalRepresentativePayload } : {}),
