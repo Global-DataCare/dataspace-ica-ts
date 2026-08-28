@@ -1076,6 +1076,7 @@ export function buildVerificationVcBundle(
   const payloadOrganizationLegalName = parseOrganizationLegalNameFromPayload(result.organizationPayload);
   const payloadRepresentativeName = parseLegalRepresentativeNameFromPayload(result.legalRepresentativePayload);
   const payloadRepresentativeIdentifier = parseLegalRepresentativeIdentifierFromPayload(result.legalRepresentativePayload);
+  const explicitOrganizationIdentifier = getAnnexField(result, ANNEX_ORGANIZATION_IDENTIFIER_VALUE);
   const signerOrganizationTaxId = parseOrganizationTaxId(subjectDn);
   const signerBelongsToVerifier = Boolean(
     normalizeVatId(signerOrganizationTaxId)
@@ -1096,9 +1097,10 @@ export function buildVerificationVcBundle(
     : firstDefined(certificateOrganizationLegalName, organizationIdentityFromPdf.legalName);
 
   if (!certificateOrganizationTaxId) {
-    if (!organizationIdentityFromPdf.taxID) {
+    if (!organizationIdentityFromPdf.taxID
+      && !(result.evidenceKind === 'preauthorized-host' && explicitOrganizationIdentifier)) {
       throw new Error(
-        'PDF must include a visible organization VAT/CIF field when signer certificate does not contain organization tax ID.',
+        'PDF must include a visible organization VAT/CIF field when signer certificate does not contain organization tax ID; governed hosts may instead provide an explicit registered identifier.',
       );
     }
     if (!organizationIdentityFromPdf.legalName) {
@@ -1551,7 +1553,12 @@ export function buildVerificationVcBundle(
         ? `urn:${dataspaceUrnNamespace}:${urnSector}:hosting-service:vc:${documentContentCid}`
         : `urn:uuid:${randomUUID()}`,
       '@context': ['https://www.w3.org/ns/credentials/v2', 'https://schema.org'],
-      type: ['VerifiableCredential', 'ServiceCredential', 'HostingServiceCredential'],
+      type: [
+        'VerifiableCredential',
+        'ServiceCredential',
+        'HostingServiceCredential',
+        ...(route.section === 'test-network' ? ['TestNetworkCredential'] : []),
+      ],
       issuer: issuerDid,
       validFrom: verifierEvidenceTimestamp,
       credentialSubject: hostSubject,

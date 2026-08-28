@@ -42,6 +42,8 @@ does not require an adhesion PDF from those hosts:
 ```dotenv
 ICA_PREAUTHORIZED_HOST_DOMAINS=globaldatacare.es,member.example
 ICA_PREAUTHORIZED_HOST_NETWORK_KINDS=local-network
+# Optional for a host approved before its DNS/workload exists:
+ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE=/etc/ica/approved-hosts/did-documents.json
 ```
 
 This is a server policy, not a client-selected shortcut. A PDF-free `_verify`
@@ -64,6 +66,17 @@ during enrollment.
 The ordinary signed-PDF path remains unchanged for organizations and hosts not
 preauthorized by governance. `ICA_MEMBER_DISCOVERY_ALLOWED_HOSTS` remains a
 different outbound-discovery/SSRF boundary and never grants issuance rights.
+
+`ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE` points to an authoritative JSON
+array of public DID documents, normally mounted read-only by the deployment.
+ICA verifies the host JWS against the exactly matching document and does not
+require host DNS to exist yet. The file must contain exactly one document for
+the request issuer and no private JWK members. The older inline
+`ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_JSON` form remains supported for local
+compatibility; the file takes precedence when both are set. When neither is
+configured, ICA resolves the normal public `did:web` document. This bootstrap
+option authorizes identity proof only; it does not claim that the host
+workload, DNS or TLS is live.
 
 ## Secret resolution order
 

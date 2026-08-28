@@ -55,6 +55,11 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   individual credentials, identity evidence and identity events use
   `identity-global`. Channel selection is authoritative server configuration,
   never a request field. Provide the four canonical `HLF_*` connection secrets.
+- Credentials restricted to this context carry `TestNetworkCredential` in
+  their signed `type[]`. Do not add `targetNetwork` to schema.org credential
+  subjects: the environment discriminator is the credential type selected
+  from the authoritative route. `network`, `local-network` and `test` omit
+  that marker.
 - The current ICA runtime accepts one configured credential channel per
   deployment. Until typed multi-channel routing exists, use separate
   organization and individual deployment profiles; never mix both planes in
@@ -83,6 +88,22 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   the governed-host JWS authorization and must not synthesize PDF, PAdES,
   terms-and-conditions or IPFS evidence. Prove this with
   `npm run test:host-preauthorization`.
+- For an actual staging or production host, preauthorize its exact canonical
+  domain before deploying the workload: use `test-network` for staging and
+  `network` for production. Keep the sector allowlist exact. Routing regions
+  such as `na`, `latam`, `asia` and `pacific` are Fabric/governance scope and
+  never replace the verified legal jurisdiction in the ICA request.
+- If the host must receive its credential before DNS/workload deployment,
+  mount a JSON file and configure `ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE`
+  with exactly one governance-approved public `did:web` document for that host.
+  Treat it as an
+  authoritative public-key pin, reject private JWK members, and do not fall
+  back to network resolution when the configured array omits the issuer.
+- Keep the authority chain ordered: ICA host approval and
+  `HostingServiceCredential`, Fabric enrollment, private host materialization,
+  Helm runtime installation, then tenant onboarding. The first tenant
+  controller manages the host through the tenant contract; it is independent
+  from the ICA governance controller and Fabric enrollment identity.
 - `NETWORK_MODE=test` remains the legacy deployment default and compatibility
   input, but it must not override an explicit canonical route `networkKind`.
   The request can select whether anchoring applies; it can never name a Fabric
@@ -136,6 +157,10 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
    `npm run api:local:fabric`.
 4. Issue through the normal PDF `_verify` / `_verify-response` flow, or through
    the signed governed-host branch when reproducing a preauthorized host.
+   For the host branch, preserve jurisdictional registration identifiers as
+   typed `identifier.additionalType` and `identifier.value` (for example type
+   `BN`). Keep a registry scheme such as Washington UBI in separate evidence;
+   never manufacture VAT/TAX or use the registry scheme as identifier type.
 5. Extract `body.data[].resource.id`; verify each using
    `npm run fabric:credential:read:local -- --credential-id '<vc.id>'`.
 6. Confirm two assets for a two-credential response and that every attachment

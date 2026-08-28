@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, createVerify } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type { VerifyResult, VerifyRouteContext, VerifySubmission } from './types.ts';
 
@@ -11,6 +12,7 @@ export type PreauthorizedHostEvidence = {
   ownerCredentialMaterial: string;
   governanceReference: string;
   requestSha384Hex: string;
+  didDocumentSource: 'governance-configuration' | 'did-web-resolution';
 };
 
 function asObject(value: unknown): JsonObject | undefined {
@@ -47,6 +49,67 @@ function configuredHostMatches(domain: string): boolean {
   return csv(process.env.ICA_PREAUTHORIZED_HOST_DOMAINS).some(
     (allowed) => domain === allowed || domain.endsWith(`.${allowed}`),
   );
+}
+
+/**
+ * Resolves a governance-pinned public DID document for a host that has not yet
+ * deployed its DNS/TLS workload.
+ *
+ * The configuration contains public verification material only. When the
+ * variable is present it is authoritative and fails closed: ICA never falls
+ * back to a network document for an omitted or malformed configured host.
+ * This removes the bootstrap cycle while the request JWS still proves control
+ * of the corresponding private key.
+ */
+function configuredHostDidDocument(issuerDid: string): JsonObject | undefined {
+  const configuredFile = text(process.env.ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE);
+  let raw = text(process.env.ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_JSON);
+  let source = 'ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_JSON';
+  if (configuredFile) {
+    source = `ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE '${configuredFile}'`;
+    try {
+      raw = readFileSync(configuredFile, 'utf8').trim();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`${source} could not be read: ${reason}`);
+    }
+  }
+  if (!raw) {
+    if (configuredFile) throw new Error(`${source} must not be empty.`);
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${source} must contain valid JSON.`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${source} must contain an array of public DID documents.`);
+  }
+  const documents = parsed.map(asObject);
+  if (documents.some((document) => !document)) {
+    throw new Error(`${source} contains a non-object entry.`);
+  }
+  const matches = documents.filter((document) => text(document?.id) === issuerDid) as JsonObject[];
+  if (matches.length !== 1) {
+    throw new Error(`Governance configuration must contain exactly one public DID document for '${issuerDid}'.`);
+  }
+  if (/"d"\s*:/.test(JSON.stringify(matches[0]))) {
+    throw new Error('Governance-pinned host DID documents must not contain private JWK material.');
+  }
+  return matches[0];
+}
+
+async function resolveHostDidDocument(issuerDid: string): Promise<{
+  document: JsonObject;
+  source: PreauthorizedHostEvidence['didDocumentSource'];
+}> {
+  const configured = configuredHostDidDocument(issuerDid);
+  if (configured) return { document: configured, source: 'governance-configuration' };
+  const response = await fetch(didWebUrl(issuerDid));
+  if (!response.ok) throw new Error(`Unable to resolve preauthorized host DID document (${response.status}).`);
+  return { document: await response.json() as JsonObject, source: 'did-web-resolution' };
 }
 
 function extractServiceDomain(claims: JsonObject): string {
@@ -120,9 +183,8 @@ export async function verifyPreauthorizedHostEvidence(input: {
   if (!kid.startsWith(`${issuerDid}#`)) throw new Error('Host authorization JWS kid must belong to the issuer did:web.');
   if (text(header.alg).toUpperCase() !== 'ES384') throw new Error('Host authorization JWS must use ES384.');
 
-  const response = await fetch(didWebUrl(issuerDid));
-  if (!response.ok) throw new Error(`Unable to resolve preauthorized host DID document (${response.status}).`);
-  const didDocument = await response.json() as JsonObject;
+  const resolvedDidDocument = await resolveHostDidDocument(issuerDid);
+  const didDocument = resolvedDidDocument.document;
   if (text(didDocument.id) !== issuerDid) throw new Error('Resolved host DID document id does not match the request issuer.');
   const methods = Array.isArray(didDocument.verificationMethod) ? didDocument.verificationMethod : [];
   const method = methods.map(asObject).find((candidate) => text(candidate?.id) === kid);
@@ -144,6 +206,7 @@ export async function verifyPreauthorizedHostEvidence(input: {
     ownerCredentialMaterial: toJwkThumbprintSha256Urn(publicKeyJwk),
     governanceReference: `env:ICA_PREAUTHORIZED_HOST_DOMAINS#${issuerDomain}`,
     requestSha384Hex: createHash('sha384').update(payloadEncoded).digest('hex'),
+    didDocumentSource: resolvedDidDocument.source,
   };
 }
 
@@ -180,6 +243,7 @@ export class PreauthorizedHostVerificationService {
       notes: [
         `Host '${evidence.domain}' authorized by the server-side governance allowlist.`,
         `Host control verified with ${evidence.verificationMethod}.`,
+        `Host DID verification source: ${evidence.didDocumentSource}.`,
         'No PDF was required or persisted for this governed host authorization.',
       ],
       annexFormFields: submission.annexFormFields,

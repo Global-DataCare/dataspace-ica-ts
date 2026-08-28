@@ -480,8 +480,14 @@ export async function parseVerifySubmission(
       evidenceKind: 'preauthorized-host',
       preauthorizedHost: evidence,
       annexFormFields: {
+        // Governed hosts may identify the operator with a jurisdictional
+        // registry identifier (for example type BN). Keep its type and value
+        // separate from the registry scheme and from the legacy taxID field.
         'organization.taxID': claim('org.schema.Organization.taxID'),
         'organization.legalName': claim('org.schema.Organization.legalName'),
+        'organization.identifierType':
+          claim('org.schema.Organization.identifier.additionalType'),
+        'organization.identifierValue': claim('org.schema.Organization.identifier.value'),
         'organization.url': claim('org.schema.Service.url'),
         'organization.sameAs': asNonEmptyString(organizationPayload?.did),
         [HostServiceFormPdfFieldName.formVersion]: HOST_SERVICE_FORM_VERSION,
@@ -492,6 +498,10 @@ export async function parseVerifySubmission(
           || claim('org.schema.Organization.addressCountry')
           || options.route.jurisdiction.toUpperCase(),
         [HostServiceFormPdfFieldName.providerTaxID]: claim('org.schema.Organization.taxID'),
+        [HostServiceFormPdfFieldName.providerIdentifierAdditionalType]:
+          claim('org.schema.Organization.identifier.additionalType'),
+        [HostServiceFormPdfFieldName.providerIdentifierValue]:
+          claim('org.schema.Organization.identifier.value'),
         [HostServiceFormPdfFieldName.ownerEmail]:
           claim('org.schema.Service.owner.email')
           || claim('org.schema.Organization.owner.email')

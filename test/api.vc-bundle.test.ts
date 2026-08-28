@@ -1,3 +1,7 @@
+/**
+ * Flow contract: ICA derives credential shape and environment markers from
+ * the canonical verification route, then signs schema.org-compatible VCs.
+ */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -266,6 +270,25 @@ test('buildVerificationVcBundle emits a signed HostingServiceCredential only for
     `${UrnPrefixes.JwkThumbprintSha256KeyId}${'A'.repeat(43)}`,
   );
   assert.ok(credential.proof?.jws);
+
+  const productionRoute = parseVerifyRoute('/ica/cds-ES/v1/health-care/network/pdf/contract/_verify');
+  assert.ok(productionRoute?.ok);
+  if (!productionRoute?.ok) return;
+  activateSigningKey({
+    kid: 'test-key-1',
+    alg: 'ES384',
+    privateKeyPem: PRIVATE_KEY_PEM,
+    x5c: ['TEST_CHAIN_PROVES_NON_SELF_SIGNING_CONTRACT'],
+  });
+  const productionBundle = withDefaultDidWebDomain(() =>
+    buildVerificationVcBundle(productionRoute.context, result, 'did:web:ica.example.org'));
+  const productionHostEntry = productionBundle.data
+    .find((entry) => entry.type === 'HostingService-verification-v1.0');
+  assert.ok(productionHostEntry);
+  assert.deepEqual(
+    (productionHostEntry.resource as Record<string, any>).type,
+    ['VerifiableCredential', 'ServiceCredential', 'HostingServiceCredential'],
+  );
 });
 
 test('buildVerificationVcBundle does not expose non-schema.org controller field', () => {

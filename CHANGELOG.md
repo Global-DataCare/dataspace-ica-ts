@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Mark every `HostingServiceCredential` issued through the authoritative
+  `test-network` route with `TestNetworkCredential` in its signed `type[]`.
+  Keep schema.org `Service` subjects free of the non-standard
+  `targetNetwork` property; production and local credentials omit the marker.
+
 - Add a governed PDF-free host verification path for reproducible
   `local-network` onboarding. ICA accepts only server-preauthorized host
   domains, requires matching `iss`, organization `did:web` and Service URL,
@@ -12,6 +17,21 @@
   invents PDF, PAdES, terms-and-conditions or IPFS document evidence.
 - Add `npm run test:host-preauthorization` as the focused, reproducible
   contract gate consumed by the open-source local-network evidence runner.
+- Allow governance to pin an approved host's public DID document so ICA can
+  verify its signed request and issue the `HostingServiceCredential` before
+  host DNS, TLS or workload deployment. Configured pins fail closed and reject
+  private JWK material; normal `did:web` resolution remains the fallback only
+  when no pin set is configured.
+- Accept the governance-pinned host DID array from a mounted public file via
+  `ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE`; the file takes precedence over
+  the backwards-compatible inline JSON variable and preserves fail-closed
+  verification before host DNS exists.
+- Preserve a governed host's jurisdictional organization identifier as typed
+  `identifier.additionalType` plus `identifier.value` (for example type `BN`).
+  Keep a registry scheme such as Washington UBI in separate evidence rather
+  than treating it as another identifier type. Do not synthesize VAT/TAX
+  identity when no tax identifier was submitted; both OrganizationCredential
+  and HostingServiceCredential retain the registered identifier and host DID.
 
 ## 1.2.5 - 2026-08-20
 

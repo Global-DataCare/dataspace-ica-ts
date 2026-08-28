@@ -129,6 +129,10 @@ for `test`, but response locations are canonicalized to `test`. This path
 value selects the VC signing/registration context; checking the electronic
 signatures in the PDF is a separate operation.
 
+For `test-network`, ICA adds `TestNetworkCredential` to the signed VC
+`type[]`. Schema.org credential subjects do not carry a `targetNetwork`
+property. Production, local and legacy-test credentials omit the marker.
+
 Use a parallel staging deployment and progress through these gates:
 
 1. Deploy `credential-sc` on `identity-eu` for the organization profile and
