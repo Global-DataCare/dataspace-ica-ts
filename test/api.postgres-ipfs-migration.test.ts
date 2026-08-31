@@ -1,7 +1,7 @@
 // Flow contract: reuse shared test fixtures and canonical types; do not introduce duplicated literals.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -235,4 +235,19 @@ test('refuses real audit migration unless private encrypted IPFS custody is expl
   assert.doesNotThrow(
     () => validateIpfsMigrationCustody('private-encrypted', 'true'),
   );
+});
+
+test('public migration gates do not print workstation paths', async () => {
+  const cliSource = await readFile(
+    new URL('../src/api/scripts/migrate-firestore-gcs-to-postgres-ipfs.ts', import.meta.url),
+    'utf8',
+  );
+  const runnerSource = await readFile(
+    new URL('../scripts/run-postgres-ipfs-migration-local.sh', import.meta.url),
+    'utf8',
+  );
+  assert.match(cliSource, /process\.stdout\.write\(`Migration PASS\\n`\)/);
+  assert.match(runnerSource, /echo 'Local PostgreSQL\/IPFS migration evidence: PASS'/);
+  assert.doesNotMatch(cliSource, /Migration PASS: \$\{outputDirectory\}/);
+  assert.doesNotMatch(runnerSource, /Local PostgreSQL\/IPFS migration evidence: \$\{OUTPUT_DIR\}/);
 });
