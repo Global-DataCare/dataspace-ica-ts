@@ -1352,6 +1352,18 @@ Verification collections persistence:
 - `FIRESTORE_PROJECT_ID`
 - `POSTGRES_URL`
 
+Reproducible migration from Firestore/GCS to PostgreSQL/IPFS:
+
+```bash
+npm run test:migration:postgres-ipfs
+npm run evidence:migration:postgres-ipfs
+```
+
+The runner uses only synthetic open-source fixtures and real local Firestore
+Emulator, PostgreSQL and Kubo boundaries. Real credentials, signed PDFs and
+private key material remain outside source control. See
+[`docs/06-architecture-and-reference/02-postgres-ipfs-gap.md`](./docs/06-architecture-and-reference/02-postgres-ipfs-gap.md).
+
 Collection names are derived by code from `ICA_COLLECTIONS_PREFIX` using the fixed pattern:
 - `${prefix}_issued_credentials`
 - `${prefix}_evidence_records`

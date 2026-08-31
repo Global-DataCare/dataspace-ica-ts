@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add the open-source Firestore/GCS to PostgreSQL/IPFS migration engine. It
+  migrates all four ICA verification collections, pins audit bytes in Kubo,
+  rewrites governed references to immutable CIDs and fails on unresolved
+  objects or reconciliation-digest mismatch.
+- Add a reproducible local evidence gate across Firebase Firestore Emulator,
+  PostgreSQL and Kubo with synthetic fixtures, content-only manifests and
+  checksums; real credentials, signed PDFs and private key material remain
+  outside source control.
+- Remove the PostgreSQL adapter's 200-record read limit and expose explicit
+  pool shutdown for one-shot migration processes.
+- Pin patched `brace-expansion` transitively so the production dependency
+  audit remains free of known high-severity findings.
+
 - Define a product-neutral signing-custody rule: every deployment wrapper must
   use environment-scoped `-st-` or `-prod-` secret resources, pin immutable
   Secret Manager versions, preserve identity during naming migrations and

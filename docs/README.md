@@ -30,7 +30,7 @@ This directory is the curated documentation entrypoint for developers and operat
   deployment and production operation concerns
 - `06-architecture-and-reference`
   architecture notes and pointers to existing deep dives
-  including the current gap to reach GW-style `PostgreSQL + IPFS` support
+  including the reproducible Firestore/GCS to PostgreSQL/IPFS migration
 
 ## Existing detailed docs
 

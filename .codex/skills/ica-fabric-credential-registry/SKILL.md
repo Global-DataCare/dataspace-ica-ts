@@ -162,6 +162,28 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   ICA must support several governed dataspace ICA DIDs; the issuer that
   verified a tenant remains visible in that tenant's certificate chain.
 
+## Firestore/GCS to PostgreSQL/IPFS migration
+
+- Treat migration software, schemas, synthetic fixtures, tests and sanitized
+  evidence formats as open source. Never publish real credentials, signed
+  contracts, personal data, private keys or migration inventories.
+- Run `npm run test:migration:postgres-ipfs` and then
+  `npm run evidence:migration:postgres-ipfs`; the second gate crosses real
+  Firestore Emulator, PostgreSQL and Kubo boundaries.
+- Require an exact `ICA_MIGRATION_CONFIRM_SOURCE_PROJECT` match before apply.
+- Migrate audit objects first, pin CIDv1, hash their bytes and rewrite only
+  governed GCS references whose object key has an exact mapping.
+- Require `private-encrypted` IPFS custody and explicit data-protection
+  confirmation. IPFS content addressing never makes signed private documents
+  open data and never replaces encryption or access control.
+- Refuse cutover when any GCS reference is unresolved or when the canonical
+  transformed-source digest differs from the PostgreSQL reread digest.
+- The managed Firestore export is a recovery artifact, not SQL. Restore it to
+  a private temporary Firestore database if live source access is unavailable,
+  then run the same open-source migrator.
+- Preserve migration reports privately when object keys or counts reveal
+  participant activity; only synthetic reports belong in public evidence.
+
 ## Verification workflow
 
 1. Run `npm run test:fabric:credential`.

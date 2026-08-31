@@ -239,6 +239,9 @@ export class VerificationCollectionsPostgresAdapter implements VerificationColle
   private async getPool(): Promise<any> {
     if (!this.poolPromise) {
       this.poolPromise = (async () => {
+        if (!this.config.postgresUrl) {
+          throw new Error('DB_PROVIDER=postgres requires POSTGRES_URL.');
+        }
         const pg = await importPgModuleDynamically();
         const Pool = pg.Pool || pg.default.Pool;
         return new Pool({ connectionString: this.config.postgresUrl });
@@ -303,8 +306,17 @@ export class VerificationCollectionsPostgresAdapter implements VerificationColle
   private async getList<T>(table: string): Promise<T[]> {
     const pool = await this.getPool();
     await this.ensureTables(pool);
-    const { rows } = await pool.query(`SELECT data FROM "${table}" LIMIT 200`);
+    const { rows } = await pool.query(`SELECT data FROM "${table}" ORDER BY id`);
     return rows.map((r: any) => r.data as T);
+  }
+
+  /** Releases the PostgreSQL pool used by one migration or server process. */
+  async close(): Promise<void> {
+    if (!this.poolPromise) return;
+    const pool = await this.poolPromise;
+    await pool.end();
+    this.poolPromise = null;
+    this.tablesCreated = false;
   }
 
   async listIssuedCredentials(): Promise<IssuedCredentialRecord[]> {
