@@ -90,4 +90,4 @@ jq -e '.objectCount == 1 and (.objects | length == 1)' \
   shasum -a 256 -c SHA256SUMS
 )
 printf 'PASS\n' > "${OUTPUT_DIR}/PASS"
-echo "Local PostgreSQL/IPFS migration evidence: ${OUTPUT_DIR}"
+echo 'Local PostgreSQL/IPFS migration evidence: PASS'

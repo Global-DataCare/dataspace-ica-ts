@@ -88,7 +88,7 @@ async function main(): Promise<void> {
       `${JSON.stringify(report, null, 2)}\n`,
       { mode: 0o600 },
     );
-    process.stdout.write(`Migration PASS: ${outputDirectory}\n`);
+    process.stdout.write(`Migration PASS\n`);
   } finally {
     await target.close();
   }
