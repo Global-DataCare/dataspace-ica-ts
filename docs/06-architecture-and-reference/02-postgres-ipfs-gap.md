@@ -1,186 +1,103 @@
-# PostgreSQL And IPFS Gap To Match GW
+# Migración reproducible de Firestore/GCS a PostgreSQL/IPFS
 
-## Purpose
+## Resultado implementado
 
-This note records what `dataspace-ica-ts` still needs in order to offer the
-same operational profile that GW now supports:
+ICA incluye un flujo open source para migrar sus cuatro colecciones de
+verificación desde Firestore a PostgreSQL y los contratos PDF de auditoría
+desde un export GCS descargado a IPFS/Kubo.
 
-- `DB_PROVIDER=postgres`
-- `STORAGE_PROVIDER=ipfs`
+El flujo:
 
-The goal here is precision, not aspiration. The list below reflects the code
-that exists today in this repository.
+- lee todas las páginas de Firestore;
+- carga cada objeto en Kubo con pin y CIDv1;
+- calcula SHA-256 de los bytes sin incluirlos en el manifiesto;
+- sustituye referencias gobernadas `provider: gcs` por `ipfs://<cid>`;
+- copia credenciales, evidencias, DID bindings y DID documents a PostgreSQL;
+- vuelve a leer PostgreSQL sin el antiguo límite de 200 registros;
+- compara un digest canónico de origen transformado y destino;
+- falla si queda una referencia GCS sin resolver;
+- produce manifiesto, informe y checksums sin claves ni contenido documental.
 
-## Current State
+El punto de entrada es:
 
-Today ICA has code-level support for that target profile, but it is not yet a
-fully closed operational track.
+```bash
+node src/api/scripts/migrate-firestore-gcs-to-postgres-ipfs.ts --apply
+```
 
-What already exists:
+## Prueba local open source
 
-- deterministic evidence/document identifiers already use IPFS-style `ipfs://`
-  attachment URLs in several verification and retrieve flows
-- confidential-at-rest protection already exists for persisted signed adhesion
-  contracts for the dataspace
-- runtime config tests already cover:
-  - `DB_PROVIDER=postgres`
-  - `DB_PROVIDER=firestore`
-  - `STORAGE_PROVIDER=ipfs`
-  - `STORAGE_PROVIDER=gcs`
-  - `STORAGE_PROVIDER=mem`
-- runtime code now accepts:
-  - `DB_PROVIDER=postgres`
-  - `STORAGE_PROVIDER=ipfs`
+```bash
+npm ci
+npm run test:migration:postgres-ipfs
+npm run evidence:migration:postgres-ipfs
+```
 
-Important:
+La prueba ejecuta límites reales, no mocks: Firebase Firestore Emulator,
+PostgreSQL y Kubo. Si Firebase no encuentra Java 21 automáticamente, configure:
 
-- This note is not proposing legacy storage/runtime modes as architecture,
-  roadmap, or GW/GW Template alignment.
-- The target profile for this gap remains strictly:
-  - `DB_PROVIDER=postgres`
-  - `STORAGE_PROVIDER=ipfs`
+```bash
+export ICA_MIGRATION_JAVA_HOME='<ruta-al-jdk-21>'
+npm run evidence:migration:postgres-ipfs
+```
 
-Primary enforcement points:
+La evidencia queda bajo `artifacts/postgres-ipfs-migration-<fecha>/` y contiene:
 
-- `src/api/tools/audit-document-storage.ts`
-- `src/api/tools/verification-collections-storage.ts`
-- `src/api/types.ts`
-- `src/api/openapi.ts`
-- `test/api.runtime-config.test.ts`
+```text
+PASS
+SHA256SUMS
+audit-ipfs-manifest.json
+postgres-migration-report.json
+```
 
-## What Already Helps
+Las fixtures son sintéticas. El software, esquema, configuración, pruebas y
+manifiestos de ejemplo son open source; los datos reales, PDF firmados,
+credenciales, claves, seeds y contraseñas nunca se publican.
 
-Some existing behavior reduces the future migration cost:
+## Ejecución sobre un entorno privado
 
-- `DETERMINISTIC_VC_BY_CONTRACT=true` already emits `ipfs://<cid>`-style
-  evidence attachment URLs in the business contract
-- retrieval/search flows already understand that the logical evidence locator
-  may be `ipfs://...` instead of legacy `urn:audit:gcs:...`
-- the confidential-storage ADR already separates ICA from GW's full
-  per-document CEK model, so adding IPFS does not require copying all GW
-  cryptographic persistence semantics first
+Variables obligatorias:
 
-That means the main storage/provider implementation is now present. The
-remaining gap is mostly around operator support and deeper validation.
+```dotenv
+FIRESTORE_PROJECT_ID=<proyecto-origen>
+ICA_MIGRATION_CONFIRM_SOURCE_PROJECT=<mismo-proyecto-origen>
+ICA_MIGRATION_SOURCE_COLLECTIONS_PREFIX=<prefijo-origen>
+ICA_MIGRATION_TARGET_COLLECTIONS_PREFIX=<prefijo-destino>
+ICA_MIGRATION_AUDIT_SOURCE_DIR=/secure/migration/gcs
+ICA_MIGRATION_OUTPUT_DIR=/secure/migration/evidence/run-001
+POSTGRES_URL=postgresql://<usuario>:<password>@<host>:5432/<database>
+IPFS_API_URL=http://<kubo-interno>:5001
+ICA_MIGRATION_IPFS_CUSTODY=private-encrypted
+ICA_MIGRATION_DATA_PROTECTION_CONFIRMED=true
+```
 
-## Required Changes
+`ICA_MIGRATION_AUDIT_SOURCE_DIR` debe ser el directorio padre de
+`ica-audit/`, de modo que las claves relativas coincidan con las referencias
+persistidas, por ejemplo `ica-audit/<sector>/.../document.pdf`.
 
-To reach real support parity with GW, ICA still needs all of the following.
+El Kubo de producción debe pertenecer a una red privada y los documentos deben
+estar cifrados antes de su incorporación. El CLI rechaza cualquier modo de
+custodia distinto de `private-encrypted`. IPFS aporta direccionamiento por
+contenido; no convierte datos personales en datos abiertos ni sustituye el
+cifrado, el control de acceso o una copia de seguridad.
 
-### 1. Harden PostgreSQL support
+El export administrado de Firestore almacenado en GCS no es JSON ni SQL. Para
+recuperarlo sin acceso a la base viva, impórtelo primero en una base Firestore
+temporal privada y ejecute el mismo migrador contra esa base. Para el corte
+normal se ejecuta contra Firestore en modo solo lectura durante una ventana de
+escritura congelada.
 
-Code support exists now, but it still needs stronger validation and operator
-guidance.
+## Gates antes del corte
 
-Remaining work:
+1. Ejecutar la prueba local desde un checkout limpio.
+2. Ejecutar una migración de ensayo sobre una copia privada.
+3. Exigir cero referencias GCS sin resolver.
+4. Exigir igualdad entre los digests de origen transformado y PostgreSQL.
+5. Recuperar por CID una muestra y comparar SHA-256.
+6. Arrancar ICA con `DB_PROVIDER=postgres` y `STORAGE_PROVIDER=ipfs`.
+7. Probar emisión, consulta, revocación y recuperación de documento.
+8. Ensayar rollback antes de cambiar DNS.
 
-- validate schema management for:
-  - issued credentials
-  - evidence records
-  - DID bindings
-  - DID documents
-- verify current query semantics used by:
-  - credential retrieve
-  - credential search
-  - credential status/revoke
-  - terms remove
-  - dataspace sync follow-up persistence
-- add integration tests for the PostgreSQL provider
-- document expected connection/bootstrap requirements for operators
-
-### 2. Harden IPFS adhesion-contract storage support
-
-Code support exists now, but the IPFS path still needs runtime hardening.
-
-Remaining work:
-
-- validate the Kubo-backed storage adapter for persisted signed adhesion
-  contracts under real operator conditions
-- confirm and document required env vars:
-  - `IPFS_API_URL`
-  - `IPFS_GATEWAY_URL`
-  - `IPFS_MFS_ROOT`
-- decide the canonical persisted locator policy:
-  - external/public `ipfs://<cid>`
-  - internal mutable path if needed for local management
-- add one live E2E smoke for `upload -> retrieve/delete`
-
-### 3. Keep the first scope limited to adhesion contracts only
-
-This was the point that needed clarification.
-
-ICA currently uses storage only for verified signed adhesion contracts, via
-`AuditDocumentStorageService`.
-
-For the first parity pass, do not generalize this into a generic blob-storage
-initiative.
-
-Expected first-pass scope:
-
-- keep ICA storage scoped to verified signed adhesion contracts
-- add IPFS only for that existing adhesion-contract persistence path
-- do not introduce a broader multi-artifact storage abstraction unless a later
-  concrete requirement appears
-
-Why:
-
-- it matches the current ICA architecture
-- it is the shortest path to real `postgres + ipfs` support
-- it avoids reopening scope around unrelated confidential artifacts
-
-### 4. Add local operator support
-
-GW support is not only code; it also includes a runnable local profile.
-
-ICA still needs equivalent operator assets:
-
-- `docker-compose.ipfs.yml`
-- optional `docker-compose.postgres.yml` if not already present elsewhere
-- a local env example dedicated to `postgres + ipfs`
-- startup scripts/README flow for that profile
-
-Without this, the feature would exist only as code, not as a supported path.
-
-### 5. Extend the test matrix
-
-Current tests now prove config parsing for `postgres` and `ipfs`, but not full
-end-to-end operator behavior.
-
-To claim support parity, ICA should add:
-
-- integration tests for the PostgreSQL collections adapter
-- unit/integration tests for the IPFS audit storage adapter
-- one live E2E smoke with local Kubo
-
-## Recommended Implementation Order
-
-The least risky order is:
-
-1. verify the merged PostgreSQL adapter under integration tests
-2. verify the merged IPFS adapter with local Kubo smoke coverage
-3. add local env/compose assets
-4. document the supported operator profile
-
-This keeps the contract honest and avoids documenting unsupported env
-combinations too early.
-
-## Non-Goals For The First Pass
-
-The first parity pass does not need to include:
-
-- migration of ICA to GW's full CEK-per-document storage model
-- replacement of all Firestore/GCS paths in staging/production
-- retroactive migration of historical GCS audit blobs into IPFS
-- expansion beyond the current ICA signed-adhesion-contract storage scope
-
-## Bottom Line
-
-`dataspace-ica-ts` now has code support for `PostgreSQL + IPFS`, but it still
-needs operator assets and deeper integration/E2E validation before that profile
-is fully closed as a supported path.
-
-The missing pieces are concrete and bounded:
-
-- env/operator assets
-- deeper integration/E2E coverage
-- final operator-facing documentation
+Este repositorio prueba el motor de migración y sus límites PostgreSQL/Kubo. Un
+despliegue real y la migración de datos privados siguen siendo operaciones
+controladas: no se presentan como realizadas hasta conservar su informe y las
+evidencias del entorno destino.

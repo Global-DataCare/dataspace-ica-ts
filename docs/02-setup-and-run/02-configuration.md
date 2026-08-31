@@ -109,6 +109,20 @@ than `latest`.
 - Prefer Workload Identity over mounted JSON credentials in GKE.
 - Keep `fabric-ca`, private enrollment material, and internal CA bridge traffic private.
 
+## PostgreSQL/IPFS migration profile
+
+The migration executable uses separate source and target prefixes and requires
+an exact source-project confirmation before `--apply`. Run the synthetic gate
+first:
+
+```bash
+npm run evidence:migration:postgres-ipfs
+```
+
+Production migration configuration must remain in a private inventory. The
+public contract and variable list are documented in
+[`../06-architecture-and-reference/02-postgres-ipfs-gap.md`](../06-architecture-and-reference/02-postgres-ipfs-gap.md).
+
 ## Additional references
 
 - GKE/security: [`../05-operations-and-deployment/01-gke-and-security.md`](../05-operations-and-deployment/01-gke-and-security.md)

@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    environment:
+      POSTGRES_USER: ica
+      POSTGRES_PASSWORD: ica-local-migration
+      POSTGRES_DB: ica
+    ports:
+      - "127.0.0.1:${ICA_MIGRATION_POSTGRES_PORT:-55434}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ica -d ica"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  ipfs:
+    image: ipfs/kubo@sha256:7cc0e0de8f845d6c9fa1dce414c069974c34ed3cd3742e0d4f5bccda4adc376d
+    ports:
+      - "127.0.0.1:${ICA_MIGRATION_IPFS_API_PORT:-55003}:5001"
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - ipfs-data:/data/ipfs
+
+volumes:
+  postgres-data:
+  ipfs-data:
