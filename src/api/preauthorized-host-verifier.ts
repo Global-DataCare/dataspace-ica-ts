@@ -2,6 +2,7 @@ import { createHash, createPublicKey, createVerify } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type { VerifyResult, VerifyRouteContext, VerifySubmission } from './types.ts';
+import { createHostActivationServiceFromEnv } from './host-activation.ts';
 
 type JsonObject = Record<string, unknown>;
 
@@ -12,7 +13,7 @@ export type PreauthorizedHostEvidence = {
   ownerCredentialMaterial: string;
   governanceReference: string;
   requestSha384Hex: string;
-  didDocumentSource: 'governance-configuration' | 'did-web-resolution';
+  didDocumentSource: 'host-activation' | 'governance-configuration' | 'did-web-resolution';
 };
 
 function asObject(value: unknown): JsonObject | undefined {
@@ -131,14 +132,17 @@ function decodeSegment(segment: string, label: string): Buffer {
 }
 
 /**
- * Authorizes the PDF-free branch from server policy and a signed did:web
- * request. The hostname allowlist establishes governance eligibility; the JWS
- * and resolved DID document establish control of that configured host.
+ * Authorizes the PDF-free branch from server policy and a signed host request.
+ * The hostname allowlist establishes governance eligibility. A one-time host
+ * activation authorizes the submitted public JWK; the legacy DID resolution
+ * branch remains available for already deployed integrations.
  */
 export async function verifyPreauthorizedHostEvidence(input: {
   route: VerifyRouteContext;
   envelope: JsonObject;
   resource: JsonObject;
+  activationCode?: string;
+  thid: string;
 }): Promise<PreauthorizedHostEvidence> {
   const allowedNetworks = csv(process.env.ICA_PREAUTHORIZED_HOST_NETWORK_KINDS || 'local-network');
   if (!allowedNetworks.includes(input.route.section.toLowerCase())) {
@@ -183,13 +187,27 @@ export async function verifyPreauthorizedHostEvidence(input: {
   if (!kid.startsWith(`${issuerDid}#`)) throw new Error('Host authorization JWS kid must belong to the issuer did:web.');
   if (text(header.alg).toUpperCase() !== 'ES384') throw new Error('Host authorization JWS must use ES384.');
 
-  const resolvedDidDocument = await resolveHostDidDocument(issuerDid);
-  const didDocument = resolvedDidDocument.document;
-  if (text(didDocument.id) !== issuerDid) throw new Error('Resolved host DID document id does not match the request issuer.');
-  const methods = Array.isArray(didDocument.verificationMethod) ? didDocument.verificationMethod : [];
-  const method = methods.map(asObject).find((candidate) => text(candidate?.id) === kid);
-  const publicKeyJwk = asObject(method?.publicKeyJwk);
-  if (!publicKeyJwk) throw new Error('Host authorization verification method was not found in the issuer DID document.');
+  let publicKeyJwk: JsonObject | undefined;
+  let didDocumentSource: PreauthorizedHostEvidence['didDocumentSource'];
+  let governanceReference: string;
+  if (text(input.activationCode)) {
+    publicKeyJwk = asObject(organization.publicKeyJwk);
+    if (!publicKeyJwk || text(publicKeyJwk.d)) {
+      throw new Error('Host activation requires one public organization.publicKeyJwk without private material.');
+    }
+    didDocumentSource = 'host-activation';
+    governanceReference = '';
+  } else {
+    const resolvedDidDocument = await resolveHostDidDocument(issuerDid);
+    const didDocument = resolvedDidDocument.document;
+    if (text(didDocument.id) !== issuerDid) throw new Error('Resolved host DID document id does not match the request issuer.');
+    const methods = Array.isArray(didDocument.verificationMethod) ? didDocument.verificationMethod : [];
+    const method = methods.map(asObject).find((candidate) => text(candidate?.id) === kid);
+    publicKeyJwk = asObject(method?.publicKeyJwk);
+    if (!publicKeyJwk) throw new Error('Host authorization verification method was not found in the issuer DID document.');
+    didDocumentSource = resolvedDidDocument.source;
+    governanceReference = `env:ICA_PREAUTHORIZED_HOST_DOMAINS#${issuerDomain}`;
+  }
   const verifier = createVerify('sha384');
   verifier.update(`${protectedEncoded}.${payloadEncoded}`);
   verifier.end();
@@ -199,14 +217,38 @@ export async function verifyPreauthorizedHostEvidence(input: {
   );
   if (!valid) throw new Error('Invalid preauthorized host JWS signature.');
 
+  if (text(input.activationCode)) {
+    const activation = await createHostActivationServiceFromEnv().consume({
+      activationCode: text(input.activationCode),
+      domain: issuerDomain,
+      networkKind: input.route.section,
+      thid: input.thid,
+      approval: {
+        jurisdiction: input.route.jurisdiction,
+        sector: input.route.sector,
+        legalName: text(claims['org.schema.Organization.legalName']),
+        addressCountry: text(claims['org.schema.Organization.address.addressCountry']),
+        controllerEmail: text(claims['org.schema.Service.owner.email']),
+        serviceUrl: text(claims['org.schema.Service.url']),
+        ...(text(claims['org.schema.Organization.taxID'])
+          ? { taxId: text(claims['org.schema.Organization.taxID']) }
+          : {
+              identifierType: text(claims['org.schema.Organization.identifier.additionalType']),
+              identifierValue: text(claims['org.schema.Organization.identifier.value']),
+            }),
+      },
+    });
+    governanceReference = `host-activation:${activation.id}`;
+  }
+
   return {
     domain: issuerDomain,
     did: issuerDid,
     verificationMethod: kid,
     ownerCredentialMaterial: toJwkThumbprintSha256Urn(publicKeyJwk),
-    governanceReference: `env:ICA_PREAUTHORIZED_HOST_DOMAINS#${issuerDomain}`,
+    governanceReference,
     requestSha384Hex: createHash('sha384').update(payloadEncoded).digest('hex'),
-    didDocumentSource: resolvedDidDocument.source,
+    didDocumentSource,
   };
 }
 
@@ -243,7 +285,7 @@ export class PreauthorizedHostVerificationService {
       notes: [
         `Host '${evidence.domain}' authorized by the server-side governance allowlist.`,
         `Host control verified with ${evidence.verificationMethod}.`,
-        `Host DID verification source: ${evidence.didDocumentSource}.`,
+        `Host request-key verification source: ${evidence.didDocumentSource}.`,
         'No PDF was required or persisted for this governed host authorization.',
       ],
       annexFormFields: submission.annexFormFields,

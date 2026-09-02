@@ -1,10 +1,10 @@
 // scripts/extract-vat-date-pairs-from-pdf.js
-// Extrae (R: <VAT>) y fechas cercanas de PDFs prueba* en /Users/fernando/GITS/gdc-workspace/examples
+// Extrae (R: <VAT>) y fechas cercanas de PDFs de prueba del directorio configurado.
 import fs from 'fs';
 import path from 'path';
 import * as pdfParseNS from 'pdf-parse';
 
-const examplesDir = '/Users/fernando/GITS/gdc-workspace/examples';
+const examplesDir = process.env.ICA_PDF_EXAMPLES_DIR || path.resolve(process.cwd(), '../examples');
 const pdfs = fs.readdirSync(examplesDir).filter(f => f.startsWith('prueba') && f.endsWith('.pdf'));
 
 const vatRegex = /\(R:\s*([A-Z0-9]+)\)/g;

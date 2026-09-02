@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const examplesDir = '/Users/fernando/GITS/gdc-workspace/examples';
+const examplesDir = process.env.ICA_PDF_EXAMPLES_DIR || path.resolve(process.cwd(), '../examples');
 const pdfs = fs.readdirSync(examplesDir).filter(f => f.startsWith('prueba') && f.endsWith('.pdf'));
 
 const vatRegex = /\(R: ?([A-Z0-9]+)\)/g;

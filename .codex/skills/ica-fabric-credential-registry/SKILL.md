@@ -75,10 +75,13 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
 - A governed host may omit the PDF only when its domain is in
   `ICA_PREAUTHORIZED_HOST_DOMAINS` and the route kind is in
   `ICA_PREAUTHORIZED_HOST_NETWORK_KINDS`. Require matching host DID, Service
-  URL and issuer plus an ES384 compact JWS over the route scope and exact
-  forwarded resource;
-  resolve the key from the host's `did:web` document. Never treat the discovery
-  allowlist or a client route value as issuance authorization.
+  URL and issuer, a one-time activation bound to the exact domain, network,
+  jurisdiction, issuance sector, legal identity, controller and service URL, and
+  an ES384 compact JWS over the route scope and exact forwarded resource.
+  Verify the JWS with the public JWK carried by the request; the activation is
+  the missing governance trust anchor. `thid` is correlation, never a bearer
+  secret. Never treat the discovery allowlist or a client route value as
+  issuance authorization.
 - For reproducible `local-network`, configure
   `globaldatacare.es,member.example`. Preserve the normal PDF path for every
   unlisted organization/host and record the governed request digest without
@@ -93,12 +96,15 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
   `network` for production. Keep the sector allowlist exact. Routing regions
   such as `na`, `latam`, `asia` and `pacific` are Fabric/governance scope and
   never replace the verified legal jurisdiction in the ICA request.
-- If the host must receive its credential before DNS/workload deployment,
-  mount a JSON file and configure `ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE`
-  with exactly one governance-approved public `did:web` document for that host.
-  Treat it as an
-  authoritative public-key pin, reject private JWK members, and do not fall
-  back to network resolution when the configured array omits the issuer.
+- Create the activation from the running ICA pod with
+  `ica-cli host:activation:create --approval-stdin`. Feed the private approval
+  from the operator computer with `kubectl exec -i`; do not copy it into the
+  pod. Persist only the activation SHA-256 hash plus approved metadata and
+  capture the raw JSON once on the computer running `kubectl`. Never put the
+  raw code in Git, Helm values, ConfigMaps, shell history or Kubernetes Job logs.
+- `ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE` is legacy compatibility only.
+  Do not require or document a provisional DID file for new hosts; GW publishes
+  its KMS-backed operational DID after Helm bootstrap.
 - Keep the authority chain ordered: ICA host approval and
   `HostingServiceCredential`, Fabric enrollment, private host materialization,
   Helm runtime installation, then tenant onboarding. The first tenant

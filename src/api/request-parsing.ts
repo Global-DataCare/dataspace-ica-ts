@@ -459,10 +459,19 @@ export async function parseVerifySubmission(
     const dataArray = Array.isArray(parsedBody.data) ? parsedBody.data : [];
     const firstResource = dataArray.length > 0 ? asObject((dataArray[0] as Record<string, unknown>)?.resource) : undefined;
     if (!firstResource) throw new Error('PDF-free host verification requires body.data[0].resource.');
+    const thid = extractThid({
+      thid: asNonEmptyString(parsed.thid || parsedBody.thid),
+      id: asNonEmptyString(parsed.id || parsedBody.id),
+      jti: asNonEmptyString(parsed.jti || parsedBody.jti),
+    });
+    const authorizationHeader = normalizeHeader(req.headers.authorization).trim();
+    const activationMatch = authorizationHeader.match(/^HostActivation\s+(.+)$/i);
     const evidence = await verifyPreauthorizedHostEvidence({
       route: options.route,
       envelope: parsed,
       resource: firstResource,
+      activationCode: activationMatch?.[1]?.trim(),
+      thid,
     });
     const resourceMeta = asObject(firstResource.meta);
     const claims = asObject(resourceMeta?.claims) || {};
@@ -470,11 +479,7 @@ export async function parseVerifySubmission(
     const organizationPayload = asObject(firstResource.organization);
     const legalRepresentativePayload = asObject(firstResource.legalRepresentative);
     return {
-      thid: extractThid({
-        thid: asNonEmptyString(parsed.thid || parsedBody.thid),
-        id: asNonEmptyString(parsed.id || parsedBody.id),
-        jti: asNonEmptyString(parsed.jti || parsedBody.jti),
-      }),
+      thid,
       pdfBytes,
       contentType,
       evidenceKind: 'preauthorized-host',

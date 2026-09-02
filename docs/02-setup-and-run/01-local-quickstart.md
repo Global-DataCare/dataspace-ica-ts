@@ -47,14 +47,14 @@ echo 'ICA_PREAUTHORIZED_HOST_DOMAINS=globaldatacare.es,member.example' >> .env.d
 echo 'ICA_PREAUTHORIZED_HOST_NETWORK_KINDS=local-network' >> .env.deploy.dev
 ```
 
-The calling GW must use its own `did:web` as `iss`, publish its ES384
-communication verification key in `did.json`, and send a compact JWS over the
-route scope plus exact `body.data[0].resource` in
-`body.hostAuthorizationProof.jws`. The GW CORE
-`Organization/_transaction` adapter creates this proof automatically whenever
-the request contains no PDF attachment. ICA records the governed request
-digest and returns the normal `_verify-response`; it does not create fake PDF
-evidence. A successful response contains the host's
+The host receives a one-time activation bound to its domain, network,
+jurisdiction, issuance sector, legal identity, controller and service URL. It
+generates an ES384 request key locally, includes only the public JWK and `kid`,
+and signs the route scope plus exact `body.data[0].resource` in
+`body.hostAuthorizationProof.jws`. The activation replaces the provisional
+host `did.json`; `thid` remains only the asynchronous correlation identifier.
+ICA records the governed request digest and returns the normal
+`_verify-response`; it does not create fake PDF evidence. A successful response contains the host's
 `HostingServiceCredential` as a JSON VC and as its compact VC-JWT attachment.
 This credential authorizes the later Fabric-ICA registration step; it is not
 itself an MSP or TLS certificate.
@@ -63,6 +63,7 @@ Run the focused executable contract without starting external services:
 
 ```bash
 npm run test:host-preauthorization
+node --test test/api.host-activation.test.ts
 ```
 
 ## First checks
