@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Align clean ICA installations with `gdc-common-utils-ts@2.7.2`, matching the
+  current shared contract consumed by downstream professional portal, and enforce the
+  manifest/lockfile pin with an executable release test.
+
 - Add the open-source Firestore/GCS to PostgreSQL/IPFS migration engine. It
   migrates all four ICA verification collections, pins audit bytes in Kubo,
   rewrites governed references to immutable CIDs and fails on unresolved
