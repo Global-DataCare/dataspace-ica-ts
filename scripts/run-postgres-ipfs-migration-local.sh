@@ -78,7 +78,9 @@ node "${ROOT}/src/api/scripts/migrate-firestore-gcs-to-postgres-ipfs.ts" --apply
 
 POSTGRES_MIGRATION_TEST_URL="${POSTGRES_URL}" \
 IPFS_MIGRATION_TEST_API_URL="${IPFS_API_URL}" \
-  node --test "${ROOT}/test/integration/postgres-ipfs-migration.integration.test.ts"
+  node --test \
+    "${ROOT}/test/integration/postgres-ipfs-migration.integration.test.ts" \
+    "${ROOT}/test/integration/host-activation-postgres.integration.test.ts"
 
 jq -e '.sourceDigestSha256 == .targetDigestSha256 and (.unresolvedGcsReferences | length == 0)' \
   "${OUTPUT_DIR}/postgres-migration-report.json" >/dev/null

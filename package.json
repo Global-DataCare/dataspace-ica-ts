@@ -1,6 +1,6 @@
 {
   "name": "dataspace-ica",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "private": true,
   "type": "module",
   "description": "Private ICA CLI for onboarding validation, CSR signing and DCAT publication",
@@ -29,7 +29,8 @@
     "api:example:activate": "node ./src/api/scripts/print-activate-example.ts",
     "create:terms:pdf": "node ./src/api/scripts/generate-terms-annex-pdf.ts",
     "api:test": "node --test ./test/api*.test.ts",
-    "test:host-preauthorization": "node --test ./test/api.preauthorized-host.test.ts",
+    "test:host-preauthorization": "node --test ./test/api.host-activation.test.ts ./test/api.preauthorized-host.test.ts",
+    "host:activation:create": "node ./bin/ica-cli.js host:activation:create",
     "test:fabric:credential": "node --test ./test/api.credential-ledger.test.ts",
     "test:migration:postgres-ipfs": "node --test ./test/api.postgres-ipfs-migration.test.ts",
     "evidence:migration:postgres-ipfs": "bash ./scripts/run-postgres-ipfs-migration-local.sh",

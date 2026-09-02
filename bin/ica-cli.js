@@ -27,6 +27,11 @@ Usage:
   ica-cli domain:reserve --domain <domain> --request-id <id>
   ica-cli domain:activate --domain <domain> --request-id <id>
 
+  ica-cli host:activation:create \
+    --approval-stdin \
+    [--expires-in 72h] \
+    [--created-by <operator-id>]
+
   ica-cli ca:init-root --common-name <cn> [--country ES] [--out-dir ca/root] [--days 3650] [--force]
   ica-cli ca:init-ica \
     --common-name <cn> \
@@ -164,6 +169,60 @@ function normalizeDomain(rawDomain) {
   const trimmed = rawDomain.trim().toLowerCase();
   const withoutProtocol = trimmed.replace(/^https?:\/\//, '');
   return withoutProtocol.replace(/\/+$/, '');
+}
+
+function parseDurationSeconds(rawValue) {
+  const value = String(rawValue || '72h').trim().toLowerCase();
+  const match = value.match(/^(\d+)(s|m|h)$/);
+  if (!match) throw new Error('--expires-in must use seconds, minutes or hours, for example 72h.');
+  const amount = Number.parseInt(match[1], 10);
+  const factor = match[2] === 'h' ? 3600 : match[2] === 'm' ? 60 : 1;
+  return amount * factor;
+}
+
+async function cmdCreateHostActivation(args) {
+  if (String(process.env.DB_PROVIDER || 'mem').trim().toLowerCase() === 'mem') {
+    throw new Error('host:activation:create requires DB_PROVIDER=postgres or firestore so the running ICA can consume it.');
+  }
+  if (!args['approval-stdin']) {
+    throw new Error('host:activation:create requires --approval-stdin with the approved host JSON on standard input.');
+  }
+  let approvedHost;
+  try {
+    approvedHost = JSON.parse(readFileSync(0, 'utf8'));
+  } catch {
+    throw new Error('--approval-stdin must receive one valid approved host JSON object.');
+  }
+  const { createHostActivationServiceFromEnv } = await import('../src/api/host-activation.ts');
+  const created = await createHostActivationServiceFromEnv().create({
+    domain: normalizeDomain(String(approvedHost.hostDomain || '')),
+    networkKind: String(approvedHost.networkKind || ''),
+    expiresInSeconds: parseDurationSeconds(args['expires-in']),
+    createdBy: typeof args['created-by'] === 'string' && args['created-by'].trim()
+      ? args['created-by'].trim()
+      : 'ica-kubernetes-operator',
+    approval: {
+      jurisdiction: approvedHost.jurisdiction,
+      sector: approvedHost.sector,
+      legalName: approvedHost.legalName,
+      addressCountry: approvedHost.addressCountry,
+      controllerEmail: approvedHost.controllerEmail,
+      serviceUrl: approvedHost.serviceUrl,
+      ...(approvedHost.taxId
+        ? { taxId: approvedHost.taxId }
+        : {
+            identifierType: approvedHost.identifierType,
+            identifierValue: approvedHost.identifierValue,
+          }),
+    },
+  });
+  process.stdout.write(`${JSON.stringify({
+    domain: created.record.domain,
+    networkKind: created.record.networkKind,
+    expiresAt: created.record.expiresAt,
+    approval: created.record.approval,
+    activationCode: created.activationCode,
+  }, null, 2)}\n`);
 }
 
 function normalizeSubjectValue(value) {
@@ -675,6 +734,9 @@ async function main() {
       return;
     case 'domain:activate':
       cmdDomainActivate(args);
+      return;
+    case 'host:activation:create':
+      await cmdCreateHostActivation(args);
       return;
     case 'ca:init-root':
       cmdCaInitRoot(args);

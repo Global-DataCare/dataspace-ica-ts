@@ -5006,7 +5006,7 @@ export function buildIcaVerifyOpenApiSpec(
             'Starts an async organization verification job and returns polling location in headers.\n\n'
             + '**Required input**\n'
             + '- ordinary onboarding carries the signed PDF in `attachments[]`\n'
-            + '- a governed PDF-free host sends `body.hostAuthorizationProof.jws` over the exact route scope plus `body.data[0].resource`; ICA requires matching configured host/network policy and verifies the ES384 key from a governance-pinned public DID document (preferably mounted with `ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE`) or, when no pin set is configured, the resolved issuer did:web document\n'
+            + '- a governed PDF-free host sends a one-time `HostActivation` authorization plus `body.hostAuthorizationProof.jws` over the exact route scope and `body.data[0].resource`; ICA requires matching approved domain, network, jurisdiction, sector, legal identity, controller and service URL, and verifies the JWS with the submitted public JWK\n'
             + '- governed hosts may carry a jurisdictional registration as `org.schema.Organization.identifier.additionalType` plus `.value` (for example identifier type `BN`); ICA preserves it as typed identity, keeps any registry scheme in separate evidence, and does not relabel it as VAT/TAX\n'
             + '- the PDF-free branch records governance/request evidence and never labels or persists it as a PDF\n\n'
             + '**Sector authorization contract**\n'

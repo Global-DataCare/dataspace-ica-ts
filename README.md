@@ -1140,7 +1140,9 @@ It is created only when you run a manual export command.
 Generate/update export of `body.data[].resource` from a stored verification response:
 
 ```bash
-cd /Users/fernando/GITS/gdc-workspace/dataspace-ica-cli && node -e "import fs from 'node:fs/promises'; (async()=>{ const source='/Users/fernando/GITS/gdc-workspace/response_1772857305295.json'; const raw=await fs.readFile(source,'utf8'); const didcomm=JSON.parse(raw); const dataEntries=Array.isArray(didcomm.body?.data)?didcomm.body.data:[]; const resources=dataEntries.map((e)=>({ type:e?.type, resource:e?.resource })).filter((e)=>e.resource); const out={ generatedAt:new Date().toISOString(), source, resources }; const target='/Users/fernando/GITS/gdc-workspace/dataspace-ica-cli/test-output-vc-resources.json'; await fs.writeFile(target, JSON.stringify(out,null,2)); console.log(target); })();"
+export ICA_RESPONSE_JSON="${HOME}/gdc-evidence/verification-response.json"
+export ICA_VC_RESOURCES_OUTPUT="${PWD}/test-output-vc-resources.json"
+node --input-type=module -e "import fs from 'node:fs/promises'; const source=process.env.ICA_RESPONSE_JSON; const raw=await fs.readFile(source,'utf8'); const didcomm=JSON.parse(raw); const dataEntries=Array.isArray(didcomm.body?.data)?didcomm.body.data:[]; const resources=dataEntries.map((entry)=>({type:entry?.type,resource:entry?.resource})).filter((entry)=>entry.resource); const target=process.env.ICA_VC_RESOURCES_OUTPUT; await fs.writeFile(target,JSON.stringify({generatedAt:new Date().toISOString(),source,resources},null,2)); console.log(target);"
 ```
 
 ## Docker, GKE and Cloud Run URL behavior

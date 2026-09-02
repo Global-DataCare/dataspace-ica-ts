@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 1.2.8 - 2026-09-02
+
+- Replace the provisional governed-host DID-document handoff with a one-time,
+  governance-bound activation stored only by SHA-256 hash; bind its domain,
+  network, jurisdiction, issuance sector, legal identity, controller and
+  service URL, verify the signed request against its submitted public JWK, and
+  provide an ICA CLI command suitable for safe stdin/stdout handoff through a
+  running Kubernetes pod.
+- Remove developer-specific absolute paths from public instructions and PDF
+  inspection utilities, and enforce repository portability with a test.
+
 ## 1.2.7 - 2026-09-02
 
 - Require lockfile-authoritative npm ci, effective internal dependency

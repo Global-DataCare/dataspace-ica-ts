@@ -3,10 +3,10 @@
  * 1. A GW forwards one DIDComm `_verify` request for its own governed host identity.
  * 2. ICA derives the host from the canonical Service URL and organization did:web.
  * 3. ICA accepts the PDF-free request only when that host and route network kind are configured server-side.
- * 4. Before DNS/workload exists, ICA may verify the host key against a governance-pinned public DID document.
+ * 4. Before DNS/workload exists, a one-use activation binds the approved profile and submitted public JWK.
  * 5. ICA projects the governed organization claims into verification evidence used for VC issuance.
  * 6. A mismatching/unlisted host or an unauthorized network kind fails before the PDF verifier or persistence runs.
- * Authorization invariant: client route values never create trust; the ICA environment allowlist does.
+ * Authorization invariant: allowlist, activation, exact approved claims and proof of private-key possession are all required.
  * Persistence invariant: the governed request digest is auditable, but it is never stored or labelled as a PDF.
  */
 import assert from 'node:assert/strict';
@@ -26,6 +26,10 @@ import { buildVerificationVcBundle } from '../src/api/tools/vc-bundle.ts';
 import { buildVcJwtAttachments } from '../src/api/tools/vc-jwt.ts';
 import { activateSigningKey, resetActiveSigningKeysStateForTests } from '../src/api/tools/active-signing-keys.ts';
 import { PRIVATE_KEY_PEM } from './test-signing-key.fixture.ts';
+import {
+  HostActivationService,
+  resetHostActivationMemStateForTests,
+} from '../src/api/host-activation.ts';
 
 const previousHosts = process.env.ICA_PREAUTHORIZED_HOST_DOMAINS;
 const previousNetworks = process.env.ICA_PREAUTHORIZED_HOST_NETWORK_KINDS;
@@ -33,6 +37,7 @@ const previousDidDocuments = process.env.ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_JS
 const previousDidDocumentsFile = process.env.ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE;
 const previousFetch = global.fetch;
 const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+const previousDbProvider = process.env.DB_PROVIDER;
 
 test.afterEach(() => {
   if (previousHosts === undefined) delete process.env.ICA_PREAUTHORIZED_HOST_DOMAINS;
@@ -46,7 +51,10 @@ test.afterEach(() => {
   global.fetch = previousFetch;
   if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
   else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  if (previousDbProvider === undefined) delete process.env.DB_PROVIDER;
+  else process.env.DB_PROVIDER = previousDbProvider;
   resetActiveSigningKeysStateForTests();
+  resetHostActivationMemStateForTests();
 });
 
 function requestForHost(
@@ -69,6 +77,7 @@ function requestForHost(
       'org.schema.Organization.address.addressCountry': registeredIdentifier.addressCountry,
     } : {
       'org.schema.Organization.taxID': hostDomain === 'globaldatacare.es' ? 'VATES-B42215152' : 'VATES-B00000001',
+      'org.schema.Organization.address.addressCountry': 'ES',
     }),
     'org.schema.Service.url': `https://${hostDomain}/host/cds-ES/v1/${sector}`,
     'org.schema.Service.category': sector,
@@ -179,6 +188,44 @@ test('preauthorized local-network host is accepted without a PDF and produces go
   assert.equal(jwtPayload.sub, (hostCredential.credentialSubject as Record<string, unknown>).id);
   assert.deepEqual(jwtPayload.vc.type,
     ['VerifiableCredential', 'ServiceCredential', 'HostingServiceCredential']);
+});
+
+test('one-time host activation verifies the submitted JWK without DNS or a mounted DID document', async () => {
+  process.env.ICA_PREAUTHORIZED_HOST_DOMAINS = 'host.provider.example';
+  process.env.ICA_PREAUTHORIZED_HOST_NETWORK_KINDS = 'network';
+  process.env.DB_PROVIDER = 'mem';
+  delete process.env.ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_JSON;
+  delete process.env.ICA_PREAUTHORIZED_HOST_DID_DOCUMENTS_FILE;
+  const activation = await new HostActivationService({ provider: 'mem' }).create({
+    domain: 'host.provider.example',
+    networkKind: 'network',
+    expiresInSeconds: 3600,
+    createdBy: 'ica-operator',
+    approval: {
+      jurisdiction: 'ES',
+      sector: 'health-care',
+      legalName: 'EXAMPLE MEMBER ORGANIZATION LTD.',
+      addressCountry: 'ES',
+      taxId: 'VATES-B00000001',
+      controllerEmail: 'controller@host.provider.example',
+      serviceUrl: 'https://host.provider.example/host/cds-ES/v1/health-care',
+    },
+  });
+  const { req, route } = requestForHost('host.provider.example', 'network');
+  (req as any).headers.authorization = `HostActivation ${activation.activationCode}`;
+  global.fetch = async () => { throw new Error('Activation bootstrap must not resolve a DID document.'); };
+
+  const submission = await parseVerifySubmission(req, { route });
+  assert.equal(submission.preauthorizedHost?.didDocumentSource, 'host-activation');
+  assert.equal(submission.preauthorizedHost?.domain, 'host.provider.example');
+
+  const replay = requestForHost('host.provider.example', 'network');
+  (replay.req as any).headers.authorization = `HostActivation ${activation.activationCode}`;
+  global.fetch = async () => { throw new Error('Activation replay must not resolve a DID document.'); };
+  await assert.rejects(
+    parseVerifySubmission(replay.req, { route: replay.route }),
+    /invalid, expired, already consumed or does not match/i,
+  );
 });
 
 test('governance-pinned host DID verifies animal-care staging before host DNS and workload exist', async () => {
