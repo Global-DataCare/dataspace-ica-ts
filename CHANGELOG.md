@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.2.7 - 2026-09-02
+
+- Require lockfile-authoritative npm ci, effective internal dependency
+  verification with npm ls, and immediate E2E/Playwright termination after
+  the first failed project before expanding to sibling browsers or journeys.
+
 - Align clean ICA installations with `gdc-common-utils-ts@2.7.2`, matching the
   current shared contract consumed by downstream professional portal, and enforce the
   manifest/lockfile pin with an executable release test.

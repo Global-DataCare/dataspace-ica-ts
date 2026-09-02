@@ -39,3 +39,21 @@ A previous successful run under Node 24 is evidence to reproduce that same
 environment first; do not manufacture a new failure by choosing another
 runtime.
 
+## Synchronize the installed dependency tree
+
+1. Treat the committed `package-lock.json` as authoritative and run `npm ci`
+   before builds, tests, E2E, Playwright, release or deployment gates.
+2. A clean Git worktree does not prove that `node_modules` matches the lock.
+   An older installed internal package is operationally dirty even when
+   `git status` is empty.
+3. Record effective internal versions with `npm ls` after `npm ci`; never infer
+   them only from `package.json` or the lockfile.
+
+## Fail fast across browser and E2E matrices
+
+Run the smallest failing journey and the first browser/project first. Configure
+Playwright with `maxFailures: 1`, or stop the orchestration immediately after
+the first failed project. Do not continue with mobile, sibling browsers or
+later journeys after desktop has already failed. Correct the first failure,
+rerun that focused project, and only then expand to the complete matrix. A
+stopped sibling project is pending, never passing or skipped evidence.
