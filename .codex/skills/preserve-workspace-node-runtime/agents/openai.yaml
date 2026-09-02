@@ -1,0 +1,4 @@
+interface:
+  display_name: "Preserve Workspace Node Runtime"
+  short_description: "Keep commands on the active Node 24 runtime"
+  default_prompt: "Use the active workspace Node 24 runtime and do not switch versions implicitly."
