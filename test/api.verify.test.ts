@@ -1,3 +1,4 @@
+// Flow contract: reuse shared test fixtures and canonical types; do not introduce duplicated literals.
 import { PRIVATE_KEY_PEM } from './test-signing-key.fixture.ts';
 import { resetActiveSigningKeysStateForTests, activateSigningKey } from '../src/api/tools/active-signing-keys.ts';
 import assert from 'node:assert/strict';
@@ -43,6 +44,7 @@ import {
   selectPrimaryCredentialSignature,
 } from '../src/api/cert-pdf-verifier.ts';
 import { AuditDocumentStorageService } from '../src/api/tools/audit-document-storage.ts';
+import { deriveDeterministicEcPrivateKeyPem } from '../src/api/tools/deterministic-key-material.ts';
 import { buildDidcommMessage } from '../src/api/tools/didcomm-message.ts';
 import { parseSpacesReplaceSubmission } from '../src/api/request-parsing.ts';
 import {
@@ -1545,6 +1547,83 @@ test('VerifyResponseManager returns generated organization public key and contro
   } finally {
     if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
     else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+  }
+});
+
+test('VerifyResponseManager applies the deployment-gated controller rebind policy during reverify', async () => {
+  const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
+  const previousRebindPolicy = process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY;
+  process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  const oldControllerKey = deriveDeterministicEcPrivateKeyPem('verify-response-controller-old', 'P-384').publicJwk;
+  const newControllerKey = deriveDeterministicEcPrivateKeyPem('verify-response-controller-new', 'P-384').publicJwk;
+  const organizationKey = deriveDeterministicEcPrivateKeyPem('verify-response-organization', 'P-384').publicJwk;
+  const controllerSameAs = normalizeSameAsHash('controller@example.org');
+  const routeResult = {
+    ...buildTestVerifyResult('controller-rebind-policy'),
+    signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, E=controller@example.org, CN=Signer',
+    controllerPublicKeyJwk: newControllerKey,
+    controllerSameAs,
+    organizationPublicKeyJwk: organizationKey,
+    organizationKeySource: 'attachment' as const,
+  };
+
+  const exercise = async (enabled: boolean) => {
+    resetVerificationCollectionsMemStateForTests();
+    process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY = String(enabled);
+    const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/test/pdf/contract/_verify-response');
+    assert.ok(parsed && parsed.ok);
+    if (!parsed || !parsed.ok) throw new Error('Expected canonical verify-response route.');
+    const collectionsService = new VerificationCollectionsService();
+    await collectionsService.storeDidBindings([
+      {
+        id: 'acme::es::animal-care::VATES-TSTORG0000',
+        tenantId: parsed.context.tenantId,
+        jurisdiction: parsed.context.jurisdiction,
+        sector: parsed.context.sector,
+        resourceType: parsed.context.resourceType,
+        thid: 'thid-controller-original',
+        taxId: 'VATES-TSTORG0000',
+        controllerSameAs,
+        controllerPublicKeyJwk: oldControllerKey,
+        status: 'confirmed',
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    ]);
+    const store = new InMemoryVerificationJobStore(60);
+    const thid = enabled ? 'thid-controller-rebind-enabled' : 'thid-controller-rebind-disabled';
+    store.enqueue(thid, parsed.context);
+    store.markSucceeded(thid, routeResult);
+    const manager = new VerifyResponseManager(store, collectionsService);
+    const outcome = await manager.poll(
+      parsed.context,
+      { method: 'POST', headers: {} } as unknown as IncomingMessage,
+      new URL(`http://localhost/acme/cds-ES/v1/animal-care/test/pdf/contract/_verify-response?thid=${thid}`),
+    );
+    return { outcome, collectionsService };
+  };
+
+  try {
+    const denied = await exercise(false);
+    assert.equal(denied.outcome.type, 'failed');
+    if (denied.outcome.type === 'failed') {
+      assert.match(JSON.stringify(denied.outcome.payload), /ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY=true/);
+    }
+
+    const allowed = await exercise(true);
+    assert.equal(allowed.outcome.type, 'succeeded');
+    const bindings = await allowed.collectionsService.listDidBindings();
+    assert.deepEqual(bindings[0]?.controllerPublicKeyJwk, newControllerKey);
+    assert.equal(
+      bindings[0]?.previousControllerKeyThumbprint,
+      toJwkThumbprintSha256Urn(oldControllerKey),
+    );
+  } finally {
+    resetVerificationCollectionsMemStateForTests();
+    if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
+    else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
+    if (previousRebindPolicy === undefined) delete process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY;
+    else process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY = previousRebindPolicy;
   }
 });
 

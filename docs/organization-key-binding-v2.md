@@ -65,6 +65,14 @@ That allows this flow:
 - Those two keys may be equal in simple didactic flows, but ICA must not assume they are the same.
 - Neither of them is automatically the same as the organization credential-signing key.
 - Repeating `_verify` with the same contract and a different controller binding key must be rejected in the hardened production flow.
+- A staging or recovery deployment may explicitly set
+  `ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY=true`. In that deployment only, a
+  successful `_verify` may supersede the active JWK when the controller
+  identity is unchanged. ICA records the previous RFC 9278 thumbprint and the
+  transition timestamp. The flag never authorizes changing
+  `controller.sameAs` and remains disabled by default.
+- After a successful `_remove`, re-enrollment may bind a new controller key
+  without this opt-in because the previous lifecycle is already closed.
 - Post-onboarding add/rotate/revoke of organization keys still belongs to a dedicated key-management endpoint, not to `_verify`.
 
 ## Deletion Direction
