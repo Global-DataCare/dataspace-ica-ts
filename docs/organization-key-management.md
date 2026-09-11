@@ -53,6 +53,18 @@ This means an organization can:
 - or send its own organization key during `_verify` as the canonical credential key
 - if ICA generated the key, `_create` must explicitly confirm that same `organization.publicKeyJwk`
 
+## Temporary Re-verification Rebind
+
+Until the governed rotation endpoint exists, a test or recovery deployment can
+set `ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY=true`. A successful `_verify`
+then replaces the active controller JWK only when `controller.sameAs` still
+identifies the same controller. The transition stores the superseded RFC 9278
+thumbprint and timestamp. This is disabled by default and is not the future
+proof-of-possession rotation protocol.
+
+Normal re-enrollment after a successful `_remove` does not require the flag:
+the removed lifecycle may bind a new key through `_verify` before `_create`.
+
 ## Future Add/Rotate Flow
 
 Post-onboarding organization key updates still need a dedicated endpoint, for example:

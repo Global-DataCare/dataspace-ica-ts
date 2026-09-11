@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add the deployment-scoped `ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY` recovery
+  policy. It is disabled by default, permits a successful re-verification to
+  supersede only the active JWK of the same controller identity, and records
+  the previous RFC 9278 thumbprint and transition timestamp. Re-enrollment
+  after completed `_remove` remains allowed without the opt-in.
+
 ## 1.2.8 - 2026-09-02
 
 - Replace the provisional governed-host DID-document handoff with a one-time,

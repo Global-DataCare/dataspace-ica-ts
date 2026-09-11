@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type { DidcommAttachment, VerifyBundleResponse, VerifyRouteContext } from '../types.ts';
 import {
   createVerificationCollectionsAdapter,
   resetVerificationCollectionsMemAdapterStateForTests,
 } from './verification-collections/adapters.ts';
 import { DataspaceSyncService } from './dataspace-sync.ts';
+import { sameAsValuesEqual } from './multihash.ts';
 import type {
   DidBindingRecord,
   DidDocumentRecord,
@@ -93,6 +95,10 @@ export function loadVerificationCollectionsConfigFromEnv(): VerificationCollecti
     firestoreProjectId: (process.env.FIRESTORE_PROJECT_ID || '').trim() || undefined,
     firestoreCollectionPrefix: prefix,
     postgresUrl: (process.env.POSTGRES_URL || '').trim() || undefined,
+    allowControllerRebindOnReverify: parseBoolean(
+      process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY,
+      false,
+    ),
   };
 }
 
@@ -277,7 +283,10 @@ export class VerificationCollectionsService {
   ): Promise<void> {
     const nowIso = new Date().toISOString();
     const extracted = extractCredentialRecords(route, thid, bundle, nowIso, attachments);
-    const didBindings = extractDidBindingRecords(route, thid, bundle, nowIso);
+    const didBindings = await this.applyControllerRebindPolicy(
+      extractDidBindingRecords(route, thid, bundle, nowIso),
+      nowIso,
+    );
     if (!extracted.issued.length && !extracted.evidence.length && !didBindings.length) {
       return;
     }
@@ -320,6 +329,53 @@ export class VerificationCollectionsService {
       }
       console.error(message);
     }
+  }
+
+  private async applyControllerRebindPolicy(
+    incomingBindings: DidBindingRecord[],
+    nowIso: string,
+  ): Promise<DidBindingRecord[]> {
+    if (!incomingBindings.length) return incomingBindings;
+
+    const existingById = new Map(
+      (await this.listDidBindings()).map((record) => [record.id, record]),
+    );
+
+    return incomingBindings.map((incoming) => {
+      const existing = existingById.get(incoming.id);
+      const existingKey = existing?.controllerPublicKeyJwk;
+      const incomingKey = incoming.controllerPublicKeyJwk;
+      if (!existing || !existingKey || !incomingKey) return incoming;
+
+      const existingThumbprint = toJwkThumbprintSha256Urn(existingKey);
+      const incomingThumbprint = toJwkThumbprintSha256Urn(incomingKey);
+      if (existingThumbprint === incomingThumbprint) return incoming;
+
+      if (
+        existing.controllerSameAs
+        && incoming.controllerSameAs
+        && !sameAsValuesEqual(existing.controllerSameAs, incoming.controllerSameAs)
+      ) {
+        throw new Error(
+          `Re-verification cannot replace controller identity for organization.taxID "${incoming.taxId}". `
+          + 'Use the governed controller-change flow.',
+        );
+      }
+
+      if (existing.status !== 'removed' && !this.config.allowControllerRebindOnReverify) {
+        throw new Error(
+          `Re-verification cannot replace the active controller key for organization.taxID "${incoming.taxId}". `
+          + 'Set ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY=true only in the deployment that explicitly permits this recovery flow.',
+        );
+      }
+
+      return {
+        ...incoming,
+        createdAt: existing.createdAt,
+        previousControllerKeyThumbprint: existingThumbprint,
+        controllerKeyReboundAt: nowIso,
+      };
+    });
   }
 
   async storeIssuedCredentials(records: IssuedCredentialRecord[]): Promise<void> {

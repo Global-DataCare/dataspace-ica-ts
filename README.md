@@ -1310,6 +1310,7 @@ Verification behavior:
 - `ICA_VERIFY_STRICT_TEMPLATE_MATCH` (default `true`)
 - `ICA_VERIFY_TEMPLATE_MATCH_MODE` (`strict-bytes` | `logical-content`)
 - `ICA_VERIFY_DIGEST_ALGORITHM` (default `sha3-384`)
+- `ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY` (default `false`; recovery-only opt-in allowing a successful `_verify` for the same controller identity to supersede its active JWK while recording the previous RFC 9278 thumbprint)
 - `VERIFIERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify configured verifier organizations)
 - `VERIFICATION_PARTNERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify verification partners organizations)
 

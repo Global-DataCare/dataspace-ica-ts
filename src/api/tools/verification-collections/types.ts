@@ -68,6 +68,10 @@ export type DidBindingRecord = {
   confirmedAt?: string;
   removedAt?: string;
   removeReason?: string;
+  /** RFC 9278 URN of the active key superseded by an opted-in re-verification. */
+  previousControllerKeyThumbprint?: string;
+  /** Audit timestamp for the explicit re-verification key-rebind transition. */
+  controllerKeyReboundAt?: string;
 };
 
 export type DidDocumentRecord = {
@@ -115,6 +119,8 @@ export type VerificationCollectionsConfig = {
   firestoreProjectId?: string;
   firestoreCollectionPrefix: string;
   postgresUrl?: string;
+  /** Disabled by default; permits a verified PDF flow to supersede an active controller key binding. */
+  allowControllerRebindOnReverify?: boolean;
 };
 
 export interface VerificationCollectionsAdapter {
