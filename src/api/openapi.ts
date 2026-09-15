@@ -2903,8 +2903,9 @@ export function buildIcaVerifyOpenApiSpec(
             + '- if `organization.publicKeyJwk` is explicitly sent to `_create`, it is used as the organization verification key for the DID document and stored as the new active binding for that organization\n\n'
             + '**Important**\n'
             + '- Swagger placeholder coordinates (`<org-x-coordinate>`, etc.) are not valid runtime values\n'
-            + '- if you send explicit JWKs, copy exact values from `_verify-response`: find the `Organization-verification-v1.0` and `ServiceController-verification-v1.0` entries by `type`, then read each entry\'s `publicKeyJwk`; Bundle positions are not stable\n'
-            + '- if `_create` returns `No controller publicKeyJwk found ...`, send `controller.publicKeyJwk` explicitly from the `_verify-response` entry whose `type` is `ServiceController-verification-v1.0`\n\n'
+            + '- if you send explicit JWKs, resend the exact caller-owned organization and controller public keys originally submitted to `_verify`; do not replace them with response-derived state\n'
+            + '- the `Organization-verification-v1.0` and `ServiceController-verification-v1.0` response entries may echo those public keys for optional continuity checks; locate entries by `type` because Bundle positions are not stable\n'
+            + '- if `_create` returns `No controller publicKeyJwk found ...`, send the original `controller.publicKeyJwk` explicitly or complete `_verify` with that controller binding first\n\n'
             + '**SDK v2**\n'
             + '- `setControllerMessageSigningPublicKey()` protects DIDComm communication metadata during `_verify`\n'
             + '- `setControllerBindingPublicKey()` sends the controller business/binding key in `body.data[].resource.controller.publicKeyJwk`\n'
@@ -3008,7 +3009,7 @@ export function buildIcaVerifyOpenApiSpec(
                     },
                   },
                   createDidDocumentRequestOnlyVatAndControllerJwk: {
-                    summary: 'Fast path from Swagger: change only VAT and paste controller.publicKeyJwk from _verify-response',
+                    summary: 'Fast path from Swagger: change only VAT and resend the controller.publicKeyJwk submitted to _verify',
                     value: {
                       jti: 'req-auto',
                       type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
@@ -3072,8 +3073,8 @@ export function buildIcaVerifyOpenApiSpec(
                                 publicKeyJwk: {
                                   kty: 'EC',
                                   crv: 'P-384',
-                                  x: 'copy-from-_verify-response-body-data-0-publicKeyJwk-x',
-                                  y: 'copy-from-_verify-response-body-data-0-publicKeyJwk-y',
+                                  x: 'same-org-public-key-x-submitted-to-_verify',
+                                  y: 'same-org-public-key-y-submitted-to-_verify',
                                 },
                               },
                               controller: {
@@ -6402,8 +6403,8 @@ export function buildIcaVerifyOpenApiSpec(
             + '- active controller keys cannot be replaced by re-verification unless that deployment explicitly sets `ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY=true`; the opt-in never changes controller identity and is disabled by default\n\n'
             + '**SDK v2**\n'
             + '- `pollVerifyTermsResponse()` polls this endpoint\n'
-            + '- `getOrganizationPublicKeyFromVerifyResponse()` reads the caller-owned organization public key\n'
-            + '- `getControllerBindingPublicKeyFromVerifyResponse()` reads the controller binding key',
+            + '- `getOrganizationPublicKeyFromVerifyResponse()` reads the optional organization-key echo for continuity diagnostics\n'
+            + '- `getControllerBindingPublicKeyFromVerifyResponse()` reads the optional controller-key echo for continuity diagnostics; retained caller keys remain authoritative',
           parameters: [
             networkKindParameter,
             {

@@ -9,7 +9,7 @@ The implemented flow now looks like this:
 3. controller business binding key travels in `body.data[].resource.controller.publicKeyJwk`
 4. organization credential public key travels in an `application/jwk+json` attachment
 5. `test-network` and `network` reject verification when that public key is absent
-6. `_verify-response` returns only caller-owned public binding data in the normal contract
+6. `_verify-response` may echo caller-owned public binding data for continuity diagnostics
 7. `_create` publishes the DID document using:
    - explicit keys sent in `_create`, or
    - the keys already stored from `_verify`
@@ -50,7 +50,8 @@ This keeps compatibility with SMART-on-FHIR / EUDI Wallet while still allowing P
 
 This means an organization sends its public key during `_verify` as the
 canonical credential key. `_create` can reuse the stored public binding or
-explicitly resend that exact public JWK. ICA-generated keypairs are deprecated
+explicitly resend that exact caller-retained public JWK. The response echo is
+not the source of the caller-owned key. ICA-generated keypairs are deprecated
 development-only compatibility and are forbidden in staging and production.
 
 ## Temporary Re-verification Rebind
