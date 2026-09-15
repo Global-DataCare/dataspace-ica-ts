@@ -253,7 +253,18 @@ async function enrichVerificationBundleWithStoredVersionState(
   const designatedControllerSameAs = signedControllerDesignation
     || previousControllerDesignation
     || undefined;
-  if (!signedControllerDesignation && previousControllerDesignation && controllerEntry) {
+  const explicitlyBindsPreservedController = Boolean(
+    result.controllerPublicKeyJwk
+    && result.controllerSameAs
+    && previousControllerDesignation
+    && sameAsValuesEqual(result.controllerSameAs, previousControllerDesignation),
+  );
+  if (
+    !signedControllerDesignation
+    && previousControllerDesignation
+    && controllerEntry
+    && !explicitlyBindsPreservedController
+  ) {
     // A legacy re-verification may omit the technical controller field. Keep
     // the earlier signed designation pending instead of silently issuing a
     // ServiceControllerCredential to the representative's JWK.

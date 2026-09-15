@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 1.2.11 - 2026-09-15
+
+- Preserve a previously designated service-controller entry during an
+  authorized re-verification when the request explicitly supplies the same
+  controller alias and a replacement JWK. The verified response now carries
+  that exact JWK through the following DID-document `_create` operation.
+- Remove the positional `body.data[1]` controller-key instruction from errors
+  and OpenAPI. Consumers must locate the
+  `ServiceController-verification-v1.0` entry by `type` because Bundle entry
+  positions are not stable.
+
 - Add the deployment-scoped `ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY` recovery
   policy. It is disabled by default, permits a successful re-verification to
   supersede only the active JWK of the same controller identity, and records
