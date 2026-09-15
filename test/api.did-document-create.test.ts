@@ -1319,7 +1319,7 @@ test('CreateDidDocument rejects controller.publicKeyJwk override when _verify al
   const job = store.get('req-did-create-006');
   assert.equal(job?.status, 'failed');
   assert.match(job?.error || '', /controller\.publicKeyJwk must match the controller binding stored during _verify/i);
-  assert.match(job?.error || '', /ServiceController-verification-v1\.0/);
+  assert.match(job?.error || '', /resend the exact controller\.publicKeyJwk originally submitted to _verify/i);
   assert.doesNotMatch(job?.error || '', /body\.data\[1\]/);
 
   resetVerificationCollectionsMemAdapterStateForTests();

@@ -11,6 +11,9 @@
   that legacy response field outside development networks.
 - Document that organization private keys stay exclusively in the
   organization wallet or KMS.
+- Correct `_create` diagnostics and OpenAPI so callers resend the exact public
+  keys they originally submitted to `_verify`; response fields are optional
+  continuity echoes, not the source of caller-owned key material.
 
 ## 1.2.11 - 2026-09-15
 
