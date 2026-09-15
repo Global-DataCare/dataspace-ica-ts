@@ -24,7 +24,10 @@ segment remains an alias for `test`.
 4. Optional organization credential key:
    - extra DIDComm attachment with `media_type = application/jwk+json`
 
-If the organization JWK attachment is missing, ICA autogenerates an `ES384` organization credential-signing keypair.
+Every organization must normally supply its public organization key. The old
+ICA-generated `ES384` keypair is deprecated compatibility restricted to
+development network kinds (`test` and `local-network`); it is rejected in
+`test-network` and `network`.
 
 ## Response Contract
 
@@ -32,12 +35,14 @@ If the organization JWK attachment is missing, ICA autogenerates an `ES384` orga
 
 - organization entry:
   - `publicKeyJwk`
-  - `privateKeyJwk` only when ICA generated the keypair
-  - `keySource = generated | attachment`
+  - `keySource = attachment` in the normal contract
+  - deprecated development responses may say `keySource = generated`
+  - `privateKeyJwk` is hidden by default and is never emitted in `test-network` or `network`
 - legal representative/controller entry:
   - `publicKeyJwk` with the controller binding key taken from `body.data[].resource.controller.publicKeyJwk`
 
-The organization keypair is therefore bootstrapped during `_verify`, while the credential resources stay clean inside `resource`.
+The organization owns its keypair. ICA stores and returns only its submitted
+public key while credential resources stay clean inside `resource`.
 
 ## `_create` Behavior
 
@@ -51,12 +56,9 @@ The organization keypair is therefore bootstrapped during `_verify`, while the c
 
 That allows this flow:
 
-1. `_verify` with controller binding key and optional organization JWK attachment
-2. ICA returns generated organization keypair when no organization JWK was sent
-3. frontend may keep that generated key, or discard it
-4. `_create` can:
-   - reuse the stored/generated organization key, or
-   - confirm the ICA-generated key by resending the same `organization.publicKeyJwk`
+1. `_verify` with controller binding key and organization public JWK
+2. ICA stores those caller-owned public bindings
+3. `_create` can reuse the stored public keys or resend those exact public keys
 
 ## Security Rule
 

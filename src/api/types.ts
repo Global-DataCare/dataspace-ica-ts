@@ -612,7 +612,9 @@ export interface VerifyResult {
   controllerSameAs?: string;
   controllerJwks?: CreateDidDocumentJwkSet;
   organizationPublicKeyJwk?: Record<string, unknown>;
+  /** @deprecated Development-only bootstrap state; never serialize outside development networks. */
   organizationPrivateKeyJwk?: Record<string, unknown>;
+  /** @deprecated `generated` is restricted to development-network compatibility. */
   organizationKeySource?: 'attachment' | 'generated';
   /**
    * Optional compatibility payload retained in the async verification result.
@@ -920,7 +922,9 @@ export interface VerifyBundleDataEntry {
   sameAs?: string;
   publicKeyJwk?: Record<string, unknown>;
   jwks?: CreateDidDocumentJwkSet;
+  /** @deprecated Development-only compatibility field. Never emitted in test-network or network responses. */
   privateKeyJwk?: Record<string, unknown>;
+  /** @deprecated The `generated` value exists only for development-network compatibility. */
   keySource?: 'attachment' | 'generated';
   response: {
     status: string;

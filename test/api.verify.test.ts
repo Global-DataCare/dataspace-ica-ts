@@ -1291,6 +1291,44 @@ test('VerifyRequestManager accepted job includes thid query in Location', async 
   assert.equal(outcome.retryAfter, 5);
 });
 
+test('VerifyRequestManager rejects missing organization public key outside development networks', async () => {
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/test-network/pdf/202630011200/_verify');
+  assert.ok(parsed);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  const store = new InMemoryVerificationJobStore(60);
+  const manager = new VerifyRequestManager(store, {
+    verify: async () => buildTestVerifyResult('fnmt-es'),
+  });
+
+  const payload = Buffer.from(JSON.stringify({
+    jti: 'missing-organization-key-message',
+    thid: 'missing-organization-key-thread',
+    type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
+    attachments: [{
+      id: 'pdf-without-organization-key',
+      media_type: 'application/pdf',
+      data: { base64: Buffer.from('pdf-bytes').toString('base64') },
+    }],
+  }));
+  const req = Readable.from([payload]) as unknown as IncomingMessage;
+  (req as any).method = 'POST';
+  (req as any).url = '/acme/cds-ES/v1/animal-care/test-network/pdf/202630011200/_verify';
+  (req as any).headers = {
+    host: 'localhost:3310',
+    'content-type': 'application/didcomm-plain+json',
+    'content-length': String(payload.length),
+  };
+
+  const outcome = await manager.submit(parsed.context, req);
+  assert.equal(outcome.type, 'error');
+  if (outcome.type !== 'error') return;
+  assert.equal(outcome.statusCode, 400);
+  assert.match(outcome.message, /organization\.publicKeyJwk is required/i);
+  assert.equal(store.get('missing-organization-key-thread'), undefined);
+});
+
 test('VerifyRequestManager accepts DIDComm plaintext attachment payload', async () => {
   const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
   assert.ok(parsed);
@@ -1457,7 +1495,7 @@ test('VerifyRequestManager captures controller binding from verify body and keep
   assert.equal(capturedSubmission?.organizationPublicKeyJwk?.x, 'org-x');
 });
 
-test('VerifyResponseManager returns generated organization public key and controller public key outside resource', async () => {
+test('VerifyResponseManager never returns deprecated generated organization private key by default', async () => {
   const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
   process.env.DID_WEB_DOMAIN = 'did:web:localhost';
   resetVerificationCollectionsMemStateForTests();
@@ -1513,7 +1551,7 @@ test('VerifyResponseManager returns generated organization public key and contro
     if (outcome.type !== 'succeeded') return;
     const payload = outcome.payload as Record<string, any>;
     assert.equal(payload.body?.data?.[0]?.publicKeyJwk?.kid, 'org-es384-001');
-    assert.equal(payload.body?.data?.[0]?.privateKeyJwk?.kid, 'org-es384-001');
+    assert.equal(payload.body?.data?.[0]?.privateKeyJwk, undefined);
     assert.equal(payload.body?.data?.[0]?.keySource, 'generated');
     assert.equal(payload.body?.data?.[1]?.publicKeyJwk?.kid, 'controller-es384-001');
     const controllerEntry = payload.body?.data?.find(

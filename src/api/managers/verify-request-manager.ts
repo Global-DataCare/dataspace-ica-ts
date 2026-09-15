@@ -181,6 +181,13 @@ export class VerifyRequestManager {
   async submit(route: VerifyRouteContext, req: IncomingMessage): Promise<VerifySubmitOutcome> {
     try {
       const submission = await parseVerifySubmission(req, { jurisdiction: route.jurisdiction, route });
+      const isDevelopmentNetwork = route.section === 'test' || route.section === 'local-network';
+      if (!submission.organizationPublicKeyJwk && !isDevelopmentNetwork) {
+        throw new Error(
+          'organization.publicKeyJwk is required for test-network and network verification; '
+          + 'ICA does not generate organization private keys outside development networks.',
+        );
+      }
       this.jobStore.enqueue(submission.thid, route);
 
       setImmediate(async () => {

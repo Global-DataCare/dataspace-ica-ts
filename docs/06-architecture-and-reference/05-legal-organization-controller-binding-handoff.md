@@ -111,16 +111,17 @@ the new controller-binding ledger behavior unless explicitly migrated.
 
 ## Critical Security Finding
 
-The captured ICA response includes `privateKeyJwk` for an ICA-generated
-**organization** bootstrap key. Its private member must be treated as exposed.
+Historical ICA development responses could include `privateKeyJwk` for an
+ICA-generated **organization** bootstrap key. Its private member must be
+treated as exposed. That fallback is deprecated and is not permitted in
+`test-network` or `network`.
 
 Required immediate action:
 
 1. Rotate that generated organization key if it was used beyond the test
    artifact.
-2. Stop returning `privateKeyJwk` by default. Set
-   `ICA_VERIFY_RESPONSE_INCLUDE_PRIVATE_KEY_JWK=false` as an immediate
-   mitigation.
+2. Do not return `privateKeyJwk`; it is disabled by default and blocked outside
+   development network kinds even if the legacy environment flag is set.
 3. Remove private JWKs from API responses, async job results, logs, stored
    audit payloads, test fixtures intended for publication, and generated API
    examples.
