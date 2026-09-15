@@ -7,9 +7,9 @@ The implemented flow now looks like this:
 1. `_verify` validates the signed adhesion contract
 2. DIDComm communication key may travel in `meta.jws.protected.jwk`
 3. controller business binding key travels in `body.data[].resource.controller.publicKeyJwk`
-4. organization credential key travels in an optional `application/jwk+json` attachment
-5. if the organization key is absent, ICA autogenerates an `ES384` keypair
-6. `_verify-response` returns bootstrap JWK data outside `body.data[].resource`
+4. organization credential public key travels in an `application/jwk+json` attachment
+5. `test-network` and `network` reject verification when that public key is absent
+6. `_verify-response` returns only caller-owned public binding data in the normal contract
 7. `_create` publishes the DID document using:
    - explicit keys sent in `_create`, or
    - the keys already stored from `_verify`
@@ -28,7 +28,8 @@ The implemented flow now looks like this:
 
 - organization key:
   - credential-signing / DID document primary key
-  - comes from attachment or ICA auto-generation
+  - comes from the organization-owned public JWK attachment
+  - its private half stays exclusively in the organization wallet or KMS
   - is the one expected to receive `x5c`
 
 ## Algorithm Policy
@@ -47,11 +48,10 @@ This keeps compatibility with SMART-on-FHIR / EUDI Wallet while still allowing P
 - explicit organization/controller keys in the request
 - stored fallback from verification records when keys are omitted
 
-This means an organization can:
-
-- accept the ICA-generated `ES384` bootstrap keypair from `_verify`
-- or send its own organization key during `_verify` as the canonical credential key
-- if ICA generated the key, `_create` must explicitly confirm that same `organization.publicKeyJwk`
+This means an organization sends its public key during `_verify` as the
+canonical credential key. `_create` can reuse the stored public binding or
+explicitly resend that exact public JWK. ICA-generated keypairs are deprecated
+development-only compatibility and are forbidden in staging and production.
 
 ## Temporary Re-verification Rebind
 

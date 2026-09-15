@@ -188,7 +188,7 @@ Deployment tip:
 - optional DIDComm communication metadata in `meta.jws` / `meta.jwe`
 - preferred controller binding key in `body.data[].resource.controller.publicKeyJwk`
 - legacy fallback controller binding key in `meta.jws.protected.jwk`
-- optional organization public key attachment as `application/jwk+json`
+- organization public key attachment as `application/jwk+json` (required in `test-network` and `network`)
 
 Key separation:
 
@@ -198,7 +198,9 @@ Key separation:
   operation-signing/binding key that ICA projects into
   `credentialSubject.hasCredential.material`
 
-If the organization JWK attachment is omitted, ICA autogenerates an `ES384` organization credential-signing keypair and returns the public/private JWK outside `body.data[].resource` in `_verify-response`.
+The organization creates and retains its own keypair. ICA receives only the
+public JWK. Deprecated key generation remains limited to development network
+kinds and private key response material is disabled by default.
 
 ```bash
 PDF_B64=$(base64 < "$PDF_FILE" | tr -d '\n')
@@ -1033,7 +1035,9 @@ Verification and keys:
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create`
 - `POST /{tenantId}/cds-{jurisdiction}/v1/{sector}/entity/did/document/_create-response`
   - explicit v1 mode still accepts `organization.publicKeyJwk` and `controller.publicKeyJwk` directly in `_create`.
-  - v2 bootstrap can omit `organization.publicKeyJwk` and/or `controller.publicKeyJwk` in `_create` if ICA already stored them from `_verify`.
+  - v2 can omit `organization.publicKeyJwk` and/or `controller.publicKeyJwk` in `_create` only when ICA stored those caller-supplied public keys during `_verify`.
+  - every `test-network` and `network` `_verify` request must supply `organization.publicKeyJwk`; ICA-generated organization keypairs are deprecated development-only compatibility.
+  - `_verify-response` never returns `privateKeyJwk` by default and never returns it on `test-network` or `network`.
   - optional `organization.jwks` and `controller.jwks` can carry additional keys for communications or future capabilities using `purposes` such as `vc-sign`, `didcomm-sign`, and `didcomm-enc`.
   - if the ICA already has an active `ES384` key imported through `entity/keys/credentials/_activate` with `x5c`, `_create` signs the organization leaf certificate with that active ICA key and returns inline `x5c` on the primary organization signing key.
   - if `ICA_CREATE_DID_SELF_CA_STAGING=true` and `organization.publicKeyJwk` arrives without `x5c/x5u`, `_create` injects deterministic inline `x5c` for the primary organization signing key.

@@ -143,6 +143,7 @@ function removeInternalVersionMetaFromResponse(bundle: VerifyBundleResponse): vo
 }
 
 function attachBootstrapKeysToVerificationEntries(
+  route: VerifyRouteContext,
   result: VerifyResult,
   bundle: VerifyBundleResponse,
 ): void {
@@ -154,7 +155,9 @@ function attachBootstrapKeysToVerificationEntries(
 
   if (organizationEntry && result.organizationPublicKeyJwk) {
     organizationEntry.publicKeyJwk = { ...result.organizationPublicKeyJwk };
-    const exposePrivateJwk = parseBooleanEnv(process.env.ICA_VERIFY_RESPONSE_INCLUDE_PRIVATE_KEY_JWK, true);
+    const isDevelopmentNetwork = route.section === 'test' || route.section === 'local-network';
+    const exposePrivateJwk = isDevelopmentNetwork
+      && parseBooleanEnv(process.env.ICA_VERIFY_RESPONSE_INCLUDE_PRIVATE_KEY_JWK, false);
     if (exposePrivateJwk && result.organizationPrivateKeyJwk) {
       organizationEntry.privateKeyJwk = { ...result.organizationPrivateKeyJwk };
     }
@@ -543,7 +546,7 @@ export class VerifyResponseManager {
 
     const issuerDid = resolveVcIssuerDid(req);
     const body = buildVerificationVcBundle(route, verificationResult, issuerDid) as VerifyBundleResponse;
-    attachBootstrapKeysToVerificationEntries(verificationResult, body);
+    attachBootstrapKeysToVerificationEntries(route, verificationResult, body);
     let responseBody: VerifyBundleResponse;
     let vcJwtAttachments: DidcommAttachment[];
 

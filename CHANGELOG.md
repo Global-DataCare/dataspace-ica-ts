@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.2.12 - 2026-09-15
+
+- Require caller-owned `organization.publicKeyJwk` for `_verify` on
+  `test-network` and `network`; ICA-generated organization keypairs remain only
+  as deprecated development-network compatibility.
+- Stop serializing generated organization `privateKeyJwk` by default and block
+  that legacy response field outside development networks.
+- Document that organization private keys stay exclusively in the
+  organization wallet or KMS.
+
 ## 1.2.11 - 2026-09-15
 
 - Preserve a previously designated service-controller entry during an

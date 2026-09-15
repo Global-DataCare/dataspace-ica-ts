@@ -2886,14 +2886,14 @@ export function buildIcaVerifyOpenApiSpec(
           summary: 'Create organization did:web document asynchronously',
           description:
             'Starts async creation of an organization `did:web` document.\n\n'
-            + 'Private keys are never created or retained by the infrastructure operator, except when ICA-generated bootstrap is explicitly used; in that case the private key is returned once and must be stored by the organization.\n\n'
+            + 'The organization owns its keypair and sends only the public JWK. Private organization keys stay in its wallet/KMS and are never created or returned by staging or production ICA.\n\n'
             + '**Key inputs**\n'
             + '- `organization.publicKeyJwk`: primary organization credential-signing key used in `verificationMethod`\n'
             + '- `controller.publicKeyJwk`: different key used to derive the top-level `controller` as `did:key:...`\n'
             + '- optional `organization.jwks` / `controller.jwks`: extra public keys for `vc-sign`, `didcomm-sign`, `didcomm-enc`, etc.\n\n'
             + '**V2 bootstrap**\n'
             + '- controller key may already be stored from `_verify` via `body.data[].resource.controller.publicKeyJwk`\n'
-            + '- organization key may already be stored from `_verify` via an `application/jwk+json` attachment or an ICA-generated ES384 bootstrap key\n'
+            + '- organization key may already be stored from `_verify` via an `application/jwk+json` attachment\n'
             + '- on successful `_verify-response`, ICA persists a draft DID binding used by `_create`\n'
             + '- `organization/dataspace/auth/_exchange` is a backend auth bootstrap and does not create this `_create` key binding\n'
             + '- legacy compatibility remains: controller binding in `_verify` is optional if `_create` sends explicit `controller.publicKeyJwk` and `organization.publicKeyJwk`\n'
@@ -5024,8 +5024,8 @@ export function buildIcaVerifyOpenApiSpec(
             + '- `ServiceControllerCredential.owner.additionalType` contains bare `RESPRSN`; `owner.hasOccupation.occupationalCategory` contains `ISCO-08|1330`; `owner.hasCredential.material` binds the actor JWK\n'
             + '- optional signed AcroForm occupation fields are `person.hasOccupation.occupationalCategory` and `organization.contactPoint.hasOccupation.occupationalCategory`\n'
             + '- organization credential-signing public key travels as a separate `application/jwk+json` attachment\n'
-            + '- if the organization JWK attachment is omitted, ICA autogenerates an ES384 organization credential-signing keypair\n'
-            + '- the generated `publicKeyJwk` and `privateKeyJwk` are returned in `_verify-response` outside `body.data[].resource`\n\n'
+            + '- `test-network` and `network` require that caller-owned public key; ICA never generates or returns organization private keys there\n'
+            + '- generated key material is deprecated compatibility restricted to development network kinds\n\n'
             + '**Important for _create binding**\n'
             + '- if you plan to call `entity/did/document/_create` afterwards, include `body.data[].resource.controller.publicKeyJwk` in `_verify` (controller key binding source)\n\n'
             + '**SDK v2**\n'
@@ -6387,9 +6387,9 @@ export function buildIcaVerifyOpenApiSpec(
           description:
             'Returns the verification result.\n\n'
             + '**Organization entry**\n'
-            + '- may include `publicKeyJwk`, `privateKeyJwk`, and `keySource` outside `resource`\n'
-            + '- `privateKeyJwk` is present only when ICA generated the organization keypair during `_verify`\n'
-            + '- by default `privateKeyJwk` is returned when available; set `ICA_VERIFY_RESPONSE_INCLUDE_PRIVATE_KEY_JWK=false` to hide it\n\n'
+            + '- includes the caller-supplied organization `publicKeyJwk` outside `resource`\n'
+            + '- historical development responses may contain deprecated `keySource = generated` and `privateKeyJwk` fields\n'
+            + '- `privateKeyJwk` is disabled by default and is never emitted in `test-network` or `network`\n\n'
             + '- OrganizationCredential sector authorization is projected in `credentialSubject.makesOffer.category`; in demo mode ICA may fallback this value from the `{sector}` route when the signed PDF does not expose it yet\n\n'
             + '**Credential result**\n'
             + '- a fully bound result has three independent entries: OrganizationCredential, LegalRepresentativeCredential and ServiceControllerCredential\n'
@@ -6402,7 +6402,7 @@ export function buildIcaVerifyOpenApiSpec(
             + '- active controller keys cannot be replaced by re-verification unless that deployment explicitly sets `ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY=true`; the opt-in never changes controller identity and is disabled by default\n\n'
             + '**SDK v2**\n'
             + '- `pollVerifyTermsResponse()` polls this endpoint\n'
-            + '- `getOrganizationKeyMaterialFromVerifyResponse()` reads organization bootstrap keys\n'
+            + '- `getOrganizationPublicKeyFromVerifyResponse()` reads the caller-owned organization public key\n'
             + '- `getControllerBindingPublicKeyFromVerifyResponse()` reads the controller binding key',
           parameters: [
             networkKindParameter,

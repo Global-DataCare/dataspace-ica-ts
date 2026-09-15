@@ -55,6 +55,10 @@ export function normalizeControllerPublicKeyJwk(input: unknown, algInput?: strin
   };
 }
 
+/**
+ * @deprecated Development-network compatibility only. Organizations own their
+ * keypairs and submit only `organization.publicKeyJwk` to ICA.
+ */
 export function generateOrganizationCredentialKeyPair(): {
   publicKeyJwk: JsonObject;
   privateKeyJwk: JsonObject;
