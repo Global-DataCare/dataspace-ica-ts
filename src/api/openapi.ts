@@ -2903,8 +2903,8 @@ export function buildIcaVerifyOpenApiSpec(
             + '- if `organization.publicKeyJwk` is explicitly sent to `_create`, it is used as the organization verification key for the DID document and stored as the new active binding for that organization\n\n'
             + '**Important**\n'
             + '- Swagger placeholder coordinates (`<org-x-coordinate>`, etc.) are not valid runtime values\n'
-            + '- if you send explicit JWKs, copy exact values from `_verify-response` (`body.data[0].publicKeyJwk` for organization, `body.data[1].publicKeyJwk` for controller)\n'
-            + '- if `_create` returns `No controller publicKeyJwk found ...`, send `controller.publicKeyJwk` explicitly (copy from `_verify-response body.data[1].publicKeyJwk`)\n\n'
+            + '- if you send explicit JWKs, copy exact values from `_verify-response`: find the `Organization-verification-v1.0` and `ServiceController-verification-v1.0` entries by `type`, then read each entry\'s `publicKeyJwk`; Bundle positions are not stable\n'
+            + '- if `_create` returns `No controller publicKeyJwk found ...`, send `controller.publicKeyJwk` explicitly from the `_verify-response` entry whose `type` is `ServiceController-verification-v1.0`\n\n'
             + '**SDK v2**\n'
             + '- `setControllerMessageSigningPublicKey()` protects DIDComm communication metadata during `_verify`\n'
             + '- `setControllerBindingPublicKey()` sends the controller business/binding key in `body.data[].resource.controller.publicKeyJwk`\n'
@@ -3132,8 +3132,8 @@ export function buildIcaVerifyOpenApiSpec(
                                 publicKeyJwk: {
                                   kty: 'EC',
                                   crv: 'P-384',
-                                  x: 'copy-from-_verify-response-body-data-1-publicKeyJwk-x',
-                                  y: 'copy-from-_verify-response-body-data-1-publicKeyJwk-y',
+                                  x: 'copy-from-ServiceController-verification-entry-publicKeyJwk-x',
+                                  y: 'copy-from-ServiceController-verification-entry-publicKeyJwk-y',
                                 },
                               },
                             },

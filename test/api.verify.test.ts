@@ -11,6 +11,7 @@ import { Readable } from 'node:stream';
 import path from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { InMemoryVerificationJobStore } from '../src/api/job-store.ts';
+import { InMemoryEntityJobStore } from '../src/api/entity-job-store.ts';
 import {
   buildAddEvidenceResponseLocation,
   buildDelegationPolicyResponseLocation,
@@ -28,8 +29,10 @@ import {
   parseSpacesRoute,
   parseCredentialStatusRoute,
   parseIssueCredentialRoute,
+  parseCreateDidDocumentRoute,
   parseVerifyRoute,
 } from '../src/api/path.ts';
+import { CreateDidDocumentRequestManager } from '../src/api/managers/create-did-document-request-manager.ts';
 import { VerifyRequestManager } from '../src/api/managers/verify-request-manager.ts';
 import { VerifyResponseManager } from '../src/api/managers/verify-response-manager.ts';
 import { buildVerificationVcBundle } from '../src/api/server.ts';
@@ -54,6 +57,8 @@ import {
 import { normalizeSameAsHash } from '../src/api/tools/multihash.ts';
 import { toJwkThumbprintSha256Urn } from 'gdc-common-utils-ts/utils/jwk-thumbprint';
 import type {
+  CreateDidDocumentResult,
+  CreateDidDocumentRouteContext,
   VerifyResult,
   VerifySubmission,
 } from '../src/api/types.ts';
@@ -1558,13 +1563,9 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
   const newControllerKey = deriveDeterministicEcPrivateKeyPem('verify-response-controller-new', 'P-384').publicJwk;
   const organizationKey = deriveDeterministicEcPrivateKeyPem('verify-response-organization', 'P-384').publicJwk;
   const controllerSameAs = normalizeSameAsHash('controller@example.org');
-  const routeResult = {
+  const verifiedDocumentResult = {
     ...buildTestVerifyResult('controller-rebind-policy'),
     signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, E=controller@example.org, CN=Signer',
-    controllerPublicKeyJwk: newControllerKey,
-    controllerSameAs,
-    organizationPublicKeyJwk: organizationKey,
-    organizationKeySource: 'attachment' as const,
   };
 
   const exercise = async (enabled: boolean) => {
@@ -1574,6 +1575,32 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
     assert.ok(parsed && parsed.ok);
     if (!parsed || !parsed.ok) throw new Error('Expected canonical verify-response route.');
     const collectionsService = new VerificationCollectionsService();
+    await collectionsService.storeIssuedCredentials([
+      {
+        id: 'urn:uuid:00000000-0000-4000-8000-000000000010',
+        tenantId: parsed.context.tenantId,
+        jurisdiction: parsed.context.jurisdiction,
+        sector: parsed.context.sector,
+        resourceType: parsed.context.resourceType,
+        thid: 'thid-controller-original',
+        credentialType: 'Organization-verification-v1.0',
+        credentialId: 'urn:uuid:00000000-0000-4000-8000-000000000011',
+        subjectId: 'did:web:localhost:animal-care:organization:taxid:VATES-TSTORG0000',
+        issuerId: 'did:web:localhost',
+        credential: {
+          type: ['VerifiableCredential', 'OrganizationCredential'],
+          credentialSubject: {
+            '@type': 'Organization',
+            taxID: 'VATES-TSTORG0000',
+          },
+          meta: {
+            designatedControllerSameAs: controllerSameAs,
+          },
+        },
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    ]);
     await collectionsService.storeDidBindings([
       {
         id: 'acme::es::animal-care::VATES-TSTORG0000',
@@ -1592,8 +1619,46 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
     ]);
     const store = new InMemoryVerificationJobStore(60);
     const thid = enabled ? 'thid-controller-rebind-enabled' : 'thid-controller-rebind-disabled';
-    store.enqueue(thid, parsed.context);
-    store.markSucceeded(thid, routeResult);
+    const verifyRequestManager = new VerifyRequestManager(store, {
+      verify: async () => verifiedDocumentResult,
+    });
+    const verifyPayload = Buffer.from(JSON.stringify({
+      jti: `${thid}-jti`,
+      thid,
+      type: 'https://globaldatacare.es/didcomm/ica/terms/verify-request/v1',
+      body: {
+        data: [{
+          resource: {
+            controller: {
+              sameAs: controllerSameAs,
+              publicKeyJwk: newControllerKey,
+            },
+          },
+        }],
+      },
+      attachments: [
+        {
+          id: `${thid}-pdf`,
+          media_type: 'application/pdf',
+          data: { base64: Buffer.from('verified-controller-rebind-pdf').toString('base64') },
+        },
+        {
+          id: `${thid}-organization-jwk`,
+          media_type: 'application/jwk+json',
+          data: { json: organizationKey },
+        },
+      ],
+    }));
+    const verifyRequest = Readable.from([verifyPayload]) as IncomingMessage & Readable;
+    verifyRequest.method = 'POST';
+    verifyRequest.headers = {
+      host: 'localhost:3310',
+      'content-type': 'application/didcomm-plain+json',
+      'content-length': String(verifyPayload.length),
+    };
+    const submitted = await verifyRequestManager.submit(parsed.context, verifyRequest);
+    assert.equal(submitted.type, 'accepted');
+    await new Promise((resolve) => setImmediate(resolve));
     const manager = new VerifyResponseManager(store, collectionsService);
     const outcome = await manager.poll(
       parsed.context,
@@ -1612,12 +1677,69 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
 
     const allowed = await exercise(true);
     assert.equal(allowed.outcome.type, 'succeeded');
-    const bindings = await allowed.collectionsService.listDidBindings();
-    assert.deepEqual(bindings[0]?.controllerPublicKeyJwk, newControllerKey);
+    const reboundBindings = await allowed.collectionsService.listDidBindings();
+    assert.deepEqual(reboundBindings[0]?.controllerPublicKeyJwk, newControllerKey);
     assert.equal(
-      bindings[0]?.previousControllerKeyThumbprint,
+      reboundBindings[0]?.previousControllerKeyThumbprint,
       toJwkThumbprintSha256Urn(oldControllerKey),
     );
+    if (allowed.outcome.type === 'succeeded') {
+      const payload = allowed.outcome.payload as Record<string, any>;
+      const organizationEntry = payload.body?.data?.find(
+        (entry: Record<string, unknown>) => entry.type === 'Organization-verification-v1.0',
+      );
+      const controllerEntry = payload.body?.data?.find(
+        (entry: Record<string, unknown>) => entry.type === 'ServiceController-verification-v1.0',
+      );
+      assert.deepEqual(controllerEntry?.publicKeyJwk, newControllerKey);
+      assert.equal(
+        controllerEntry?.resource?.credentialSubject?.owner?.sameAs,
+        controllerSameAs,
+      );
+      assert.equal(
+        controllerEntry?.resource?.credentialSubject?.owner?.hasCredential?.material,
+        toJwkThumbprintSha256Urn(newControllerKey),
+      );
+
+      const createRoute = parseCreateDidDocumentRoute(
+        '/acme/cds-ES/v1/animal-care/entity/did/document/_create',
+      );
+      assert.ok(createRoute && createRoute.ok);
+      if (!createRoute || !createRoute.ok) throw new Error('Expected canonical DID create route.');
+      const createStore = new InMemoryEntityJobStore<CreateDidDocumentRouteContext, CreateDidDocumentResult>(60);
+      const createManager = new CreateDidDocumentRequestManager(
+        createStore,
+        allowed.collectionsService,
+      );
+      const createRequest = Readable.from([JSON.stringify({
+        jti: 'didcomm-controller-rebind-create',
+        thid: 'didcomm-controller-rebind-create',
+        type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+        body: {
+          data: [{
+            resource: {
+              organization: {
+                identifier: organizationEntry?.resource?.credentialSubject?.id,
+                publicKeyJwk: organizationEntry?.publicKeyJwk,
+              },
+              controller: {
+                sameAs: controllerSameAs,
+                publicKeyJwk: controllerEntry?.publicKeyJwk,
+              },
+            },
+          }],
+        },
+      })]) as IncomingMessage & Readable;
+      createRequest.method = 'POST';
+      createRequest.headers = { 'content-type': 'application/didcomm-plain+json' };
+      const createSubmitted = await createManager.submit(createRoute.context, createRequest);
+      assert.equal(createSubmitted.type, 'accepted');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(createStore.get('didcomm-controller-rebind-create')?.status, 'succeeded');
+    }
+    const bindings = await allowed.collectionsService.listDidBindings();
+    assert.deepEqual(bindings[0]?.controllerPublicKeyJwk, newControllerKey);
+    assert.equal(bindings[0]?.status, 'confirmed');
   } finally {
     resetVerificationCollectionsMemStateForTests();
     if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;

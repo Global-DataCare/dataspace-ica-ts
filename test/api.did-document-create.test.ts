@@ -1,7 +1,8 @@
+// Flow contract: reuse shared test fixtures and canonical types; do not introduce duplicated literals.
 // Carga automática de variables de entorno desde .env.local para los tests
 import dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
-// Flow contract: DID creation always resolves an explicit node-operator domain;
+// DID creation always resolves an explicit node-operator domain;
 // tests use the documentation-only example domain and never depend on a local
 // developer .env file.
 process.env.DID_WEB_DOMAIN ||= 'globaldatacare.es';
@@ -1318,6 +1319,8 @@ test('CreateDidDocument rejects controller.publicKeyJwk override when _verify al
   const job = store.get('req-did-create-006');
   assert.equal(job?.status, 'failed');
   assert.match(job?.error || '', /controller\.publicKeyJwk must match the controller binding stored during _verify/i);
+  assert.match(job?.error || '', /ServiceController-verification-v1\.0/);
+  assert.doesNotMatch(job?.error || '', /body\.data\[1\]/);
 
   resetVerificationCollectionsMemAdapterStateForTests();
 });

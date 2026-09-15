@@ -322,7 +322,7 @@ export class CreateDidDocumentRequestManager {
             ) {
               throw new Error(
                 `controller.publicKeyJwk must match the controller binding stored during _verify for organization.taxID "${lookupTaxId}". `
-                + `Use the exact key returned by _verify-response body.data[1].publicKeyJwk.`,
+                + 'Use the exact publicKeyJwk from the _verify-response entry whose type is ServiceController-verification-v1.0.',
               );
             }
             const controllerPublicKeyJwk = requestedControllerPublicKeyJwk || storedControllerPublicKeyJwk;
