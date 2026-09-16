@@ -12,6 +12,7 @@ import type {
 import { AuditDocumentStorageService } from '../tools/audit-document-storage.ts';
 import { generateOrganizationCredentialKeyPair } from '../tools/bootstrap-organization-key.ts';
 import { PreauthorizedHostVerificationService } from '../preauthorized-host-verifier.ts';
+import { loadIcaSecurityConfigFromEnv } from '../security-mode.ts';
 
 export type VerifySubmitOutcome =
   | { type: 'error'; statusCode: number; message: string }
@@ -106,7 +107,14 @@ function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean 
 
 function mergeVisibleIdentityIntoSubmission(
   submission: VerifySubmission,
-  visibleIdentity: { taxID?: string; legalName?: string; legalRepresentativeName?: string; warnings: string[] },
+  visibleIdentity: {
+    taxID?: string;
+    legalName?: string;
+    legalRepresentativeName?: string;
+    representativeEmail?: string;
+    controllerEmail?: string;
+    warnings: string[];
+  },
 ): VerifySubmission {
   const annexFormFields = { ...(submission.annexFormFields || {}) };
   if (visibleIdentity.taxID && !annexFormFields['organization.taxID']) {
@@ -124,6 +132,14 @@ function mergeVisibleIdentityIntoSubmission(
     }
     if (!annexFormFields['person.name']) {
       annexFormFields['person.name'] = visibleIdentity.legalRepresentativeName;
+    }
+  }
+  if (loadIcaSecurityConfigFromEnv().allowLegacyContract) {
+    if (visibleIdentity.representativeEmail && !annexFormFields['person.email']) {
+      annexFormFields['person.email'] = visibleIdentity.representativeEmail;
+    }
+    if (visibleIdentity.controllerEmail && !annexFormFields['organization.contactPoint.email']) {
+      annexFormFields['organization.contactPoint.email'] = visibleIdentity.controllerEmail;
     }
   }
 
@@ -146,7 +162,14 @@ async function enrichSubmissionWithDeferredVisibleIdentity(
     || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'organization.name')
     || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'Razon Social')
     || getAnnexFieldCaseInsensitive(submission.annexFormFields, 'Razón Social');
-  if (existingTaxId && existingLegalName) return submission;
+  const existingRepresentativeEmail = getAnnexFieldCaseInsensitive(submission.annexFormFields, 'person.email');
+  const existingControllerEmail = getAnnexFieldCaseInsensitive(
+    submission.annexFormFields,
+    'organization.contactPoint.email',
+  );
+  const requiresLegacyEmailExtraction = loadIcaSecurityConfigFromEnv().allowLegacyContract
+    && (!existingRepresentativeEmail || !existingControllerEmail);
+  if (existingTaxId && existingLegalName && !requiresLegacyEmailExtraction) return submission;
 
   const verifierVatList = String(process.env.VERIFIERS_VAT_LIST || '')
     .split(',')
@@ -156,6 +179,7 @@ async function enrichSubmissionWithDeferredVisibleIdentity(
     submission.pdfBytes,
     verifierVatList,
     jurisdiction,
+    { legacyContractEmails: loadIcaSecurityConfigFromEnv().allowLegacyContract },
   );
   return mergeVisibleIdentityIntoSubmission(submission, visibleIdentity);
 }

@@ -50,12 +50,12 @@
     },
     {
       "name": "person.email",
-      "label": "Controller hash/email",
+      "label": "Legal representative hash/email",
       "frontendFillable": true,
       "extractedFromPdf": true,
       "mappedTo": "person VC credentialSubject.sameAs",
       "notes": "If plain email is provided, backend hashes it before persistence.",
-      "example": "zControllerHash"
+      "example": "zRepresentativeHash"
     },
     {
       "name": "person.alternateName",

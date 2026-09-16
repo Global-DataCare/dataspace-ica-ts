@@ -1314,7 +1314,7 @@ Verification behavior:
 - `ICA_VERIFY_STRICT_TEMPLATE_MATCH` (default `true`)
 - `ICA_VERIFY_TEMPLATE_MATCH_MODE` (`strict-bytes` | `logical-content`)
 - `ICA_VERIFY_DIGEST_ALGORITHM` (default `sha3-384`)
-- `ICA_ALLOW_LEGACY_CONTRACT` (default `false`; effective only with `SECURITY_MODE=compat`; allows an already-signed historical contract that lacks representative email to bind `legalRepresentative.sameAs|email` from the `_verify` request; PDF signature, chain, revocation, template and organization checks are unchanged)
+- `ICA_ALLOW_LEGACY_CONTRACT` (default `false`; effective only with `SECURITY_MODE=compat`; extracts distinct representative and labelled technical-controller emails from visible text in an already-signed historical contract, with a narrow same-domain three-address fallback, then uses `legalRepresentative.sameAs|email` only if signed evidence still lacks the representative identity; ambiguous address order fails closed, and PDF signature, chain, revocation, template, organization and controller-key ownership checks are unchanged)
 - `ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY` (default `false`; recovery-only opt-in allowing a successful `_verify` for the same controller identity to supersede its active JWK while recording the previous RFC 9278 thumbprint)
 - `VERIFIERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify configured verifier organizations)
 - `VERIFICATION_PARTNERS_VAT_LIST` (comma-separated `VATES-...`; matching signatures identify verification partners organizations)
@@ -1447,7 +1447,9 @@ During `_verify`, signed PDF form values are extracted and incorporated into evi
 - If `organization.sameAs` is a real `did:web` and differs from that canonical dataspace DID, it is mapped to `credentialSubject.sameAs`.
 - `organization.alternateName` is the short org alias, e.g. `acme`.
 - `organization.additionalType` carries the flattened profile string, e.g. `sector=onehealth;section=dataprovider;kind=clinic;action=_index-provider,_research-provider`.
-- `person.email` is the controller hash/email and is mapped to `credentialSubject.sameAs`.
+- `person.email` is the legal-representative hash/email and is mapped to that
+  person's `credentialSubject.sameAs`. A distinct technical controller belongs
+  in `organization.contactPoint.email`.
   If it arrives in plain text, backend hashes it automatically to `urn:multibase:z...`.
 - `person.alternateName` is used for the controller `kid`.
 - `person.additionalType` is used for the controller algorithm, e.g. `ES384`.

@@ -119,8 +119,8 @@ export const TERMS_ANNEX_FIELD_SPECS: TermsAnnexFieldSpec[] = [
   },
   {
     name: 'person.email',
-    label: 'Controller hash/email',
-    placeholder: 'zControllerHash',
+    label: 'Legal representative hash/email',
+    placeholder: 'zRepresentativeHash',
   },
   {
     name: 'person.alternateName',
@@ -223,6 +223,104 @@ function normalizeForMatching(value: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+}
+
+export type LegacyContractEmailFields = {
+  representativeEmail?: string;
+  controllerEmail?: string;
+  warnings: string[];
+};
+
+type EmailOccurrence = {
+  value: string;
+  domain: string;
+  lineIndex: number;
+  context: string;
+};
+
+function extractOrderedEmailOccurrences(text: string): EmailOccurrence[] {
+  const lines = String(text || '').split(/\r?\n/);
+  const occurrences: EmailOccurrence[] = [];
+  const seen = new Set<string>();
+  const emailPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const context = normalizeForMatching(lines.slice(Math.max(0, lineIndex - 1), lineIndex + 1).join(' '));
+    for (const match of lines[lineIndex].matchAll(emailPattern)) {
+      const value = String(match[0] || '').trim().toLowerCase();
+      if (!value || seen.has(value)) continue;
+      const domain = value.split('@')[1] || '';
+      if (!domain) continue;
+      seen.add(value);
+      occurrences.push({ value, domain, lineIndex, context });
+    }
+  }
+  return occurrences;
+}
+
+/**
+ * Extracts the two distinct legacy onboarding actors from visible signed text.
+ *
+ * A technical-contact label is authoritative. For older unlabelled layouts,
+ * the narrow fallback accepts the last address only when the first and last
+ * addresses uniquely share the member domain and every intervening address is
+ * from another domain. Ambiguous same-domain sequences fail closed.
+ */
+export function parseLegacyContractEmailFieldsFromPlainText(text: string): LegacyContractEmailFields {
+  const warnings: string[] = [];
+  const occurrences = extractOrderedEmailOccurrences(text);
+  if (occurrences.length < 2) return { warnings };
+
+  const technicalLabel = /(?:e-?mail|correo(?:\s+electronico)?)\s+(?:del|de la)\s+(?:responsable\s+)?tecnic|(?:responsable|contacto)\s+tecnic/;
+  const representativeLabel = /representante\s+legal|nombre.{0,80}cargo.{0,80}correo\s+electronico/;
+  const labelledControllers = occurrences.filter((entry) => technicalLabel.test(entry.context));
+  if (labelledControllers.length > 1) {
+    warnings.push('Multiple technical controller emails were found; only the first signed designation is supported.');
+  }
+
+  const controller = labelledControllers[0];
+  if (controller) {
+    const explicitlyLabelledRepresentative = occurrences.find((entry) => (
+      entry.value !== controller.value
+      && entry.domain === controller.domain
+      && entry.lineIndex < controller.lineIndex
+      && representativeLabel.test(entry.context)
+    ));
+    const precedingSameDomain = [...occurrences]
+      .reverse()
+      .find((entry) => (
+        entry.value !== controller.value
+        && entry.domain === controller.domain
+        && entry.lineIndex < controller.lineIndex
+      ));
+    const representative = explicitlyLabelledRepresentative || precedingSameDomain;
+    if (!representative) {
+      warnings.push('Technical controller email was found, but no distinct earlier representative email shares its domain.');
+      return { warnings };
+    }
+    return {
+      representativeEmail: representative.value,
+      controllerEmail: controller.value,
+      warnings,
+    };
+  }
+
+  const first = occurrences[0];
+  const last = occurrences[occurrences.length - 1];
+  const sameMemberDomain = first.domain === last.domain;
+  const interveningSharesMemberDomain = occurrences
+    .slice(1, -1)
+    .some((entry) => entry.domain === first.domain);
+  if (occurrences.length >= 3 && sameMemberDomain && !interveningSharesMemberDomain) {
+    return {
+      representativeEmail: first.value,
+      controllerEmail: last.value,
+      warnings,
+    };
+  }
+
+  warnings.push('Legacy contract email order is ambiguous; representative and controller identities were not inferred.');
+  return { warnings };
 }
 
 function detectDomicileCountryFromLines(lines: string[]): 'PT' | 'ES' | undefined {
@@ -398,7 +496,15 @@ export async function extractVisibleOrganizationIdentityFromPdfText(
   pdfBytes: Buffer<ArrayBufferLike>,
   verifierVatList: string[],
   jurisdiction = 'ES',
-): Promise<{ taxID?: string; legalName?: string; legalRepresentativeName?: string; warnings: string[] }> {
+  options: { legacyContractEmails?: boolean } = {},
+): Promise<{
+  taxID?: string;
+  legalName?: string;
+  legalRepresentativeName?: string;
+  representativeEmail?: string;
+  controllerEmail?: string;
+  warnings: string[];
+}> {
   const warnings: string[] = [];
   try {
     const module = await loadPdfParseModule();
@@ -417,13 +523,31 @@ export async function extractVisibleOrganizationIdentityFromPdfText(
       try { await parser.destroy?.(); } catch { /* no-op */ }
     }
     const parsedFromVisibleText = parseOrganizationIdentityFromPlainText(text, verifierVatList, jurisdiction);
+    const emailsFromVisibleText = options.legacyContractEmails
+      ? parseLegacyContractEmailFieldsFromPlainText(text)
+      : { warnings: [] };
     warnings.push(...parsedFromVisibleText.warnings);
-    if (parsedFromVisibleText.taxID || parsedFromVisibleText.legalName || parsedFromVisibleText.legalRepresentativeName) {
+    warnings.push(...emailsFromVisibleText.warnings);
+    const visibleIdentityFound = Boolean(
+      parsedFromVisibleText.taxID
+      || parsedFromVisibleText.legalName
+      || parsedFromVisibleText.legalRepresentativeName,
+    );
+    const visibleLegacyEmailsComplete = !options.legacyContractEmails || Boolean(
+      emailsFromVisibleText.representativeEmail && emailsFromVisibleText.controllerEmail,
+    );
+    if (visibleIdentityFound && visibleLegacyEmailsComplete) {
       return {
         ...(parsedFromVisibleText.taxID ? { taxID: parsedFromVisibleText.taxID } : {}),
         ...(parsedFromVisibleText.legalName ? { legalName: parsedFromVisibleText.legalName } : {}),
         ...(parsedFromVisibleText.legalRepresentativeName
           ? { legalRepresentativeName: parsedFromVisibleText.legalRepresentativeName }
+          : {}),
+        ...(emailsFromVisibleText.representativeEmail
+          ? { representativeEmail: emailsFromVisibleText.representativeEmail }
+          : {}),
+        ...(emailsFromVisibleText.controllerEmail
+          ? { controllerEmail: emailsFromVisibleText.controllerEmail }
           : {}),
         warnings,
       };
@@ -431,13 +555,44 @@ export async function extractVisibleOrganizationIdentityFromPdfText(
 
     const ocr = await extractVisibleTextWithOcr(pdfBytes);
     warnings.push(...ocr.warnings);
-    if (!ocr.text) return { warnings };
+    if (!ocr.text) {
+      return {
+        ...(parsedFromVisibleText.taxID ? { taxID: parsedFromVisibleText.taxID } : {}),
+        ...(parsedFromVisibleText.legalName ? { legalName: parsedFromVisibleText.legalName } : {}),
+        ...(parsedFromVisibleText.legalRepresentativeName
+          ? { legalRepresentativeName: parsedFromVisibleText.legalRepresentativeName }
+          : {}),
+        ...(emailsFromVisibleText.representativeEmail
+          ? { representativeEmail: emailsFromVisibleText.representativeEmail }
+          : {}),
+        ...(emailsFromVisibleText.controllerEmail
+          ? { controllerEmail: emailsFromVisibleText.controllerEmail }
+          : {}),
+        warnings,
+      };
+    }
     const parsedFromOcr = parseOrganizationIdentityFromPlainText(ocr.text, verifierVatList, jurisdiction);
+    const emailsFromOcr = options.legacyContractEmails
+      ? parseLegacyContractEmailFieldsFromPlainText(ocr.text)
+      : { warnings: [] };
     warnings.push(...parsedFromOcr.warnings);
+    warnings.push(...emailsFromOcr.warnings);
     return {
-      ...(parsedFromOcr.taxID ? { taxID: parsedFromOcr.taxID } : {}),
-      ...(parsedFromOcr.legalName ? { legalName: parsedFromOcr.legalName } : {}),
-      ...(parsedFromOcr.legalRepresentativeName ? { legalRepresentativeName: parsedFromOcr.legalRepresentativeName } : {}),
+      ...(parsedFromVisibleText.taxID || parsedFromOcr.taxID
+        ? { taxID: parsedFromVisibleText.taxID || parsedFromOcr.taxID }
+        : {}),
+      ...(parsedFromVisibleText.legalName || parsedFromOcr.legalName
+        ? { legalName: parsedFromVisibleText.legalName || parsedFromOcr.legalName }
+        : {}),
+      ...(parsedFromVisibleText.legalRepresentativeName || parsedFromOcr.legalRepresentativeName
+        ? { legalRepresentativeName: parsedFromVisibleText.legalRepresentativeName || parsedFromOcr.legalRepresentativeName }
+        : {}),
+      ...(emailsFromVisibleText.representativeEmail || emailsFromOcr.representativeEmail
+        ? { representativeEmail: emailsFromVisibleText.representativeEmail || emailsFromOcr.representativeEmail }
+        : {}),
+      ...(emailsFromVisibleText.controllerEmail || emailsFromOcr.controllerEmail
+        ? { controllerEmail: emailsFromVisibleText.controllerEmail || emailsFromOcr.controllerEmail }
+        : {}),
       warnings,
     };
   } catch (error: unknown) {

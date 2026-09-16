@@ -102,7 +102,13 @@ Recommended step by step:
    A distinct `organization.contactPoint.email` is only a hashed pending
    controller designation unless the request explicitly supplies a matching
    `controllerSameAs` with that controller's own JWK.
-4. Only in `demo/local`, if signed sources do not expose the email, `legalRepresentativePayload.email` or `.sameAs` may bootstrap the representative alias.
+4. With `SECURITY_MODE=compat` and `ICA_ALLOW_LEGACY_CONTRACT=true`, historical
+   signed text may supply a labelled technical-controller email and the earlier
+   same-domain representative email. A three-address fallback is accepted only
+   when first and last uniquely share the member domain; ambiguous sequences
+   fail closed. If signed sources still lack the representative email, the
+   authenticated `legalRepresentativePayload.email` or `.sameAs` is the final
+   compatibility fallback. `demo/local` keeps its existing request fallback.
 5. Downstream GW activation should ideally receive a representative VC that already carries both dimensions.
 6. A separately designated technical controller completes its own `_issue`,
    key binding and DCR later from the sector portal; ICA must never copy the
