@@ -13,6 +13,9 @@
   technical-controller designation until multi-controller issuance exists and
   require the controller's matching `sameAs` plus its own JWK before issuing a
   `ServiceControllerCredential`.
+- Align visible organization identity with the existing ordered verifier-VAT
+  contract: when at least two configured verifier VATs occur in the signed
+  text, the last configured VAT present is the joining counterparty.
 - Cover both inline and deferred PDF extraction, strict-mode isolation and the
   real historical contract locally without committing personal data.
 

@@ -7,6 +7,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import {
   extractVisibleOrganizationIdentityFromPdfText,
   parseLegacyContractEmailFieldsFromPlainText,
+  parseOrganizationIdentityFromPlainText,
 } from '../src/api/tools/terms-annex-form.ts';
 import { parseVerifySubmission } from '../src/api/request-parsing.ts';
 import { parseVerifyRoute } from '../src/api/path.ts';
@@ -85,6 +86,18 @@ test('legacy signed text maps the representative and explicitly labelled technic
   assert.equal(parsed.representativeEmail, representative);
   assert.equal(parsed.controllerEmail, controller);
   assert.deepEqual(parsed.warnings, []);
+});
+
+test('visible identity uses the last configured verifier VAT as counterparty when both ordered VATs appear', () => {
+  const promoterVat = 'VATES-B11111111';
+  const counterpartyVat = 'VATES-G22222222';
+  const parsed = parseOrganizationIdentityFromPlainText([
+    'PROMOTER ORGANIZATION, CIF B11111111',
+    'MEMBER ORGANIZATION, CIF G22222222',
+  ].join('\n'), [promoterVat, counterpartyVat], 'ES');
+
+  assert.equal(parsed.taxID, counterpartyVat);
+  assert.equal(parsed.legalName, 'MEMBER ORGANIZATION');
 });
 
 test('legacy signed text may use the third address only when it uniquely returns to the representative domain', () => {

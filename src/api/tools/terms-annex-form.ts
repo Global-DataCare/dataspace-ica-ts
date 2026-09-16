@@ -211,7 +211,9 @@ function looksLikeLegalName(value: string): boolean {
 }
 
 function stripLegalNameLabel(value: string): string {
-  return normalizeSpacing(String(value || '').replace(/^(?:Razon|Raz[oó]n|Raz[aã]o)\s+Social\s*[:\-]?\s*/i, ''));
+  return normalizeSpacing(String(value || '')
+    .replace(/^(?:Razon|Raz[oó]n|Raz[aã]o)\s+Social\s*[:\-]?\s*/i, '')
+    .replace(/[,;:\-]+\s*$/g, ''));
 }
 
 function normalizeSpacing(value: string): string {
@@ -350,11 +352,10 @@ export function parseOrganizationIdentityFromPlainText(
   jurisdiction = 'ES',
 ): { taxID?: string; legalName?: string; legalRepresentativeName?: string; warnings: string[] } {
   const warnings: string[] = [];
-  const normalizedVerifierVatSet = new Set(
-    verifierVatList
-      .map((entry) => normalizeVerifierVatToken(entry))
-      .filter(Boolean),
-  );
+  const normalizedVerifierVatOrder = verifierVatList
+    .map((entry) => normalizeVerifierVatToken(entry))
+    .filter(Boolean);
+  const normalizedVerifierVatSet = new Set(normalizedVerifierVatOrder);
 
   const lines = text
     .split(/\r?\n/)
@@ -378,7 +379,17 @@ export function parseOrganizationIdentityFromPlainText(
   }
 
   const filteredCandidates = candidateTokens.filter((entry) => !normalizedVerifierVatSet.has(entry.token));
-  const selectedCandidate = filteredCandidates[0];
+  const presentConfiguredVerifierTokens = normalizedVerifierVatOrder.filter((token, index) => (
+    normalizedVerifierVatOrder.indexOf(token) === index
+    && candidateTokens.some((entry) => entry.token === token)
+  ));
+  const configuredVerifierCounterpartyToken = presentConfiguredVerifierTokens.length >= 2
+    ? presentConfiguredVerifierTokens[presentConfiguredVerifierTokens.length - 1]
+    : undefined;
+  const selectedCandidate = filteredCandidates[0]
+    || (configuredVerifierCounterpartyToken
+      ? candidateTokens.find((entry) => entry.token === configuredVerifierCounterpartyToken)
+      : undefined);
   let taxID: string | undefined;
   let legalName: string | undefined;
   if (selectedCandidate) {
