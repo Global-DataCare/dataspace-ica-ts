@@ -206,4 +206,8 @@ test('OpenAPI publishes the default-deny reverify controller-key policy', () => 
     operation?.description || '',
     /ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY=true.*disabled by default/s,
   );
+  assert.match(
+    operation?.description || '',
+    /ICA_ALLOW_LEGACY_CONTRACT=true.*SECURITY_MODE=compat.*disabled by default/s,
+  );
 });

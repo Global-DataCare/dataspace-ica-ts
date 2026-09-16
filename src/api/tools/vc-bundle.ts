@@ -351,23 +351,25 @@ function resolveRepresentativeCredentialMaterial(
 }
 
 /**
- * Resolves whether the current ICA runtime explicitly allows demo-only
- * representative identity fallbacks.
+ * Resolves whether the current ICA runtime explicitly allows the narrowly
+ * scoped representative identity fallback. Demo enables it globally; compat
+ * requires the deployment-specific legacy-contract opt-in.
  */
-function isDemoRepresentativePayloadFallbackEnabled(): boolean {
-  return loadIcaSecurityConfigFromEnv().securityMode === 'demo';
+function isRepresentativePayloadFallbackEnabled(): boolean {
+  const config = loadIcaSecurityConfigFromEnv();
+  return config.securityMode === 'demo' || config.allowLegacyContract;
 }
 
 /**
  * Extracts a representative `sameAs` candidate from the optional payload.
  *
- * Demo policy:
+ * Compatibility policy:
  * - accept `legalRepresentativePayload.sameAs` verbatim and normalize it into
  *   the canonical multibase/email form
  * - otherwise accept `legalRepresentativePayload.email`
  *
- * Non-demo modes must ignore this payload and rely exclusively on the signed
- * PDF annex or signer certificate identity.
+ * Strict mode and compat without `ICA_ALLOW_LEGACY_CONTRACT=true` ignore this
+ * payload and rely exclusively on the signed PDF annex or signer certificate.
  *
  * @param payload Optional legal representative payload carried in `_verify`.
  */
@@ -386,7 +388,8 @@ function extractRepresentativeSameAsFromPayload(payload: Record<string, unknown>
  * Source priority:
  * 1. signed annex `person.email`
  * 2. signer certificate email DN fields
- * 3. demo-only payload fallback (`legalRepresentativePayload.sameAs|email`)
+ * 3. demo or explicitly enabled compat legacy-contract payload fallback
+ *    (`legalRepresentativePayload.sameAs|email`)
  *
  * @param result Verified ICA result bundle.
  * @param subjectDn Parsed signer DN.
@@ -403,7 +406,7 @@ function resolveRepresentativeSameAs(
   );
   const normalizedSignedIdentity = normalizeSameAsHash(signedIdentityCandidate || '');
   if (normalizedSignedIdentity) return normalizedSignedIdentity;
-  if (!isDemoRepresentativePayloadFallbackEnabled()) return undefined;
+  if (!isRepresentativePayloadFallbackEnabled()) return undefined;
   return extractRepresentativeSameAsFromPayload(result.legalRepresentativePayload);
 }
 

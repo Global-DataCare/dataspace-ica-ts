@@ -1597,8 +1597,10 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
   const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
   const previousRebindPolicy = process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY;
   const previousSecurityMode = process.env.SECURITY_MODE;
+  const previousLegacyContractPolicy = process.env.ICA_ALLOW_LEGACY_CONTRACT;
   process.env.DID_WEB_DOMAIN = 'did:web:localhost';
-  process.env.SECURITY_MODE = 'demo';
+  process.env.SECURITY_MODE = 'compat';
+  process.env.ICA_ALLOW_LEGACY_CONTRACT = 'true';
   const oldControllerKey = deriveDeterministicEcPrivateKeyPem('verify-response-controller-old', 'P-384').publicJwk;
   const newControllerKey = deriveDeterministicEcPrivateKeyPem('verify-response-controller-new', 'P-384').publicJwk;
   const organizationKey = deriveDeterministicEcPrivateKeyPem('verify-response-organization', 'P-384').publicJwk;
@@ -1754,31 +1756,47 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
         createStore,
         allowed.collectionsService,
       );
-      const createRequest = Readable.from([JSON.stringify({
-        jti: 'didcomm-controller-rebind-create',
-        thid: 'didcomm-controller-rebind-create',
-        type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
-        body: {
-          data: [{
-            resource: {
-              organization: {
-                identifier: organizationEntry?.resource?.credentialSubject?.id,
-                publicKeyJwk: organizationEntry?.publicKeyJwk,
+      const buildCreateRequest = (thid: string, controllerPublicKeyJwk: Record<string, unknown>) => {
+        const request = Readable.from([JSON.stringify({
+          jti: thid,
+          thid,
+          type: 'https://globaldatacare.es/didcomm/ica/entity/did/document/create-request/v1',
+          body: {
+            data: [{
+              resource: {
+                organization: {
+                  identifier: organizationEntry?.resource?.credentialSubject?.id,
+                  publicKeyJwk: organizationEntry?.publicKeyJwk,
+                },
+                controller: {
+                  sameAs: controllerSameAs,
+                  publicKeyJwk: controllerPublicKeyJwk,
+                },
               },
-              controller: {
-                sameAs: controllerSameAs,
-                publicKeyJwk: controllerEntry?.publicKeyJwk,
-              },
-            },
-          }],
-        },
-      })]) as IncomingMessage & Readable;
-      createRequest.method = 'POST';
-      createRequest.headers = { 'content-type': 'application/didcomm-plain+json' };
+            }],
+          },
+        })]) as IncomingMessage & Readable;
+        request.method = 'POST';
+        request.headers = { 'content-type': 'application/didcomm-plain+json' };
+        return request;
+      };
+
+      const oldCreateThid = 'didcomm-controller-rebind-create-old-key';
+      const oldCreateSubmitted = await createManager.submit(
+        createRoute.context,
+        buildCreateRequest(oldCreateThid, oldControllerKey),
+      );
+      assert.equal(oldCreateSubmitted.type, 'accepted');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(createStore.get(oldCreateThid)?.status, 'failed');
+      assert.match(createStore.get(oldCreateThid)?.error || '', /must match the controller binding stored during _verify/);
+
+      const createThid = 'didcomm-controller-rebind-create';
+      const createRequest = buildCreateRequest(createThid, controllerEntry?.publicKeyJwk);
       const createSubmitted = await createManager.submit(createRoute.context, createRequest);
       assert.equal(createSubmitted.type, 'accepted');
       await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(createStore.get('didcomm-controller-rebind-create')?.status, 'succeeded');
+      assert.equal(createStore.get(createThid)?.status, 'succeeded');
     }
     const bindings = await allowed.collectionsService.listDidBindings();
     assert.deepEqual(bindings[0]?.controllerPublicKeyJwk, newControllerKey);
@@ -1791,6 +1809,8 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
     else process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY = previousRebindPolicy;
     if (previousSecurityMode === undefined) delete process.env.SECURITY_MODE;
     else process.env.SECURITY_MODE = previousSecurityMode;
+    if (previousLegacyContractPolicy === undefined) delete process.env.ICA_ALLOW_LEGACY_CONTRACT;
+    else process.env.ICA_ALLOW_LEGACY_CONTRACT = previousLegacyContractPolicy;
   }
 });
 

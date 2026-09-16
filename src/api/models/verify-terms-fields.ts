@@ -285,8 +285,9 @@ export interface VerifyTermsOrganizationPayloadCompatibilityFields {
  * Current use in the backend:
  * - `name` and `identifier` can backfill representative identity in compat
  *   flows when the person identity must come from the document level
- * - `sameAs` and `email` are demo-only fallback sources for person VC
- *   `credentialSubject.sameAs`
+ * - `sameAs` and `email` are fallback sources for person VC
+ *   `credentialSubject.sameAs` in demo, or in compat when the deployment sets
+ *   `ICA_ALLOW_LEGACY_CONTRACT=true`
  */
 export interface VerifyTermsLegalRepresentativePayloadCompatibilityFields {
   name?: string;

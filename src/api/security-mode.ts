@@ -5,6 +5,7 @@ export type IcaSecurityConfig = {
   jsonLegacy: boolean;
   demoAllowInsecureBearer: boolean;
   allowLegacyDidcommPlaintextMediaType: boolean;
+  allowLegacyContract: boolean;
 };
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
@@ -38,11 +39,14 @@ export function loadIcaSecurityConfigFromEnv(): IcaSecurityConfig {
     process.env.ICA_ALLOW_LEGACY_DIDCOMM_PLAINTEXT_MEDIA_TYPE,
     false,
   );
+  const allowLegacyContract = securityMode === 'compat'
+    && parseBooleanEnv(process.env.ICA_ALLOW_LEGACY_CONTRACT, false);
   return {
     securityMode,
     jsonLegacy,
     demoAllowInsecureBearer,
     allowLegacyDidcommPlaintextMediaType,
+    allowLegacyContract,
   };
 }
 

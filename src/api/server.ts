@@ -1923,11 +1923,16 @@ export async function startIcaApiServer(options: IcaApiServerOptions = {}) {
   server.listen(port, host, () => {
     const searchLegacy = security.securityMode !== 'strict' && security.jsonLegacy;
     console.log(
-      `ICA security profile mode=${security.securityMode} searchLegacy=${searchLegacy ? 'enabled' : 'disabled'} demoAllowInsecureBearer=${security.demoAllowInsecureBearer ? 'enabled' : 'disabled'} didcommPlaintextLegacy=${security.allowLegacyDidcommPlaintextMediaType ? 'enabled' : 'disabled'}`,
+      `ICA security profile mode=${security.securityMode} searchLegacy=${searchLegacy ? 'enabled' : 'disabled'} demoAllowInsecureBearer=${security.demoAllowInsecureBearer ? 'enabled' : 'disabled'} didcommPlaintextLegacy=${security.allowLegacyDidcommPlaintextMediaType ? 'enabled' : 'disabled'} legacyContract=${security.allowLegacyContract ? 'enabled' : 'disabled'}`,
     );
     if (security.allowLegacyDidcommPlaintextMediaType) {
       console.warn(
         'WARNING: Legacy DIDComm media type compatibility enabled: accepting application/didcomm-plaintext+json temporarily while dependent packages are updated. Canonical media type remains application/didcomm-plain+json.',
+      );
+    }
+    if (security.allowLegacyContract) {
+      console.warn(
+        'WARNING: Legacy contract compatibility enabled: representative sameAs may be sourced from the authenticated _verify request when absent from signed evidence. PDF and organization verification remain enforced.',
       );
     }
     console.log(`ICA verify API listening on http://${host}:${port}`);
