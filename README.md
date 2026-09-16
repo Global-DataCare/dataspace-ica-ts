@@ -1334,6 +1334,9 @@ Counterparty selection rules used to populate organization/person credentials:
 - if verifier+partner+third-party signatures exist, the third-party signer is preferred as counterparty
 - if the PDF only has verifier+partner signatures, the partner signature is selected as the primary counterparty
 - if the PDF only has verifier signatures, the counterparty is selected from verifiers using the last configured VAT present in `VERIFIERS_VAT_LIST`
+- visible organization identity follows the same ordered fallback when at
+  least two configured verifier VATs occur in the signed text; a lone
+  verifier VAT is not reclassified as the joining organization
 
 Audit document persistence:
 
