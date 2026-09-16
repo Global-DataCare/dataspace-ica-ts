@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 1.3.1 - 2026-09-16
+
+- Extend `ICA_ALLOW_LEGACY_CONTRACT` visible-text extraction for historical
+  signed contracts that lack canonical AcroForm fields. A labelled technical
+  contact is kept distinct from the earlier same-domain legal representative;
+  the narrow three-address fallback accepts the last address only when the
+  first and last uniquely share the member domain.
+- Keep ambiguous address sequences fail-closed, retain only the first
+  technical-controller designation until multi-controller issuance exists and
+  require the controller's matching `sameAs` plus its own JWK before issuing a
+  `ServiceControllerCredential`.
+- Cover both inline and deferred PDF extraction, strict-mode isolation and the
+  real historical contract locally without committing personal data.
+
 ## 1.3.0 - 2026-09-16
 
 - Add the default-off `ICA_ALLOW_LEGACY_CONTRACT` compatibility policy. It is

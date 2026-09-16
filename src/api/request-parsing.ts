@@ -554,6 +554,7 @@ export async function parseVerifySubmission(
       pdfBytes,
       verifierVatList,
       effectiveJurisdiction,
+      { legacyContractEmails: loadIcaSecurityConfigFromEnv().allowLegacyContract },
     );
     if (visibleIdentity.taxID && !annex.fields['organization.taxID']) {
       annex.fields['organization.taxID'] = visibleIdentity.taxID;
@@ -570,6 +571,14 @@ export async function parseVerifySubmission(
       }
       if (!annex.fields['person.name']) {
         annex.fields['person.name'] = visibleIdentity.legalRepresentativeName;
+      }
+    }
+    if (loadIcaSecurityConfigFromEnv().allowLegacyContract) {
+      if (visibleIdentity.representativeEmail && !annex.fields['person.email']) {
+        annex.fields['person.email'] = visibleIdentity.representativeEmail;
+      }
+      if (visibleIdentity.controllerEmail && !annex.fields['organization.contactPoint.email']) {
+        annex.fields['organization.contactPoint.email'] = visibleIdentity.controllerEmail;
       }
     }
     if (visibleIdentity.warnings.length) {
