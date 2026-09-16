@@ -218,6 +218,12 @@ export class VerifyRequestManager {
             ...(submission.controllerDid ? { controllerDid: submission.controllerDid } : {}),
             ...(submission.controllerSameAs ? { controllerSameAs: submission.controllerSameAs } : {}),
             ...(submission.controllerJwks ? { controllerJwks: submission.controllerJwks } : {}),
+            ...(effectiveSubmission.organizationPayload
+              ? { organizationPayload: effectiveSubmission.organizationPayload }
+              : {}),
+            ...(effectiveSubmission.legalRepresentativePayload
+              ? { legalRepresentativePayload: effectiveSubmission.legalRepresentativePayload }
+              : {}),
             ...(submission.organizationPublicKeyJwk
               ? {
                   organizationPublicKeyJwk: submission.organizationPublicKeyJwk,

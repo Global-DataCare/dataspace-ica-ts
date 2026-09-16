@@ -1596,14 +1596,16 @@ test('VerifyResponseManager never returns deprecated generated organization priv
 test('VerifyResponseManager applies the deployment-gated controller rebind policy during reverify', async () => {
   const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
   const previousRebindPolicy = process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY;
+  const previousSecurityMode = process.env.SECURITY_MODE;
   process.env.DID_WEB_DOMAIN = 'did:web:localhost';
+  process.env.SECURITY_MODE = 'demo';
   const oldControllerKey = deriveDeterministicEcPrivateKeyPem('verify-response-controller-old', 'P-384').publicJwk;
   const newControllerKey = deriveDeterministicEcPrivateKeyPem('verify-response-controller-new', 'P-384').publicJwk;
   const organizationKey = deriveDeterministicEcPrivateKeyPem('verify-response-organization', 'P-384').publicJwk;
   const controllerSameAs = normalizeSameAsHash('controller@example.org');
   const verifiedDocumentResult = {
     ...buildTestVerifyResult('controller-rebind-policy'),
-    signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, E=controller@example.org, CN=Signer',
+    signerSubject: 'OID.2.5.4.97=VATES-TSTORG0000, CN=Signer',
   };
 
   const exercise = async (enabled: boolean) => {
@@ -1667,6 +1669,9 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
       body: {
         data: [{
           resource: {
+            legalRepresentative: {
+              email: 'controller@example.org',
+            },
             controller: {
               sameAs: controllerSameAs,
               publicKeyJwk: newControllerKey,
@@ -1784,6 +1789,8 @@ test('VerifyResponseManager applies the deployment-gated controller rebind polic
     else process.env.DID_WEB_DOMAIN = previousDidWebDomain;
     if (previousRebindPolicy === undefined) delete process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY;
     else process.env.ICA_ALLOW_CONTROLLER_REBIND_ON_REVERIFY = previousRebindPolicy;
+    if (previousSecurityMode === undefined) delete process.env.SECURITY_MODE;
+    else process.env.SECURITY_MODE = previousSecurityMode;
   }
 });
 
