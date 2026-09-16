@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.2.13 - 2026-09-16
+
+- Preserve the parsed organization and legal-representative request payloads
+  through `_verify-response`, so `SECURITY_MODE=demo` can apply its existing
+  representative `sameAs` fallback and issue the bound
+  `ServiceControllerCredential` required by legacy portal contracts.
+- Cover the complete re-verification, controller-key rotation and DID `_create`
+  path when the representative email exists only in the DIDComm request body.
+
 ## 1.2.12 - 2026-09-15
 
 - Require caller-owned `organization.publicKeyJwk` for `_verify` on
