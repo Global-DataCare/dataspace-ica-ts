@@ -368,10 +368,10 @@ export interface VerifySubmission {
    * Optional representative identity payload.
    *
    * Security policy:
-   * - strict/compat modes must source representative `sameAs` from the signed
-   *   PDF annex or signer certificate email
-    * - demo mode may additionally accept `sameAs` or `email` from this payload
-    *   as a bootstrap convenience for local flows
+   * - strict mode and compat by default source representative `sameAs` from
+   *   the signed PDF annex or signer certificate email
+   * - demo mode, or compat with `ICA_ALLOW_LEGACY_CONTRACT=true`, may accept
+   *   `sameAs` or `email` from this payload
    * - representative signing-key continuity is independent of that email
    *   alias and is projected separately from `controllerPublicKeyJwk` into the
    *   resulting person VC as `credentialSubject.hasCredential.material`
@@ -622,8 +622,9 @@ export interface VerifyResult {
   organizationPayload?: Record<string, unknown>;
   /**
    * Optional representative identity payload retained in the async
-   * verification result. Downstream VC mapping may use it only in demo mode
-   * when the signed sources do not expose representative `sameAs`.
+   * verification result. Downstream VC mapping may use it in demo mode or in
+   * compat with `ICA_ALLOW_LEGACY_CONTRACT=true` when signed sources do not
+   * expose representative `sameAs`.
    *
    * The resulting VC may still project controller signing-key continuity
    * independently via `credentialSubject.hasCredential.material` derived from

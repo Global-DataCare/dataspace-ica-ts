@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-09-16
+
+- Add the default-off `ICA_ALLOW_LEGACY_CONTRACT` compatibility policy. It is
+  effective only with `SECURITY_MODE=compat` and may source a missing legal
+  representative `sameAs` from `legalRepresentative.sameAs|email` in the
+  authenticated `_verify` request.
+- Keep signed-PDF signature, chain, revocation, template, organization identity
+  and controller-key ownership checks unchanged; strict mode ignores the flag.
+- Prove the legacy request-body flow through `_verify-response`, authorized
+  controller-key re-verification and DID-document `_create` with the new JWK.
+
 ## 1.2.13 - 2026-09-16
 
 - Preserve the parsed organization and legal-representative request payloads

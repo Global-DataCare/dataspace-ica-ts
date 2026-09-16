@@ -1,7 +1,4 @@
-/**
- * Flow contract: ICA derives credential shape and environment markers from
- * the canonical verification route, then signs schema.org-compatible VCs.
- */
+// Flow contract: reuse shared test fixtures and canonical types; do not introduce duplicated literals.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -59,6 +56,17 @@ function withSecurityMode<T>(securityMode: string | undefined, fn: () => T): T {
     else process.env.SECURITY_MODE = previousSecurityMode;
     if (previousDemoMode === undefined) delete process.env.DEMO_MODE;
     else process.env.DEMO_MODE = previousDemoMode;
+  }
+}
+
+function withLegacyContract<T>(enabled: boolean, fn: () => T): T {
+  const previous = process.env.ICA_ALLOW_LEGACY_CONTRACT;
+  process.env.ICA_ALLOW_LEGACY_CONTRACT = enabled ? 'true' : 'false';
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) delete process.env.ICA_ALLOW_LEGACY_CONTRACT;
+    else process.env.ICA_ALLOW_LEGACY_CONTRACT = previous;
   }
 }
 
@@ -720,6 +728,64 @@ test('buildVerificationVcBundle hashes legalRepresentativePayload.email only in 
   const compatPersonSubject = compatPersonResource?.credentialSubject as Record<string, unknown>;
   assert.equal(demoPersonSubject.sameAs, normalizeSameAsHash(TEST_REPRESENTATIVE_EMAIL));
   assert.equal(compatPersonSubject.sameAs, undefined);
+});
+
+test('buildVerificationVcBundle binds a legacy representative controller only when compat explicitly enables it', () => {
+  installActiveSigningKeyForTests();
+  const parsed = parseVerifyRoute('/acme/cds-ES/v1/animal-care/terms/pdf/202630011200/_verify');
+  assert.ok(parsed?.ok);
+  if (!parsed?.ok) return;
+
+  const controllerKey = deriveDeterministicEcPrivateKeyPem('vc-bundle-legacy-contract-controller', 'P-384');
+  const controllerSameAs = normalizeSameAsHash(TEST_REPRESENTATIVE_EMAIL);
+  const buildLegacyBundle = (enabled: boolean) => withSecurityMode('compat', () => withLegacyContract(
+    enabled,
+    () => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult(`compat-legacy-contract-${enabled}`),
+      legalRepresentativePayload: { email: TEST_REPRESENTATIVE_EMAIL },
+      controllerSameAs,
+      controllerPublicKeyJwk: controllerKey.publicJwk,
+    })),
+  ));
+
+  const disabledBundle = buildLegacyBundle(false);
+  const enabledBundle = buildLegacyBundle(true);
+  const strictBundle = withSecurityMode('strict', () => withLegacyContract(
+    true,
+    () => withDefaultDidWebDomain(() => buildVerificationVcBundle(parsed.context, {
+      ...buildTestVerifyResult('strict-legacy-contract-ignored'),
+      legalRepresentativePayload: { email: TEST_REPRESENTATIVE_EMAIL },
+      controllerSameAs,
+      controllerPublicKeyJwk: controllerKey.publicJwk,
+    })),
+  ));
+  const disabledController = disabledBundle.data.find(
+    (entry) => entry.type === 'ServiceController-verification-v1.0',
+  );
+  const enabledRepresentative = enabledBundle.data.find(
+    (entry) => entry.type === 'LegalRepresentative-verification-v1.0',
+  );
+  const enabledController = enabledBundle.data.find(
+    (entry) => entry.type === 'ServiceController-verification-v1.0',
+  );
+  const strictController = strictBundle.data.find(
+    (entry) => entry.type === 'ServiceController-verification-v1.0',
+  );
+
+  assert.equal(disabledController, undefined);
+  assert.equal(strictController, undefined);
+  assert.equal(
+    (enabledRepresentative?.resource as Record<string, any>).credentialSubject.sameAs,
+    controllerSameAs,
+  );
+  assert.equal(
+    (enabledController?.resource as Record<string, any>).credentialSubject.owner.sameAs,
+    controllerSameAs,
+  );
+  assert.equal(
+    (enabledController?.resource as Record<string, any>).credentialSubject.owner.hasCredential.material,
+    `urn:ietf:params:oauth:jwk-thumbprint:sha-256:${controllerKey.kidRfc7638}`,
+  );
 });
 
 test('buildVerificationVcBundle falls back OrganizationCredential makesOffer category and serviceType only in demo mode', () => {

@@ -1,3 +1,4 @@
+// Flow contract: reuse shared test fixtures and canonical types; do not introduce duplicated literals.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadAuditDocumentStorageConfigFromEnv } from '../src/api/tools/audit-document-storage.ts';
@@ -30,6 +31,7 @@ const ENV_KEYS = [
   'JSON_LEGACY',
   'DEMO_MODE',
   'DEMO_ALLOW_INSECURE_BEARER',
+  'ICA_ALLOW_LEGACY_CONTRACT',
   'NODE_ENV',
 ] as const;
 
@@ -184,6 +186,27 @@ test('loadIcaSecurityConfigFromEnv maps legacy DEMO_MODE to SECURITY_MODE=demo',
     () => {
       const config = loadIcaSecurityConfigFromEnv();
       assert.equal(config.securityMode, 'demo');
+    },
+  );
+});
+
+test('loadIcaSecurityConfigFromEnv enables legacy contract fallback only in compat mode', () => {
+  withEnv(
+    {
+      SECURITY_MODE: 'compat',
+      ICA_ALLOW_LEGACY_CONTRACT: 'true',
+    },
+    () => {
+      assert.equal(loadIcaSecurityConfigFromEnv().allowLegacyContract, true);
+    },
+  );
+  withEnv(
+    {
+      SECURITY_MODE: 'strict',
+      ICA_ALLOW_LEGACY_CONTRACT: 'true',
+    },
+    () => {
+      assert.equal(loadIcaSecurityConfigFromEnv().allowLegacyContract, false);
     },
   );
 });
