@@ -17,3 +17,19 @@ The official clinic telephone, technical-controller mobile, login contact,
 legal-representative evidence and later licence/DCR code are separate axes.
 Portal, GW and telephone assistants consume the result; they never mint the OTP
 or claim that an unverified telephone has been associated.
+
+Organization verification OTP and professional invitation OTP are also
+separate. An invitation records both employee email and employee phone. The
+initial route may use email instead of SMS for delivery to the employee email.
+In veterinary CA/US this is allowed only after the organization contact was
+verified by outbound call to the official marketplace telephone or the verified
+technical-controller mobile described above.
+
+In human health CA/US production, physical-site verification is a hard
+activation gate. The organization remains inactive until the technical
+controller submits the numeric legal-address code bound to the hash of the PDF
+generated from the form. Only after that match activates the organization may
+Connect ICA issue or deliver the professional invitation OTP. The invitation
+OTP does not verify the organization and does not complete DCR. Runtime email,
+SMS and voice transports remain pending. See
+[`docs/adr-0005-professional-invitation-email-otp-backlog.md`](docs/adr-0005-professional-invitation-email-otp-backlog.md).

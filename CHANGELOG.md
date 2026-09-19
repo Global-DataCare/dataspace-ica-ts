@@ -7,6 +7,11 @@
   technical-controller mobile, persists only its hashed `sameAs` alias, and
   defers existing-mobile match and unauthorized-flow restrictions to a named
   Phase 2 security review.
+- Separate organization verification from professional invitation OTP. Capture
+  both employee email and phone, permit email instead of SMS for the initial
+  invitation route, require prior veterinary voice verification, and keep a
+  human-health CA/US organization inactive until its technical controller
+  submits the numeric legal-address code bound to the generated form-PDF hash.
 
 ## 1.3.1 - 2026-09-16
 
