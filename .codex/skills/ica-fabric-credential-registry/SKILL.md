@@ -7,6 +7,16 @@ description: Use for ICA credential identity, Fabric anchoring, evidence hashes,
 
 ## Immutable identity contract
 
+- For the pending CA/US veterinary clinic flow, Connect ICA owns the numeric
+  OTP delivered by outbound voice call to the official marketplace telephone
+  or an E.164 private mobile nominated for the technical controller. A verified
+  technical mobile becomes only a governed hashed `sameAs` alias, preserving
+  any existing hashed email in the comma-separated representation. Implement
+  the functional route first. Existing mobile match, replacement/recovery,
+  throttling and unauthorized-flow denial remain the explicit Phase 2 security
+  review in
+  [`docs/adr-0004-veterinary-controller-phone-otp-backlog.md`](../../../docs/adr-0004-veterinary-controller-phone-otp-backlog.md).
+
 - A JSON VC and its VC-JWT are two representations of one logical credential.
 - The Fabric key is the logical credential identifier: JSON `vc.id` = JWT `jti`
   = embedded JWT `vc.id`.
