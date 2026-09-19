@@ -22,6 +22,7 @@ in the operations documentation outside this source repository.
 ## ADRs and backlog notes
 
 - [`../adr-0004-veterinary-controller-phone-otp-backlog.md`](../adr-0004-veterinary-controller-phone-otp-backlog.md)
+- [`../adr-0005-professional-invitation-email-otp-backlog.md`](../adr-0005-professional-invitation-email-otp-backlog.md)
 
 - [`../adr-0001-confidential-storage-model.md`](../adr-0001-confidential-storage-model.md)
 - [`../adr-0003-key-rotation-and-vc-reissuance-backlog.md`](../adr-0003-key-rotation-and-vc-reissuance-backlog.md)
