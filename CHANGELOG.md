@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Record the functional-first CA/US veterinary callback backlog: Connect ICA
+  owns outbound voice OTP to the official marketplace telephone or nominated
+  technical-controller mobile, persists only its hashed `sameAs` alias, and
+  defers existing-mobile match and unauthorized-flow restrictions to a named
+  Phase 2 security review.
+
 ## 1.3.1 - 2026-09-16
 
 - Extend `ICA_ALLOW_LEGACY_CONTRACT` visible-text extraction for historical
