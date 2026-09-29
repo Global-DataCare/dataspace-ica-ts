@@ -1278,13 +1278,12 @@ export function loadFnmtVerifierConfigFromEnv(): FnmtVerifierConfig {
 
 export class FnmtPdfVerificationService implements PdfVerificationService {
   private readonly config: FnmtVerifierConfig;
-  private trustAnchorsLoadError: Error | null = null;
-  private readonly trustAnchorsPromise: Promise<{
+  private trustAnchorsPromise: Promise<{
     rootPem: string;
     intermediatePems: string[];
     rootSource: string;
     intermediateSources: string[];
-  } | null>;
+  }> | null = null;
   private readonly templateCache = new Map<string, { bytes: Buffer; fetchedAtMs: number }>();
   private readonly templateFetchInFlight = new Map<string, Promise<Buffer>>();
 
@@ -1295,15 +1294,32 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
     };
     console.log(`Template URL pattern active: ${this.config.templateUrlPattern}`);
     console.log(`Template test-mode prefix active: ${this.config.templateUseTestPrefix}`);
-    this.trustAnchorsPromise = this.loadTrustAnchors().catch((error: unknown) => {
+    this.getTrustAnchors().catch((error: unknown) => {
       const normalized = error instanceof Error ? error : new Error(String(error));
-      this.trustAnchorsLoadError = normalized;
       console.error(`FNMT trust anchors preload failed: ${normalized.message}`);
-      return null;
     });
     this.preloadTemplates().catch((error: unknown) => {
       console.error(`Template preload failed: ${asSingleLineError(error)}`);
     });
+  }
+
+  private getTrustAnchors(): Promise<{
+    rootPem: string;
+    intermediatePems: string[];
+    rootSource: string;
+    intermediateSources: string[];
+  }> {
+    if (this.trustAnchorsPromise) return this.trustAnchorsPromise;
+
+    const attempt = this.loadTrustAnchors();
+    const retryableAttempt = attempt.catch((error: unknown) => {
+      if (this.trustAnchorsPromise === retryableAttempt) {
+        this.trustAnchorsPromise = null;
+      }
+      throw error;
+    });
+    this.trustAnchorsPromise = retryableAttempt;
+    return retryableAttempt;
   }
 
   private shouldUseTemplateCache(): boolean {
@@ -1879,10 +1895,7 @@ export class FnmtPdfVerificationService implements PdfVerificationService {
     const workspace = await mkdtemp(path.join(tmpdir(), 'ica-pdf-verify-'));
 
     try {
-      const trustAnchors = await this.trustAnchorsPromise;
-      if (!trustAnchors) {
-        throw this.trustAnchorsLoadError || new Error('FNMT trust anchors are unavailable.');
-      }
+      const trustAnchors = await this.getTrustAnchors();
       const rootPem = trustAnchors.rootPem;
       const intermediatePems = trustAnchors.intermediatePems;
       notes.push(`FNMT root loaded from ${trustAnchors.rootSource}`);

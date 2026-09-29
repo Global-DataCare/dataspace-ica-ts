@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Retry CA trust-anchor loading after a transient provider download failure
+  instead of leaving PDF verification unusable until the pod restarts. Ensure
+  the Kubernetes ConfigMap receives the configured root and intermediate CA
+  URL sets, including non-FNMT providers.
 - Record the functional-first CA/US veterinary callback backlog: Connect ICA
   owns outbound voice OTP to the official marketplace telephone or nominated
   technical-controller mobile, persists only its hashed `sameAs` alias, and

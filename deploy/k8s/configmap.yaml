@@ -51,6 +51,9 @@ data:
   # POSTGRES_URL: "postgres://user:password@host:5432/database"
 
   # Optional automatic trust bootstrap from FNMT public URLs.
+  ICA_KNOWN_CERTS_AUTO_DOWNLOAD: "${ICA_KNOWN_CERTS_AUTO_DOWNLOAD}"
+  ICA_KNOWN_ROOT_CERT_URLS: "${ICA_KNOWN_ROOT_CERT_URLS}"
+  ICA_KNOWN_INTERMEDIATE_CERT_URLS: "${ICA_KNOWN_INTERMEDIATE_CERT_URLS}"
   ICA_FNMT_AUTO_DOWNLOAD: "true"
   ICA_FNMT_ROOT_CERT_URL: "https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Raiz_FNMT-RCM_SHA256.cer"
   ICA_FNMT_INTERMEDIATE_CERT_URLS: "https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Representacion.cer,https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_Sector_Publico.cer,https://www.sede.fnmt.gob.es/documents/10445900/10526749/AC_FNMT_Usuarios.cer"
