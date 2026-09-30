@@ -72,3 +72,48 @@ test('deployment renderer fails when a required ConfigMap placeholder is unset',
 
   assert.equal(readFileSync(manifestPath, 'utf8').includes('${ICA_SUPPORTED_JURISDICTIONS}'), true);
 });
+
+test('cloud deployment ConfigMap renders persistent providers and rejects memory providers', () => {
+  const manifestPath = resolve('deploy/k8s/configmap.yaml');
+  const persistentEnv = {
+    ...process.env,
+    K8S_CONFIGMAP_NAME: 'ica-config',
+    ICA_SUPPORTED_JURISDICTIONS: 'ES',
+    ICA_SUPPORTED_SECTORS: 'health-care',
+    VERIFIERS_VAT_LIST: '',
+    ICA_ALLOW_VERIFICATION_PARTNERS: 'false',
+    VERIFICATION_PARTNERS_VAT_LIST: '',
+    ICA_KNOWN_CERTS_AUTO_DOWNLOAD: 'true',
+    ICA_KNOWN_ROOT_CERT_URLS: 'https://trust.example/root.crt',
+    ICA_KNOWN_INTERMEDIATE_CERT_URLS: 'https://trust.example/intermediate.crt',
+    DB_PROVIDER: 'firestore',
+    STORAGE_PROVIDER: 'gcs',
+    FIRESTORE_PROJECT_ID: 'ica-staging-project',
+    GCS_BUCKET_NAME: 'ica-staging-audit',
+  };
+  const output = execFileSync(
+    process.execPath,
+    [resolve('scripts/render-k8s-manifest.mjs'), '--require-persistent-providers', manifestPath],
+    { cwd: resolve('.'), encoding: 'utf8', env: persistentEnv },
+  );
+
+  assert.match(output, /DB_PROVIDER: "firestore"/u);
+  assert.match(output, /STORAGE_PROVIDER: "gcs"/u);
+  assert.match(output, /FIRESTORE_PROJECT_ID: "ica-staging-project"/u);
+  assert.match(output, /GCS_BUCKET_NAME: "ica-staging-audit"/u);
+
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [resolve('scripts/render-k8s-manifest.mjs'), '--require-persistent-providers', manifestPath],
+        {
+          cwd: resolve('.'),
+          encoding: 'utf8',
+          env: { ...persistentEnv, DB_PROVIDER: 'mem', STORAGE_PROVIDER: 'mem' },
+          stdio: 'pipe',
+        },
+      ),
+    /Command failed/u,
+  );
+});

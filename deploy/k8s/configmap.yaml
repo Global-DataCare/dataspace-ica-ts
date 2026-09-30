@@ -31,8 +31,9 @@ data:
   ICA_TERMS_TEMPLATE_CACHE_MAX_ENTRIES: "64"
   ICA_TERMS_TEMPLATE_URL_PATTERN: "https://raw.githubusercontent.com/Global-DataCare/terms/refs/heads/main/dataspace/{sector}/{jurisdictionLower}/{resourceVersion}/terms.pdf"
 
-  # Audit storage: mem|gcs|ipfs
-  STORAGE_PROVIDER: "mem"
+  # Kubernetes deployments require persistent audit storage: gcs|ipfs.
+  STORAGE_PROVIDER: "${STORAGE_PROVIDER}"
+  GCS_BUCKET_NAME: "${GCS_BUCKET_NAME}"
   ICA_AUDIT_STORAGE_REQUIRED: "true"
   ICA_AUDIT_ATTACHMENT_URL_PATTERN: "urn:uuid:{objectId}"
   ICA_AUDIT_STORAGE_GCS_PREFIX: "ica-audit"
@@ -41,8 +42,9 @@ data:
   # IPFS_MFS_ROOT: "/ica-audit"
 
   # Verification collections (issued credentials + evidence records)
-  # Provider: mem|firestore|postgres
-  DB_PROVIDER: "mem"
+  # Kubernetes deployments require persistent collections: firestore|postgres.
+  DB_PROVIDER: "${DB_PROVIDER}"
+  FIRESTORE_PROJECT_ID: "${FIRESTORE_PROJECT_ID}"
   ICA_COLLECTIONS_REQUIRED: "true"
   ICA_COLLECTIONS_PREFIX: "ica"
   # Optional when provider=firestore

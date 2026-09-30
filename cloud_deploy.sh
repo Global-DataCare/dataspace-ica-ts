@@ -36,6 +36,10 @@ EOF
 
 render_manifest() {
   local manifest_path="$1"
+  if [[ "${manifest_path##*/}" == "configmap.yaml" ]]; then
+    node "$SCRIPT_DIR/scripts/render-k8s-manifest.mjs" --require-persistent-providers "$manifest_path"
+    return
+  fi
   node "$SCRIPT_DIR/scripts/render-k8s-manifest.mjs" "$manifest_path"
 }
 
