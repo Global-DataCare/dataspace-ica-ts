@@ -36,19 +36,7 @@ EOF
 
 render_manifest() {
   local manifest_path="$1"
-  sed \
-    -e "s|\${K8S_APP_NAME}|$K8S_APP_NAME|g" \
-    -e "s|\${K8S_SERVICE_NAME}|$K8S_SERVICE_NAME|g" \
-    -e "s|\${K8S_CONFIGMAP_NAME}|$K8S_CONFIGMAP_NAME|g" \
-    -e "s|\${K8S_SECRET_NAME}|$K8S_SECRET_NAME|g" \
-    -e "s|\${K8S_SERVICE_ACCOUNT_NAME}|$K8S_SERVICE_ACCOUNT_NAME|g" \
-    -e "s|\${K8S_SERVICE_TYPE}|$K8S_SERVICE_TYPE|g" \
-    -e "s|\${K8S_MANAGED_CERT_NAME}|$K8S_MANAGED_CERT_NAME|g" \
-    -e "s|\${K8S_INGRESS_HOST}|$K8S_INGRESS_HOST|g" \
-    -e "s|\${ICA_KNOWN_CERTS_AUTO_DOWNLOAD}|$ICA_KNOWN_CERTS_AUTO_DOWNLOAD|g" \
-    -e "s|\${ICA_KNOWN_ROOT_CERT_URLS}|$ICA_KNOWN_ROOT_CERT_URLS|g" \
-    -e "s|\${ICA_KNOWN_INTERMEDIATE_CERT_URLS}|$ICA_KNOWN_INTERMEDIATE_CERT_URLS|g" \
-    "$manifest_path"
+  node "$SCRIPT_DIR/scripts/render-k8s-manifest.mjs" "$manifest_path"
 }
 
 render_ingress_manifest() {

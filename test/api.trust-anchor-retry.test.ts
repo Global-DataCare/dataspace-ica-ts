@@ -99,9 +99,30 @@ test('a transient CA download failure is retried by the next verification reques
 
 test('the Kubernetes ConfigMap propagates all configured CA URL sets', () => {
   const manifest = readFileSync(path.resolve('deploy/k8s/configmap.yaml'), 'utf8');
-  const deployScript = readFileSync(path.resolve('cloud_deploy.sh'), 'utf8');
   assert.match(manifest, /ICA_KNOWN_ROOT_CERT_URLS:\s*"\$\{ICA_KNOWN_ROOT_CERT_URLS\}"/);
   assert.match(manifest, /ICA_KNOWN_INTERMEDIATE_CERT_URLS:\s*"\$\{ICA_KNOWN_INTERMEDIATE_CERT_URLS\}"/);
-  assert.match(deployScript, /s\|\\\$\{ICA_KNOWN_ROOT_CERT_URLS\}\|\$ICA_KNOWN_ROOT_CERT_URLS\|g/);
-  assert.match(deployScript, /s\|\\\$\{ICA_KNOWN_INTERMEDIATE_CERT_URLS\}\|\$ICA_KNOWN_INTERMEDIATE_CERT_URLS\|g/);
+  const rendered = execFileSync(
+    process.execPath,
+    [path.resolve('scripts/render-k8s-manifest.mjs'), path.resolve('deploy/k8s/configmap.yaml')],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        K8S_CONFIGMAP_NAME: 'ica-config',
+        ICA_SUPPORTED_JURISDICTIONS: 'ES',
+        ICA_SUPPORTED_SECTORS: 'health-care',
+        VERIFIERS_VAT_LIST: '',
+        ICA_ALLOW_VERIFICATION_PARTNERS: 'false',
+        VERIFICATION_PARTNERS_VAT_LIST: '',
+        ICA_KNOWN_CERTS_AUTO_DOWNLOAD: 'true',
+        ICA_KNOWN_ROOT_CERT_URLS: 'https://ca.example.test/root.pem',
+        ICA_KNOWN_INTERMEDIATE_CERT_URLS: 'https://ca.example.test/intermediate.pem',
+      },
+    },
+  );
+  assert.match(rendered, /ICA_KNOWN_ROOT_CERT_URLS:\s*"https:\/\/ca\.example\.test\/root\.pem"/u);
+  assert.match(
+    rendered,
+    /ICA_KNOWN_INTERMEDIATE_CERT_URLS:\s*"https:\/\/ca\.example\.test\/intermediate\.pem"/u,
+  );
 });

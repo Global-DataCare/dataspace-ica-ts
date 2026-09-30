@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.3.2 - 2026-09-30
+
+- Render every active Kubernetes manifest placeholder from the selected
+  deployment environment and fail before apply when any value remains
+  unresolved. This keeps jurisdiction, sector, verifier and trust-anchor
+  configuration explicit in the ConfigMap instead of relying on a duplicate
+  Secret value to mask an invalid manifest.
+
 - Retry CA trust-anchor loading after a transient provider download failure
   instead of leaving PDF verification unusable until the pod restarts. Ensure
   the Kubernetes ConfigMap receives the configured root and intermediate CA
