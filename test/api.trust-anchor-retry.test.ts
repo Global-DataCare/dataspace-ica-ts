@@ -117,6 +117,10 @@ test('the Kubernetes ConfigMap propagates all configured CA URL sets', () => {
         ICA_KNOWN_CERTS_AUTO_DOWNLOAD: 'true',
         ICA_KNOWN_ROOT_CERT_URLS: 'https://ca.example.test/root.pem',
         ICA_KNOWN_INTERMEDIATE_CERT_URLS: 'https://ca.example.test/intermediate.pem',
+        DB_PROVIDER: 'firestore',
+        STORAGE_PROVIDER: 'gcs',
+        FIRESTORE_PROJECT_ID: 'ica-staging-project',
+        GCS_BUCKET_NAME: 'ica-staging-audit',
       },
     },
   );

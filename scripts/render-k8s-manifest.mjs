@@ -2,9 +2,13 @@
 
 import { readFileSync } from 'node:fs';
 
-const manifestPath = process.argv[2];
+const args = process.argv.slice(2);
+const requirePersistentProviders = args.includes('--require-persistent-providers');
+const manifestPath = args.find((argument) => !argument.startsWith('--'));
 if (!manifestPath) {
-  process.stderr.write('Usage: render-k8s-manifest.mjs <manifest-path>\n');
+  process.stderr.write(
+    'Usage: render-k8s-manifest.mjs [--require-persistent-providers] <manifest-path>\n',
+  );
   process.exit(2);
 }
 
@@ -29,6 +33,27 @@ if (unresolved.size > 0) {
     `ERROR: unresolved Kubernetes manifest variables: ${[...unresolved].sort().join(', ')}\n`,
   );
   process.exit(1);
+}
+
+if (requirePersistentProviders) {
+  const readDataValue = (name) => {
+    const match = rendered.match(new RegExp(`^\\s{2}${name}:\\s*["']?([^"'\\n]+)["']?\\s*$`, 'mu'));
+    return match?.[1]?.trim().toLowerCase() ?? '';
+  };
+  const databaseProvider = readDataValue('DB_PROVIDER');
+  const storageProvider = readDataValue('STORAGE_PROVIDER');
+  if (!['firestore', 'postgres'].includes(databaseProvider)) {
+    process.stderr.write(
+      `ERROR: Kubernetes deployment requires persistent DB_PROVIDER, received "${databaseProvider || 'unset'}"\n`,
+    );
+    process.exit(1);
+  }
+  if (!['gcs', 'ipfs'].includes(storageProvider)) {
+    process.stderr.write(
+      `ERROR: Kubernetes deployment requires persistent STORAGE_PROVIDER, received "${storageProvider || 'unset'}"\n`,
+    );
+    process.exit(1);
+  }
 }
 
 process.stdout.write(rendered);

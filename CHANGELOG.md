@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.3.3 - 2026-09-30
+
+- Require persistent database and audit-storage providers for Kubernetes
+  deployment. Render `DB_PROVIDER`, `STORAGE_PROVIDER`, the Firestore project
+  and the GCS bucket explicitly in the ConfigMap, and abort before apply when a
+  memory provider is selected.
+
 ## 1.3.2 - 2026-09-30
 
 - Render every active Kubernetes manifest placeholder from the selected
