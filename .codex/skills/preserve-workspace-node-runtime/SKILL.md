@@ -1,16 +1,20 @@
 ---
 name: preserve-workspace-node-runtime
-description: Preserve the active Node.js 24 workspace runtime for installs, builds, tests, local services, E2E, Playwright, releases and deployments. Use before running any Node or npm command, interpreting package.json engines, selecting a Node executable, or diagnosing a runtime-version failure in any workspace repository.
+description: Preserve the approved Node.js 26 workspace runtime for this ICA repository's installs, builds, tests, local services, E2E, releases and deployments.
 ---
 
 # Preserve Workspace Node Runtime
 
-## Keep Node 24 active
+This repository extends the canonical workspace
+`preserve-workspace-node-runtime` contract. The approved global runtime is
+Node.js `26.13.0`; repository ICA constraints remain authoritative here.
+
+## Keep Node 26 active
 
 1. Run `node --version` before the first install, build, test, service, E2E,
    Playwright, release or deployment command and record it with the evidence.
-2. Use the workspace's active Node 24 runtime. The current approved runtime is
-   Node `24.15.0`.
+2. Use the workspace's active Node 26 runtime. The current approved runtime is
+   Node `26.13.0`.
 3. Keep the same Node executable and version for every retry and every process
    spawned by that gate.
 
@@ -26,8 +30,8 @@ description: Preserve the active Node.js 24 workspace runtime for installs, buil
 
 ## Handle a genuine incompatibility
 
-If a repository-owned, authoritative runtime pin rejects Node 24, or a command
-fails specifically because Node 24 is unsupported:
+If a repository-owned, authoritative runtime pin rejects Node 26, or a command
+fails specifically because Node 26 is unsupported:
 
 1. Stop before changing the runtime or repository.
 2. Report the active version, the repository pin and the exact failure.
@@ -35,9 +39,9 @@ fails specifically because Node 24 is unsupported:
 4. After authorization, apply the selected runtime consistently to the whole
    gate and record it in the resulting evidence.
 
-A previous successful run under Node 24 is evidence to reproduce that same
-environment first; do not manufacture a new failure by choosing another
-runtime.
+A previous successful run under Node 24 is historical compatibility evidence,
+not authorization to replace Node 26. Reproduce current gates under Node 26
+first; do not manufacture a new failure by choosing another runtime.
 
 ## Synchronize the installed dependency tree
 
