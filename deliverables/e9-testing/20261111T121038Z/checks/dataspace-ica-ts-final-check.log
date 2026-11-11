@@ -1,0 +1,8 @@
+
+> dataspace-ica@1.3.4 check
+> node --check ./bin/ica-cli.js && node --check ./src/api/server.ts && npm run typecheck
+
+
+> dataspace-ica@1.3.4 typecheck
+> tsc --noEmit
+

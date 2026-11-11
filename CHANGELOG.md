@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Make the deterministic signing-time test install and clean its own signing key fixture, so it passes independently of optional PDF tests.
+
 ## 1.3.3 - 2026-09-30
 
 - Require persistent database and audit-storage providers for Kubernetes

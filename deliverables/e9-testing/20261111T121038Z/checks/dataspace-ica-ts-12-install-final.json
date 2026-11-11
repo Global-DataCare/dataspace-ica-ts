@@ -1,0 +1,19 @@
+{
+  "repository": "dataspace-ica-ts",
+  "label": "12-install-final",
+  "command": [
+    "npm",
+    "ci"
+  ],
+  "started_at": "2026-11-11T12:35:03.591099+00:00",
+  "node": "v26.13.0",
+  "npm": "11.20.0",
+  "commit": "c471742c250cbe7fae94d0a10f96975f6ac7088a",
+  "working_tree": " M CHANGELOG.md\n M package-lock.json\n M package.json\n M test/api.verify.test.ts\n",
+  "package.json_sha256": "24b46b8ce0d3761bb9ce59d2fc60489c1695f681b3b121279cd8eb940e39f3eb",
+  "package-lock.json_sha256": "3a02c1cb1c31f967a8d83346a2cd87aa0e3b9c6024982ce389e48cd4709cce58",
+  "exit_code": 0,
+  "elapsed_seconds": 7.031,
+  "finished_at": "2026-11-11T12:35:10.934859+00:00",
+  "log_sha256": "08f0125f96c133cac7e147dc686f9a0660a09c491d9b8cb78c2a5598d53bb30f"
+}

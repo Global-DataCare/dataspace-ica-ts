@@ -2215,6 +2215,9 @@ test(
 );
 
 test('buildVerificationVcBundle uses organizationSigningTime and personSigningTime independently in deterministic mode', () => {
+  // This contract owns its signing fixture and must pass when run alone.
+  resetActiveSigningKeysStateForTests();
+  activateSigningKey({ kid: 'deterministic-key-1', alg: 'ES384', privateKeyPem: PRIVATE_KEY_PEM });
   const previousFlag = process.env.DETERMINISTIC_VC_BY_CONTRACT;
   const previousDidWebDomain = process.env.DID_WEB_DOMAIN;
   process.env.DETERMINISTIC_VC_BY_CONTRACT = 'true';
@@ -2247,6 +2250,7 @@ test('buildVerificationVcBundle uses organizationSigningTime and personSigningTi
     assert.equal(org?.evidence?.[1]?.verifier?.organization, `did:web:localhost:health-care:organization:taxid:${TEST_VAT_VERIFIER_A}`);
     assert.equal(person?.evidence?.[1]?.verifier?.organization, `did:web:localhost:health-care:organization:taxid:${TEST_VAT_VERIFIER_A}`);
   } finally {
+    resetActiveSigningKeysStateForTests();
     if (previousFlag === undefined) delete process.env.DETERMINISTIC_VC_BY_CONTRACT;
     else process.env.DETERMINISTIC_VC_BY_CONTRACT = previousFlag;
     if (previousDidWebDomain === undefined) delete process.env.DID_WEB_DOMAIN;
